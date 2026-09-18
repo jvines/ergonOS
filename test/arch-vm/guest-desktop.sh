@@ -877,5 +877,44 @@ fi
 systemctl enable greetd >/dev/null 2>&1 || true
 ok "greetd left enabled for interactive use"
 
+# --- what the OS hands its agents -----------------------------------------
+# Every one of these is installed by a step that WARNS rather than fails, so
+# provisioning stays green whatever happens here and nothing else in this suite
+# would notice. That is exactly why they need asserting: this ran green once
+# with the whole block silently doing nothing, and the count was identical.
+U=$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)
+H=$(getent passwd "$U" | cut -d: -f6)
+
+# ergon-explain prefers /usr/share over the checkout, and both skills tell an
+# agent the body lives there.
+n=$(ls -1 /usr/share/ergon/knowledge/*.md 2>/dev/null | wc -l)
+[ "$n" -ge 1 ] && ok "knowledge installed system-wide ($n topics)" \
+               || bad "no topics at /usr/share/ergon/knowledge — ergon explain falls back to a checkout"
+[ -f /usr/share/ergon/AGENTS.md ] && ok "machine AGENTS.md installed" \
+                                  || bad "no /usr/share/ergon/AGENTS.md"
+
+# Claude Code has no machine-wide AGENTS.md; the managed policy file is its one
+# OS-level hook, and it must point AT ours rather than be a copy that drifts.
+if [ "$(readlink -f /etc/claude-code/CLAUDE.md 2>/dev/null)" = /usr/share/ergon/AGENTS.md ]; then
+  ok "claude code: managed policy -> the machine AGENTS.md"
+else
+  bad "/etc/claude-code/CLAUDE.md does not resolve to /usr/share/ergon/AGENTS.md"
+fi
+
+# One SKILL.md, both harnesses. A skill that reaches only one of them is the
+# failure this is here to catch.
+for d in "$H/.claude/skills" "$H/.codex/skills"; do
+  s=$(ls -1d "$d"/ergon-* 2>/dev/null | wc -l)
+  [ "$s" -ge 1 ] && ok "skills linked into ${d#"$H"/} ($s)" \
+                 || bad "no ergon skills in $d"
+done
+[ -e "$H/.codex/AGENTS.md" ] && ok "codex: global AGENTS.md linked" \
+                             || bad "no $H/.codex/AGENTS.md"
+# Readable through the link, not merely present: a dangling symlink satisfies
+# -e on its own target check but gives an agent nothing.
+grep -q 'ergon explain' "$H/.codex/AGENTS.md" 2>/dev/null \
+  && ok "codex AGENTS.md reads through to the content" \
+  || bad "$H/.codex/AGENTS.md is present but unreadable or empty"
+
 [ "$F" -gt 0 ] && dump_log
 finish
