@@ -444,12 +444,23 @@ if command -v emacs >/dev/null && [ -f "$HOME/.emacs.d/init.el" ]; then
     >/dev/null 2>&1 && ok "tree-sitter grammars" || warn "grammar build failed — run M-x my/treesit-install-missing"
 fi
 
+say "system knowledge"
+# ergon-explain prefers /usr/share/ergon/knowledge over the checkout, and both
+# shipped skills tell an agent the body lives there -- but nothing ever put it
+# there, so the documented path did not exist and only the checkout fallback
+# worked. Installing it means every user on the machine, and every agent,
+# reads the same bytes whether or not they have a checkout.
+sudo install -d /usr/share/ergon/knowledge
+if sudo install -m644 "$ERGON"/knowledge/*.md /usr/share/ergon/knowledge/; then
+  ok "$(ls -1 "$ERGON"/knowledge/*.md | wc -l) topics at /usr/share/ergon/knowledge"
+else
+  warn "could not install the knowledge base; ergon explain falls back to the checkout"
+fi
+
 say "done"
 cat <<'EOF'
 
   Next:
-    tailscale up --accept-routes       # *.jvines.cl resolves to a LAN literal;
-                                       # chiki advertises 192.168.0.0/24
     ~/ergonOS/install.sh
     re-login for the docker group
 

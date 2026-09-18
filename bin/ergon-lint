@@ -132,4 +132,44 @@ while IFS= read -r f; do
   [ -x "$f" ] || report "${f#"$ERGON"/}" 1 "not executable, so ergon cannot run it"
 done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
 
+# ---------------------------------------------------------------------------
+# One SKILL.md, two harnesses.
+#
+# This OS ships Claude Code and Codex, and install.sh links the same skill
+# directory into ~/.claude/skills and $CODEX_HOME/skills. That only keeps
+# working while the frontmatter stays inside what BOTH accept. Codex parses it
+# strictly and allows exactly: name, description, license, allowed-tools,
+# metadata. A key outside that set is not a warning there, and a skill that
+# silently fails to load is the kind of thing nobody notices until an agent
+# confidently edits the Lua config the wrong way.
+skills_seen=0; skills_bad=0
+bad_skill() { report "$@"; skills_bad=$((skills_bad+1)); }
+while IFS= read -r m; do
+  skills_seen=$((skills_seen+1))
+  rel="${m#"$ERGON"/}"
+  if [ "$(head -1 "$m")" != "---" ]; then
+    bad_skill "$rel" 1 "must start with YAML frontmatter, or no harness will load it"
+    continue
+  fi
+  fm=$(sed -n '2,/^---$/p' "$m" | sed '$d')
+  for key in name description; do
+    printf '%s\n' "$fm" | grep -q "^$key:" \
+      || bad_skill "$rel" 2 "frontmatter has no '$key:', which both harnesses require"
+  done
+  while IFS= read -r key; do
+    case "$key" in
+      name|description|license|allowed-tools|metadata) ;;
+      '') ;;
+      *) bad_skill "$rel" 2 "frontmatter key '$key' is not one Codex accepts (name, description, license, allowed-tools, metadata)" ;;
+    esac
+  done < <(printf '%s\n' "$fm" | sed -n 's/^\([A-Za-z][A-Za-z0-9_-]*\):.*/\1/p')
+done < <(find -L "$ERGON/skills" -maxdepth 2 -name SKILL.md 2>/dev/null | sort)
+if [ "$skills_seen" -gt 0 ] && [ "$skills_bad" = 0 ]; then
+  echo "  ok   $skills_seen skill(s) valid for Claude Code and Codex"
+elif [ "$skills_seen" = 0 ]; then
+  # Not "&& echo": under set -e a false test here would abort the script
+  # before `exit $rc` and report a lint failure that does not exist.
+  echo "  !!   no skills found under $ERGON/skills" >&2
+fi
+
 exit $rc

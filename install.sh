@@ -80,13 +80,25 @@ fi
 
 link matplotlib/matplotlibrc .config/matplotlib/matplotlibrc
 
-# Agent knowledge. Namespaced ergon-*, so nothing a user wrote is shadowed.
+# Agent knowledge. This OS ships two coding agents, and one SKILL.md serves
+# both: Claude Code reads ~/.claude/skills, Codex reads $CODEX_HOME/skills
+# (~/.codex/skills when CODEX_HOME is unset). Both want a directory per skill
+# whose SKILL.md opens with YAML frontmatter carrying name and description.
+# Codex also allows license, allowed-tools and metadata; ours use only the two
+# every harness accepts, so there is one file and nothing to keep in sync.
+#
+# Namespaced ergon-*, so nothing the user wrote is shadowed. Symlinked rather
+# than copied, so updating the repo updates the skill.
 if [ "$CHECK" != 1 ]; then
-  mkdir -p "$HOME/.claude/skills"
-  for s in "$ERGON"/.claude/skills/ergon-*; do
-    [ -d "$s" ] && ln -sfn "$s" "$HOME/.claude/skills/$(basename "$s")"
+  n=0
+  for dest in "$HOME/.claude/skills" "${CODEX_HOME:-$HOME/.codex}/skills"; do
+    mkdir -p "$dest" || continue
+    for s in "$ERGON"/skills/ergon-*; do
+      [ -d "$s" ] || continue
+      ln -sfn "$s" "$dest/$(basename "$s")" && n=$((n+1))
+    done
   done
-  ok "agent skills linked (see: ergon explain --list)"
+  ok "$n agent skills linked, for Claude Code and Codex (see: ergon explain --list)"
 fi
 
 if [ "$CHECK" != 1 ]; then
