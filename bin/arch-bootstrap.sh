@@ -485,7 +485,12 @@ if [ -x "$ERGON/bin/provision-arch.sh" ]; then
   [ -x "/mnt$DEST/bin/provision-arch.sh" ] \
     || { echo "the copied provision-arch.sh is not executable" >&2; exit 1; }
   REPO_AT="$DEST"
-  ok "copied this checkout to $DEST ($(git -C "$ERGON" rev-parse --short HEAD 2>/dev/null || echo 'no git metadata'))"
+  # -c safe.directory: the checkout is usually not owned by whoever runs the
+  # installer -- root on the ISO, or a 9p share carrying the host's uid -- and
+  # git refuses to read a repo it considers someone else's. That turned the
+  # commit this machine was installed from into "no git metadata", which is
+  # precisely the fact worth keeping. Scoped to this one path, read-only.
+  ok "copied this checkout to $DEST ($(git -c safe.directory="$ERGON" -C "$ERGON" rev-parse --short HEAD 2>/dev/null || echo 'no git metadata'))"
 else
   warn "this is not a full ergonOS checkout, so the new system has no copy of the repo"
   warn "put one at $DEST before provisioning"
