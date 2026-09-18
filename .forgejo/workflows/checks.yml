@@ -1,0 +1,71 @@
+# The five-second gate. Runs on every push to main, because there is no excuse
+# for a suite this cheap not to be automatic -- and because every verification
+# in this repo's history happened only because someone remembered to run it.
+#
+# Deliberately does NOT run the VM suites: those take ~35 minutes and need
+# /dev/kvm. They are in vm.yml, on a timer.
+#
+# No `uses:` anywhere. The checo runner is registered in HOST mode
+# (self-hosted:host, Linux:host, X64:host, checo:host), so actions run as the
+# jayvains user with no container, and the checkout action is not dependable
+# there. ExoAutomata's workflow reached the same conclusion; it clones by hand
+# too.
+name: checks
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # A newer push makes an in-flight run pointless. Keyed by ref so this never
+  # cancels the VM workflow.
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: lint, bundles, hardware
+    runs-on: checo
+    env:
+      CI_DIR: /home/jayvains/ci-runs/ergonos-${{ github.run_id }}
+      REMOTE: ssh://git@git.jvines.cl:2222/jayvains/ergonOS.git
+    steps:
+      - name: Check out the commit under test
+        run: |
+          set -euo pipefail
+          rm -rf "$CI_DIR"
+          mkdir -p "$(dirname "$CI_DIR")"
+          git clone --quiet "$REMOTE" "$CI_DIR"
+          cd "$CI_DIR"
+          # The exact commit, not whatever main points at by the time this runs.
+          git checkout --quiet "${{ github.sha }}"
+          echo "testing $(git rev-parse --short HEAD)"
+
+      - name: ergon-lint
+        run: cd "$CI_DIR" && ./bin/ergon-lint
+
+      - name: Bundles
+        run: cd "$CI_DIR" && ./bin/test-bundles.sh
+
+      - name: Hardware
+        run: cd "$CI_DIR" && ./bin/test-hardware.sh
+
+      # The public mirror is worse than useless when it is stale: someone clones
+      # a tree that is weeks behind and hits bugs that were fixed. Pushing it
+      # here means it can only ever be behind by a run that FAILED.
+      #
+      # Uses the github.com-jvines host alias from the runner user's ssh config,
+      # which is how this account's key is selected. No secret is needed.
+      - name: Mirror to GitHub
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          cd "$CI_DIR"
+          git push --quiet git@github.com-jvines:jvines/ergonOS.git \
+            "${{ github.sha }}:refs/heads/main"
+          echo "mirrored $(git rev-parse --short HEAD) to github.com/jvines/ergonOS"
+
+      - name: Clean up
+        if: always()
+        run: rm -rf "$CI_DIR"

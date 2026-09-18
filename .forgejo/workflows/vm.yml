@@ -1,0 +1,79 @@
+# The suites that actually prove something, on a timer.
+#
+# test-arch-vm.sh installs from the real Arch ISO under OVMF and boots the
+# result; test-hypr-session.sh provisions that disk, starts the compositor and
+# clicks a waybar button through /dev/uinput. Together ~35 minutes. That is
+# exactly why they get skipped by a human under time pressure, and exactly what
+# has caught the bugs that cost whole runs: a command committed 644, a grub.d
+# script that became entry 0, a systemd unit that ran even when its target
+# failed, git refusing to read a checkout it thought belonged to someone else.
+#
+# Weekly rather than per-push: 35 minutes of a 16-core box every commit would
+# make the machine unusable for the person trying to work on it, and these
+# suites test the installer, which does not change most days. Run it by hand
+# (workflow_dispatch) after touching anything under bin/arch-bootstrap.sh,
+# bin/provision-arch.sh or install.sh.
+name: vm
+
+on:
+  schedule:
+    # Monday 04:00 America/Santiago. Forgejo evaluates cron in UTC.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  # Never two at once: they would fight over the same qcow2 and over /dev/kvm.
+  # NOT cancel-in-progress -- killing a 30-minute run to start another wastes
+  # the half hour already spent and leaves a half-written disk behind.
+  group: vm
+  cancel-in-progress: false
+
+jobs:
+  install:
+    name: ISO install, boot assertions, desktop session
+    runs-on: checo
+    env:
+      CI_DIR: /home/jayvains/ci-runs/ergonos-vm-${{ github.run_id }}
+      REMOTE: ssh://git@git.jvines.cl:2222/jayvains/ergonOS.git
+      # Its own disk. The default is ~/.cache/fleet-artifacts/arch-vm, which is
+      # the disk a person tests against by hand -- a CI run rebuilding it
+      # mid-week would silently destroy their provisioned VM.
+      WORK: /home/jayvains/ci-vm/arch-vm
+    steps:
+      - name: Preconditions
+        run: |
+          set -euo pipefail
+          # Fail here, naming the cause, rather than twelve minutes in.
+          [ -c /dev/kvm ] || { echo "/dev/kvm is missing -- the runner cannot virtualise" >&2; exit 1; }
+          docker image inspect fleet-qemu >/dev/null 2>&1 \
+            || { echo "the fleet-qemu image is missing on this runner" >&2; exit 1; }
+          avail=$(df -BG --output=avail /home | tail -1 | tr -dc '0-9')
+          [ "${avail:-0}" -ge 40 ] \
+            || { echo "only ${avail}G free on /home; a run needs about 40G" >&2; exit 1; }
+          echo "kvm, fleet-qemu and ${avail}G free"
+
+      - name: Check out the commit under test
+        run: |
+          set -euo pipefail
+          rm -rf "$CI_DIR"
+          mkdir -p "$(dirname "$CI_DIR")"
+          git clone --quiet "$REMOTE" "$CI_DIR"
+          cd "$CI_DIR"
+          git checkout --quiet "${{ github.sha }}"
+          echo "testing $(git rev-parse --short HEAD)"
+
+      # --keep leaves the disk behind, because the session suite provisions
+      # that same disk rather than installing its own.
+      - name: Install from the ISO and assert against the booted system
+        run: cd "$CI_DIR" && ./bin/test-arch-vm.sh --keep
+
+      - name: Provision it and prove the desktop works
+        run: cd "$CI_DIR" && ./bin/test-hypr-session.sh
+
+      - name: Clean up
+        if: always()
+        run: |
+          # The disk is ~20G and nothing reads it between runs: the next run
+          # reinstalls from the ISO anyway. Keeping it would cost a fifth of
+          # /home for nothing.
+          rm -rf "$CI_DIR" "$WORK"
