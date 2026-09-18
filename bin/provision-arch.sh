@@ -457,6 +457,39 @@ else
   warn "could not install the knowledge base; ergon explain falls back to the checkout"
 fi
 
+# The machine's own AGENTS.md. Every current coding agent reads AGENTS.md, so
+# this is the one file that describes Ergon to all of them rather than to one
+# vendor's format. System-wide, so it is the same bytes for every user and for
+# an agent working in a project that has nothing to do with this checkout.
+# install.sh points each agent's global location at it.
+if sudo install -m644 "$ERGON/AGENTS.system.md" /usr/share/ergon/AGENTS.md; then
+  ok "machine AGENTS.md at /usr/share/ergon/AGENTS.md"
+else
+  warn "could not install /usr/share/ergon/AGENTS.md"
+fi
+
+# Claude Code has no machine-wide AGENTS.md: it discovers AGENTS.md only in the
+# working directory and above, and its user-level slot is ~/.claude/CLAUDE.md,
+# which belongs to the user. Its one OS-level hook is the managed policy file,
+# /etc/claude-code/CLAUDE.md on Linux. Symlinked, so there is still exactly one
+# source of truth and no second copy to drift.
+#
+# Additive by design: the docs are explicit that a managed CLAUDE.md and the
+# user's own ~/.claude/CLAUDE.md "don't count, and keep loading alongside
+# AGENTS.md" -- so this suppresses neither the user's file nor a project's.
+#
+# Note it cannot be filtered out with claudeMdExcludes. For a file that only
+# describes the machine that is the point; deleting it is the way out.
+CLAUDE_POLICY=/etc/claude-code/CLAUDE.md
+if [ -e "$CLAUDE_POLICY" ] && [ ! -L "$CLAUDE_POLICY" ]; then
+  warn "$CLAUDE_POLICY is a real file, left alone — Ergon's is /usr/share/ergon/AGENTS.md"
+else
+  sudo install -d /etc/claude-code
+  sudo ln -sfn /usr/share/ergon/AGENTS.md "$CLAUDE_POLICY" \
+    && ok "claude code: $CLAUDE_POLICY -> /usr/share/ergon/AGENTS.md" \
+    || warn "could not link $CLAUDE_POLICY"
+fi
+
 say "done"
 cat <<'EOF'
 

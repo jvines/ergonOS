@@ -101,6 +101,25 @@ if [ "$CHECK" != 1 ]; then
   ok "$n agent skills linked, for Claude Code and Codex (see: ergon explain --list)"
 fi
 
+# The machine's own AGENTS.md. Every current coding agent reads AGENTS.md, so
+# one file describes Ergon to all of them instead of one per vendor format --
+# but each looks in a different global location, and none of them may have
+# theirs clobbered: a hand-written global instruction file is the user's.
+#
+# Points at the system copy when the machine is provisioned, and at the
+# checkout otherwise, so this works on a box that only has a clone.
+if [ "$CHECK" != 1 ]; then
+  a_src=/usr/share/ergon/AGENTS.md
+  [ -f "$a_src" ] || a_src="$ERGON/AGENTS.system.md"
+  a_dst="${CODEX_HOME:-$HOME/.codex}/AGENTS.md"
+  mkdir -p "$(dirname "$a_dst")"
+  if [ -e "$a_dst" ] && [ ! -L "$a_dst" ]; then
+    warn "$a_dst is a real file, so it is left alone — to use Ergon's, add a line: @$a_src"
+  else
+    ln -sfn "$a_src" "$a_dst" && ok "codex: global AGENTS.md -> $a_src"
+  fi
+fi
+
 if [ "$CHECK" != 1 ]; then
   "$ERGON/bin/pyfleet" ensure || warn "the base python did not build"
   if ! "$ERGON/bin/ergon-theme" --check >/dev/null 2>&1; then

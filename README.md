@@ -65,12 +65,15 @@ Recorded in `hosts/<host>/host.env`, so re-provisioning reproduces the machine.
 
 ## What makes it different
 
-- **Snapshots before every update, bootable from GRUB.** btrfs subvolumes,
-  `snap-pac`, and `ergon rollback` for when a boot goes wrong.
+- **It un-breaks its own boot.** btrfs subvolumes and `snap-pac` snapshot every
+  pacman transaction; after two boots that never reach the default target, GRUB
+  boots the last known-good snapshot by itself — using that snapshot's own
+  kernel, which is what makes a bad kernel update survivable.
 - **Provenance by default.** Every figure records the script, the commit and the
   environment that made it. Every long run is journalled.
-- **The exoplanet characterization pipeline**, wired together in one bundle:
-  ARIADNE → LACHESIS → Nereus, on DAEDALUS underneath.
+- **Hardware by capability, not by model.** Sleep behaviour, panel, light
+  sensor, fingerprint reader — detected and configured from what the machine
+  actually has, so it works on a laptop nobody wrote a profile for.
 - **Tested, not asserted.** The suite installs from the real ISO under OVMF,
   provisions, starts the compositor, and clicks a workspace button with a
   synthetic input event to check that it switches. See
