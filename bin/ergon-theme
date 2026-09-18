@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# ergon:summary=Expand theme/cool.env into every themed config
+# ergon:group=theme
+# ergon:args=[--check]
+# Expands the palette into every committed config that carries colours.
+#
+#   ergon-theme                   # render, report what changed
+#   ergon-theme --check           # exit 1 if anything is stale (for CI / pre-commit)
+#
+# Every themed config is committed as <name>.in alongside its output, with
+# @COOL_*@ placeholders. This renders, rather than reading the palette at
+# runtime, for one reason: install.sh links the repo into $HOME, so a file
+# generated into $HOME at install time would be clobbered by the next link()
+# and a file generated into the repo at install time would make every host
+# permanently dirty. Rendering here, committing the result, keeps the tree
+# clean on every machine and keeps the palette in exactly one place.
+#
+# Unexpanded placeholders are a hard error. A silently un-substituted @COOL_X@
+# in a CSS file is invisible -- the rule is simply dropped and the surface
+# renders with a default colour that looks plausible.
+set -euo pipefail
+
+# pwd -P, not pwd: ~/ergonOS is a symlink into ~/projects on every host, and
+# `find` does not descend into a symlinked starting directory without -L. With
+# the logical path this script finds zero templates and cheerfully reports
+# "up to date" forever, on every machine, having rendered nothing.
+ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+PALETTE="$ERGON/theme/cool.env"
+CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
+
+[ -f "$PALETTE" ] || { echo "no palette at $PALETTE" >&2; exit 1; }
+
+# Build the sed program from the palette. Keys are validated so a stray line in
+# cool.env cannot inject sed syntax.
+SEDPROG=$(mktemp); trap 'rm -f "$SEDPROG"' EXIT
+while IFS='=' read -r k v; do
+  case "$k" in
+    ''|'#'*) continue ;;
+    COOL_[A-Z0-9_]*) ;;
+    *) echo "bad key in cool.env: $k" >&2; exit 1 ;;
+  esac
+  v="${v%%[[:space:]]*}"                       # strip trailing comments
+  case "$v" in
+    '#'[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) ;;
+    *) echo "$k is not a 6-digit hex colour: '$v'" >&2; exit 1 ;;
+  esac
+  # Two forms: @COOL_X@ -> #RRGGBB, and @COOL_X:raw@ -> RRGGBB (hyprland wants
+  # 0xAARRGGBB or bare hex; CSS and ini want the hash).
+  printf 's|@%s@|%s|g\ns|@%s:raw@|%s|g\n' "$k" "$v" "$k" "${v#\#}" >> "$SEDPROG"
+done < "$PALETTE"
+
+rc=0; rendered=0; changed=0
+while IFS= read -r tpl; do
+  out="${tpl%.in}"
+  new=$(sed -f "$SEDPROG" "$tpl")
+
+  if leftover=$(printf '%s\n' "$new" | grep -oE '@COOL_[A-Z0-9_]+(:raw)?@' | sort -u); then
+    echo "!! $tpl references undefined colours:" >&2
+    # Unquoted on purpose: grep -o gives one placeholder per line and the
+    # split is what puts each on its own printf iteration.
+    # shellcheck disable=SC2086
+    printf '     %s\n' $leftover >&2
+    rc=1; continue
+  fi
+
+  rendered=$((rendered+1))
+  if [ -f "$out" ] && [ "$new" = "$(cat "$out")" ]; then continue; fi
+  changed=$((changed+1))
+  if [ "$CHECK" = 1 ]; then
+    echo "   stale: ${out#"$ERGON"/}"
+    rc=1
+  else
+    printf '%s\n' "$new" > "$out"
+    echo "   rendered ${out#"$ERGON"/}"
+  fi
+done < <(find -L "$ERGON" -name '*.in' -not -path '*/.git/*' | sort)
+
+if [ "$CHECK" = 1 ]; then
+  [ "$changed" = 0 ] && echo "   $rendered rendered files are up to date"
+else
+  [ "$changed" = 0 ] && echo "   $rendered files already up to date"
+fi
+exit $rc

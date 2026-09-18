@@ -1,0 +1,3 @@
+DESCRIPTION="marimo, and notebooks that survive version control"
+SIZE_MB=150
+NOTE="marimo notebooks are .py files, so they diff. And execution is reactive, so there is no stale cell -- out-of-order execution is the largest single source of notebook results nobody can reproduce."

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# ergon:summary=What this machine does, and whether threading is sane
+# ergon:group=system
+# ergon:args=[--json]
+#
+# Matmul, FFT and a sampler-shaped workload of many small likelihood calls,
+# reported next to the thread configuration.
+#
+# Its real job is diagnostic. Mysteriously ten times slower than yesterday, or
+# than the same code on a node, is almost always numpy grabbing every core
+# underneath a process pool that already has them.
+set -euo pipefail
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+[ -x "$VENV/bin/python" ] || { echo "ergon-bench: run: pyfleet sync" >&2; exit 1; }
+exec "$VENV/bin/python" "$ERGON/lib/ergon_bench.py" "$@"

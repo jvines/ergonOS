@@ -1,0 +1,66 @@
+# GENERATED from mako/config.in — edit the .in, then run: ergon theme
+#
+# Notifications. Top-right, under the bar, and they expire — a notification
+# daemon that keeps a history panel is a second inbox, and this machine already
+# has enough of those.
+#
+# The exception is urgency=critical, which never expires: on a laptop that
+# hibernates rather than shuts down, "battery critical" firing while you are
+# heads-down in a sampler is exactly the message that must still be on screen
+# when you look up.
+
+font=JetBrainsMono Nerd Font 11
+background-color=@COOL_BG1@
+text-color=@COOL_FG0@
+border-color=@COOL_BG2@
+progress-color=over @COOL_BG2@
+
+border-size=1
+border-radius=4
+padding=10,14
+margin=8
+
+# Below the 30px bar, hugging the right edge — same corner the bar's status
+# group lives in, so alerts appear next to the thing that raised them.
+layer=top
+anchor=top-right
+outer-margin=38,8,0,0
+
+width=420
+height=160
+max-visible=5
+default-timeout=6000
+ignore-timeout=0
+
+markup=1
+actions=1
+icons=1
+max-icon-size=48
+
+# One stack per app rather than a wall of identical toasts.
+group-by=app-name
+format=<b>%s</b>\n%b
+
+[grouped]
+format=<b>%s</b>\n%b
+
+[urgency=low]
+border-color=@COOL_BG2@
+text-color=@COOL_DIM@
+default-timeout=4000
+
+[urgency=normal]
+border-color=@COOL_ACCENT@
+
+# Never expires. See the header.
+[urgency=critical]
+border-color=@COOL_URGENT@
+text-color=@COOL_FG0@
+background-color=@COOL_BG0@
+border-size=2
+default-timeout=0
+
+# The OSD owns volume and brightness; these would be a duplicate toast for
+# something already drawn in the middle of the screen.
+[app-name=swayosd]
+invisible=1

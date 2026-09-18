@@ -1,0 +1,23 @@
+# Archives and catalogues.
+astroquery
+lightkurve           # TESS/Kepler light curves
+
+# Photometry and spectra.
+photutils
+specutils
+
+# Forward models.
+batman-package       # transit light curves
+ldtk                 # limb darkening from stellar atmosphere grids
+radvel               # RV orbits
+
+# The characterization chain. ARIADNE fits the SED for stellar parameters,
+# LACHESIS takes those to isochrones for mass/age/radius, and Nereus fits the
+# orbit -- on DAEDALUS underneath (see the inference bundle). Installing this
+# bundle is what wires the chain together.
+#
+# Note the names: the PyPI packages are astro-prefixed. Plain `lachesis` on
+# PyPI is a closed-caption segmentation tool by Alberto Pettarin, which would
+# install silently and fail at the first import.
+astroARIADNE
+astrolachesis

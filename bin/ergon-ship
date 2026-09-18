@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# ergon:summary=Run this project somewhere else, in the same environment
+# ergon:group=data
+# ergon:args=<target> -- <command>... [--backend ssh|slurm|container] [--fetch DIR]
+#
+#   ergon ship kira -- python fit.py
+#   ergon ship kira --fetch results -- python fit.py
+#
+# What makes "cluster frontend" mean something rather than describe where you
+# sit. Sends the project, reproduces the locked environment there, runs, and
+# brings the outputs back.
+#
+# BACKENDS, because the distro must not know about anyone's particular fleet:
+#
+#   ssh        the default. rsync the project, `uv sync --frozen`, run. Needs
+#              nothing on the far side but ssh and uv.
+#   slurm      wraps the command in sbatch for people who have a scheduler.
+#   container  builds from `ergon repro` and runs it under Apptainer, which is
+#              what shared clusters actually provide -- Docker wants a root
+#              daemon and no university will run one for you.
+#
+# A site with its own machinery -- a coordinator to claim nodes from, wake-on-
+# LAN, a queue -- puts a backend in ~/.config/ergon/ship.d/<name>.sh and it is
+# found here. That belongs in a private overlay, not in the distro.
+set -euo pipefail
+
+BACKEND=ssh
+FETCH=""
+TARGET=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --backend) BACKEND="${2:?}"; shift 2 ;;
+    --fetch)   FETCH="${2:?}"; shift 2 ;;
+    --)        shift; break ;;
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*)        echo "ergon-ship: unknown flag $1" >&2; exit 2 ;;
+    *)         TARGET="$1"; shift ;;
+  esac
+done
+[ -n "$TARGET" ] && [ $# -gt 0 ] || { echo "usage: ergon ship <target> [--fetch DIR] -- <command>..." >&2; exit 2; }
+[ -f pyproject.toml ] || { echo "ergon-ship: no pyproject.toml here — run from a project root" >&2; exit 1; }
+[ -f uv.lock ] || { echo "ergon-ship: no uv.lock. Without it the far side gets a DIFFERENT" >&2
+                    echo "            environment, which is the whole problem this avoids." >&2
+                    echo "            Run: uv lock" >&2; exit 1; }
+
+PROJ=$(basename "$PWD")
+REMOTE_DIR="${ERGON_SHIP_DIR:-~/ergon-ship}/$PROJ"
+SSH_OPTS='-o ServerAliveInterval=15 -o ServerAliveCountMax=4'
+
+# A site-provided backend wins. This is the seam that keeps the fleet out of
+# the distro: the coordinator, the claims and the wake-on-LAN live in one of
+# these files, in a private overlay.
+CUSTOM="${XDG_CONFIG_HOME:-$HOME/.config}/ergon/ship.d/$BACKEND.sh"
+if [ -f "$CUSTOM" ]; then
+  # shellcheck disable=SC1090
+  . "$CUSTOM"
+  ergon_ship_run "$TARGET" "$REMOTE_DIR" "$FETCH" "$@"
+  exit $?
+fi
+
+send() {
+  printf '   ·   sending %s -> %s:%s\n' "$PROJ" "$TARGET" "$REMOTE_DIR"
+  # rsync creates the LAST path component and not its parents, so a first ship
+  # to a machine fails with a bare mkdir error naming a directory you never
+  # asked it to make. --mkpath would do it, and is rsync 3.2.3+; ssh mkdir -p
+  # works everywhere.
+  # shellcheck disable=SC2086
+  ssh $SSH_OPTS "$TARGET" "mkdir -p $REMOTE_DIR"
+  # --timeout, because rsync over ssh hangs forever on a dead link rather than
+  # failing. Excludes are the things that must be REBUILT there, not copied:
+  # a .venv is full of absolute paths and binaries for the wrong machine.
+  # shellcheck disable=SC2086
+  rsync -az --delete --timeout=60 -e "ssh $SSH_OPTS" \
+    --exclude '.venv' --exclude '__pycache__' --exclude '.git' \
+    --exclude 'scratch' --exclude 'repro' \
+    ./ "$TARGET:$REMOTE_DIR/"
+}
+
+fetch_back() {
+  [ -n "$FETCH" ] || return 0
+  printf '   ·   fetching %s\n' "$FETCH"
+  mkdir -p "$FETCH"
+  # shellcheck disable=SC2086
+  rsync -az --timeout=60 -e "ssh $SSH_OPTS" "$TARGET:$REMOTE_DIR/$FETCH/" "$FETCH/" \
+    || printf '   !!   nothing came back from %s\n' "$FETCH" >&2
+}
+
+case "$BACKEND" in
+  ssh)
+    send
+    printf '   ·   reproducing the environment there\n'
+    # shellcheck disable=SC2086
+    ssh $SSH_OPTS "$TARGET" "cd $REMOTE_DIR && (command -v uv >/dev/null || \
+      curl -LsSf https://astral.sh/uv/install.sh | sh) && ~/.local/bin/uv sync --frozen --quiet \
+      || uv sync --frozen --quiet"
+    printf '   ·   running\n'
+    # shellcheck disable=SC2086
+    ssh $SSH_OPTS "$TARGET" "cd $REMOTE_DIR && .venv/bin/python -c 'pass' && \
+      PATH=$REMOTE_DIR/.venv/bin:\$PATH $*"
+    RC=$?
+    fetch_back
+    exit $RC
+    ;;
+  slurm)
+    send
+    # shellcheck disable=SC2086
+    ssh $SSH_OPTS "$TARGET" "cd $REMOTE_DIR && uv sync --frozen --quiet && \
+      sbatch --job-name=$PROJ --wrap='PATH=$REMOTE_DIR/.venv/bin:\$PATH $*'"
+    printf '   ok  submitted. squeue on %s to watch it; --fetch after it finishes\n' "$TARGET"
+    ;;
+  container)
+    command -v apptainer >/dev/null || { echo "ergon-ship: apptainer not installed here" >&2; exit 1; }
+    "$(dirname "$(readlink -f "$0")")/ergon-repro" --out .ship-repro >/dev/null
+    send
+    # shellcheck disable=SC2086
+    ssh $SSH_OPTS "$TARGET" "cd $REMOTE_DIR/.ship-repro && \
+      apptainer build --fakeroot repro.sif apptainer.def && \
+      cd $REMOTE_DIR && apptainer exec .ship-repro/repro.sif $*"
+    RC=$?
+    fetch_back
+    exit $RC
+    ;;
+  *)
+    echo "ergon-ship: no backend '$BACKEND'." >&2
+    echo "            built in: ssh, slurm, container" >&2
+    echo "            or provide one at $CUSTOM" >&2
+    exit 2
+    ;;
+esac

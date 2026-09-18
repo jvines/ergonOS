@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# ergon:summary=Open the terminal, whichever one this machine actually has
+# ergon:group=launch
+# ergon:args=[--class NAME] [command [args...]]
+#
+# wezterm is the daily terminal and an AUR git build (see packages/aur), which
+# makes it the one package most likely to be absent or mid-rebuild. binds.lua
+# used to name it directly, so on any machine without it SUPER+RETURN opened
+# nothing at all -- no error, no window, and no terminal from which to find out
+# why. That is not a hypothetical: it is every VM the desktop is tested in, and
+# it is the first boot of a freshly provisioned machine.
+#
+# binds.lua keeps its explicit foot binding as well. This is the automatic
+# fallback; that one is the deliberate escape hatch for when wezterm is present
+# but broken, which this cannot detect.
+set -euo pipefail
+
+CLASS=""
+if [ "${1:-}" = "--class" ]; then CLASS="${2:?--class needs a name}"; shift 2; fi
+
+# Each terminal spells the app-id flag differently, and gets the command in a
+# different position. Keep the mapping here rather than at every call site.
+if command -v wezterm >/dev/null; then
+  set -- start ${CLASS:+--class "$CLASS"} ${1:+--} "$@"
+  exec wezterm "$@"
+elif command -v foot >/dev/null; then
+  exec foot ${CLASS:+--app-id "$CLASS"} ${1:+--} "$@"
+elif command -v alacritty >/dev/null; then
+  exec alacritty ${CLASS:+--class "$CLASS"} ${1:+-e} "$@"
+elif command -v kitty >/dev/null; then
+  exec kitty ${CLASS:+--class "$CLASS"} "$@"
+fi
+
+command -v notify-send >/dev/null && \
+  notify-send -u critical "ergon-term" "no terminal emulator installed"
+echo "ergon-term: no terminal emulator found (wezterm, foot, alacritty, kitty)" >&2
+exit 1

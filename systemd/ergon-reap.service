@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop ergon services that have gone idle
+
+[Service]
+Type=oneshot
+ExecStart=%h/ergonOS/bin/ergon-svc reap

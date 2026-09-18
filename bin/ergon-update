@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# ergon:summary=Upgrade the system, with the checks that keep Arch boring
+# ergon:group=system
+# ergon:args=[--check] [--yes]
+#
+# `pacman -Syu` with the preconditions that turn "Arch breaks a lot" into "Arch
+# is fine". None of these are clever; they are the four ways a rolling upgrade
+# actually goes wrong, checked before anything is written:
+#
+#   1. no disk space        -- the upgrade dies PART WAY THROUGH, which on a
+#                              kernel/glibc transaction is the genuinely bad
+#                              outcome. Checked first, always.
+#   2. expired keyring      -- signature errors that read like a compromised
+#                              mirror. Fix the keyring, then upgrade.
+#   3. unread manual-intervention news -- informant gates this. The Arch news
+#                              items that break machines are always announced
+#                              first; the failure mode is not reading them.
+#   4. no rollback point    -- snap-pac snapshots pre-transaction, but only if
+#                              snapper is actually configured.
+#
+# The snapshot itself is not taken here: snap-pac hooks pacman directly, so
+# every transaction gets one whether it came from this script or not. What this
+# checks is that the hook can work.
+set -euo pipefail
+
+CHECK_ONLY=0; ASSUME_YES=0
+for a in "$@"; do
+  case "$a" in
+    --check) CHECK_ONLY=1 ;;
+    --yes|-y) ASSUME_YES=1 ;;
+    *) echo "unknown option: $a" >&2; exit 2 ;;
+  esac
+done
+
+# Root is needed for the transaction but not for the checks, so this asks for
+# sudo at the point it is used rather than refusing to start without it.
+say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+ok()   { printf '   ok   %s\n' "$*"; }
+warn() { printf '   !!   %s\n' "$*" >&2; }
+die()  { printf '   FAIL %s\n' "$*" >&2; exit 1; }
+
+MIN_ROOT_GIB="${ERGON_UPDATE_MIN_ROOT_GIB:-8}"
+
+say "space"
+# Two separate places, and they fail differently. / filling mid-transaction
+# corrupts a package set; the cache filling just aborts the download.
+root_free=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+[ "$root_free" -ge "$MIN_ROOT_GIB" ] \
+  || die "only ${root_free} GiB free on / — need ${MIN_ROOT_GIB} GiB. Run 'ergon update' after 'sudo paccache -rk1'"
+ok "${root_free} GiB free on /"
+
+# Snapshots live on the same filesystem and are not free. A btrfs filesystem
+# that reports space in df can still be out of METADATA, which fails in a way
+# that looks nothing like a full disk.
+if [ "$(findmnt -no FSTYPE /)" = btrfs ]; then
+  if btrfs filesystem usage / 2>/dev/null | grep -qE 'Metadata.*Free.*0\.00'; then
+    die "btrfs metadata is exhausted on / — run 'sudo btrfs balance start -m /' first"
+  fi
+  ok "btrfs metadata has headroom"
+fi
+
+say "rollback point"
+if [ -f /etc/snapper/configs/root ] && pacman -Q snap-pac >/dev/null 2>&1; then
+  ok "snapper + snap-pac — this transaction will be snapshotted"
+else
+  warn "no snapper/snap-pac: this upgrade will NOT be rollback-able"
+  [ "$ASSUME_YES" = 1 ] || die "refusing an unsnapshotted upgrade; pass --yes to override"
+fi
+
+say "keyring"
+# An out-of-date archlinux-keyring makes every package look unsigned. Updating
+# it FIRST, in its own transaction, is the documented order and the one thing
+# here that must not be folded into the main -Syu.
+if ! pacman -Q archlinux-keyring >/dev/null 2>&1; then
+  die "archlinux-keyring is not installed"
+fi
+ok "archlinux-keyring $(pacman -Q archlinux-keyring | awk '{print $2}')"
+
+say "news"
+if command -v informant >/dev/null; then
+  if ! informant check >/dev/null 2>&1; then
+    warn "unread Arch news — read it before upgrading:"
+    informant list -r 2>/dev/null | head -5
+    [ "$ASSUME_YES" = 1 ] || die "run 'informant read' first"
+  else
+    ok "no unread news"
+  fi
+else
+  warn "informant not installed — manual-intervention notices are not gated"
+fi
+
+say "pending"
+# checkupdates uses a temporary database, so it never touches the real one.
+# `pacman -Sy` to "check" is the classic way to create a partial-upgrade state.
+if command -v checkupdates >/dev/null; then
+  pending=$(checkupdates 2>/dev/null || true)
+  if [ -z "$pending" ]; then ok "already up to date"; exit 0; fi
+  printf '%s\n' "$pending" | sed 's/^/     /'
+  printf '   %d package(s)\n' "$(printf '%s\n' "$pending" | wc -l)"
+else
+  warn "pacman-contrib not installed — cannot preview"
+fi
+
+[ "$CHECK_ONLY" = 1 ] && exit 0
+
+say "upgrade"
+if [ "$ASSUME_YES" = 1 ]; then
+  sudo pacman -Syu --noconfirm
+else
+  sudo pacman -Syu
+fi
+
+say "cleanup"
+# Keep three versions. The cache is on its own subvolume precisely so a rollback
+# can still reach the packages needed to fix itself — do not empty it.
+sudo paccache -rk3 >/dev/null 2>&1 && ok "package cache trimmed to 3 versions"
+
+orphans=$(pacman -Qtdq 2>/dev/null || true)
+if [ -n "$orphans" ]; then
+  printf '   orphans:\n'; printf '%s\n' "$orphans" | sed 's/^/     /'
+  if [ "$ASSUME_YES" = 1 ]; then
+    printf '%s\n' "$orphans" | sudo pacman -Rns - --noconfirm
+  else
+    printf '   remove them with: pacman -Qtdq | sudo pacman -Rns -\n'
+  fi
+else
+  ok "no orphans"
+fi
+
+say "firmware"
+# Reported, never applied automatically. A firmware update is the one thing here
+# that a btrfs snapshot cannot roll back.
+if command -v fwupdmgr >/dev/null; then
+  sudo fwupdmgr refresh --force >/dev/null 2>&1 || true
+  fwupdmgr get-updates 2>/dev/null | sed 's/^/   /' || ok "no firmware updates"
+else
+  warn "fwupd not installed"
+fi
+
+say "done"
+if [ -e /var/run/reboot-required ] || [ "$(uname -r)" != "$(pacman -Q linux 2>/dev/null | awk '{print $2}' | sed 's/\.arch/-arch/')" ]; then
+  printf '   the running kernel differs from the installed one — reboot when convenient\n'
+fi

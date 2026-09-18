@@ -1,0 +1,3 @@
+DESCRIPTION="Reactive notebooks whose files are .py and diff in git"
+IDLE_MIN=120
+PORT=2718

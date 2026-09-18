@@ -1,0 +1,3 @@
+DESCRIPTION="Observational astronomy, and the characterization pipeline"
+SIZE_MB=900
+NOTE="ARIADNE -> LACHESIS -> Nereus is one chain: SED to stellar parameters to orbit, on DAEDALUS underneath. Installing this bundle wires it up."

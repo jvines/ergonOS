@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# ergon:summary=Register this project's environment as a notebook kernel
+# ergon:group=data
+# ergon:args=[register|list|remove] [--name NAME]
+#
+# uv environments are invisible to Jupyter. You make a project, install its
+# deps, open a notebook from the shared jupyterlab, and none of them are there --
+# because the notebook is running the pyfleet interpreter, not the project's.
+# Everyone hits this in week one and most people conclude uv and notebooks do
+# not mix.
+#
+# They do: a kernel is a JSON file naming an interpreter. This writes it.
+#
+#   cd myproject && ergon kernel        # register ./.venv as "myproject"
+#   ergon kernel list
+#   ergon kernel remove --name myproject
+set -euo pipefail
+
+KDIR="${XDG_DATA_HOME:-$HOME/.local/share}/jupyter/kernels"
+NAME=""
+CMD="${1:-register}"; [ $# -gt 0 ] && shift || true
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name) NAME="${2:?--name needs a value}"; shift 2 ;;
+    *) echo "ergon-kernel: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
+case "$CMD" in
+  register)
+    PROJ="$PWD"
+    PY="$PROJ/.venv/bin/python"
+    [ -x "$PY" ] || { echo "ergon-kernel: no .venv here — run 'uv sync' first" >&2; exit 1; }
+    NAME="${NAME:-$(basename "$PROJ")}"
+    SLUG=$(printf '%s' "$NAME" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9._-')
+
+    # ipykernel has to be IN the project env, not in pyfleet: the kernel runs
+    # the project's interpreter, and an interpreter without ipykernel cannot be
+    # a kernel no matter what the JSON says.
+    if ! "$PY" -c 'import ipykernel' 2>/dev/null; then
+      echo "   ·   installing ipykernel into the project env"
+      UV=""
+      for p in "$HOME/.local/bin/uv" /usr/local/bin/uv /opt/homebrew/bin/uv /usr/bin/uv; do
+        [ -x "$p" ] && { UV="$p"; break; }
+      done
+      if [ -n "$UV" ]; then
+        "$UV" pip install --python "$PY" --quiet ipykernel
+      else
+        "$PY" -m pip install --quiet ipykernel
+      fi
+    fi
+
+    mkdir -p "$KDIR/$SLUG"
+    cat > "$KDIR/$SLUG/kernel.json" <<JSON
+{
+  "argv": ["$PY", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+  "display_name": "$NAME",
+  "language": "python",
+  "metadata": { "ergon": { "project": "$PROJ" } }
+}
+JSON
+    printf '   ok  kernel "%s" -> %s\n' "$NAME" "$PY"
+    printf '       visible to the shared jupyterlab and to marimo\n'
+    ;;
+  list)
+    [ -d "$KDIR" ] || { echo "   no kernels registered"; exit 0; }
+    for k in "$KDIR"/*/kernel.json; do
+      [ -f "$k" ] || continue
+      d=$(basename "$(dirname "$k")")
+      py=$(sed -n 's/.*"argv": *\[ *"\([^"]*\)".*/\1/p' "$k")
+      # A kernel whose interpreter has been deleted is worse than no kernel: it
+      # appears in the menu and fails on selection with a traceback about a
+      # missing file.
+      [ -x "$py" ] && st="ok  " || st="DEAD"
+      printf '   %s %-22s %s\n' "$st" "$d" "$py"
+    done
+    ;;
+  remove)
+    [ -n "$NAME" ] || { echo "ergon-kernel: remove needs --name" >&2; exit 2; }
+    SLUG=$(printf '%s' "$NAME" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9._-')
+    [ -d "$KDIR/$SLUG" ] || { echo "   ·   no kernel '$SLUG'"; exit 0; }
+    rm -rf "${KDIR:?}/$SLUG"
+    printf '   ok  removed %s\n' "$SLUG"
+    ;;
+  -h|--help|help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "ergon-kernel: unknown command '$CMD' (register|list|remove)" >&2; exit 2 ;;
+esac

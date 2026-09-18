@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# ergon:summary=Run or list the ergon-* commands
+# ergon:group=help
+# ergon:args=[command] [args...] | --list | --group <name>
+#
+# The one idea worth taking from Omarchy's 457-script CLI: scripts describe
+# themselves in a comment header, and the router reads those headers. There is
+# no registry, no manifest and nothing to keep in sync — dropping a new
+# executable into bin/ with a `# ergon:summary=` line is the entire registration
+# step, and a script that lies about itself is a script you are reading anyway.
+set -euo pipefail
+
+BINDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Only the first 20 lines: the tags are a header, and scanning whole files makes
+# `ergon` visibly slow once bin/ has a few dozen scripts in it.
+tag() { sed -n "1,20{s/^# ergon:$2=//p;}" "$1" | head -1; }
+
+entries() {
+  local f name g s
+  for f in "$BINDIR"/ergon-*; do
+    [ -x "$f" ] || continue
+    name="${f##*/}"
+    g=$(tag "$f" group);   g=${g:-misc}
+    s=$(tag "$f" summary); s=${s:-(undocumented)}
+    printf '%s\t%s\t%s\n' "$g" "${name#ergon-}" "$s"
+  done | sort
+}
+
+usage() {
+  local group=""
+  printf 'ergon <command> [args...]\n\n'
+  while IFS=$'\t' read -r g n s; do
+    [ "$g" = "$group" ] || { printf '\n  %s\n' "${g:-misc}"; group="$g"; }
+    printf '    %-16s %s\n' "$n" "$s"
+  done < <(entries)
+  printf '\n'
+}
+
+case "${1:-}" in
+  ''|-h|--help)
+    # Picker in a graphical session, plain list in a pipe or a TTY.
+    if [ ! -t 1 ] && command -v fuzzel >/dev/null && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+      sel=$(entries | awk -F'\t' '{printf "%-16s %s\n", $2, $3}' | fuzzel --dmenu --prompt 'ergon  ' --width 76) || exit 0
+      exec "$BINDIR/ergon-${sel%% *}"
+    fi
+    usage; exit 0 ;;
+  --list)  entries | awk -F'\t' '{print $2}'; exit 0 ;;
+  --group) entries | awk -F'\t' -v g="${2:?--group needs a name}" '$1==g{printf "%-16s %s\n", $2, $3}'; exit 0 ;;
+esac
+
+cmd="$1"; shift
+target="$BINDIR/ergon-$cmd"
+if [ ! -x "$target" ]; then
+  printf 'ergon: no such command: %s\n\n' "$cmd" >&2
+  usage >&2
+  exit 127
+fi
+exec "$target" "$@"

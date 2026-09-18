@@ -1,0 +1,3 @@
+DESCRIPTION="LaTeX, with the journal classes preloaded"
+SIZE_MB=2200
+NOTE="Big, which is exactly why it is a choice. Useful even if you draft in Overleaf: build locally, then upload what the journal wants."

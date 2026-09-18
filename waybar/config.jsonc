@@ -1,0 +1,146 @@
+// Bar. One line of status, not a control panel — anything that needs more than
+// a glance lives in a TUI that is one keystroke away.
+//
+// Module choice is for THIS machine's job: a cluster frontend that runs long
+// MCMC locally. cpu / memory / temperature are first-class and sit leftmost in
+// the right group, because a sampler quietly thermal-throttling or a chain
+// eating 90 GB is the failure you actually need to see. Everything else is
+// laptop housekeeping.
+//
+// Colours are not here: style.css is generated from theme/cool.env.
+{
+  "layer": "top",
+  "position": "top",
+  "height": 30,
+  "spacing": 0,
+
+  "modules-left":   ["hyprland/workspaces", "hyprland/submap"],
+  "modules-center": ["hyprland/window"],
+  "modules-right":  [
+    "custom/temperature", "cpu", "memory",
+    "wireplumber", "backlight",
+    "network", "bluetooth", "battery", "power-profiles-daemon",
+    "clock", "tray"
+  ],
+
+  "hyprland/workspaces": {
+    "format": "{id}",
+    "on-click": "activate",
+    // Persistent 1-9 so the bar has a fixed geometry; a workspace that does not
+    // exist yet is still a target you can click or jump to.
+    "persistent-workspaces": { "*": 9 }
+  },
+
+  "hyprland/submap": {
+    "format": "󰌆 {}",
+    "tooltip": false
+  },
+
+  "hyprland/window": {
+    "format": "{title}",
+    "max-length": 90,
+    "separate-outputs": true,
+    "rewrite": {
+      "(.*) — Mozilla Firefox": "󰈹  $1",
+      "(.*) - Discord": "󰙯  $1",
+      "^(.*)\\s*$": "$1"
+    }
+  },
+
+  // k10temp's hwmon number is not stable across boots, so this is a script that
+  // finds it rather than a hardcoded /sys path. See bin/ergon-temp.
+  "custom/temperature": {
+    "exec": "ergon-temp",
+    "return-type": "json",
+    "interval": 5,
+    "format": "{}",
+    "on-click": "ergon-launch-tui btop"
+  },
+
+  "cpu": {
+    "interval": 5,
+    "format": "󰻠 {usage}%",
+    "on-click": "ergon-launch-tui btop"
+  },
+
+  // Used GiB, not a percentage. On 96 GB a percentage hides the number that
+  // matters — "71G" tells you whether the next chain fits, "74%" does not.
+  "memory": {
+    "interval": 5,
+    "format": "󰍛 {used:0.0f}G",
+    "tooltip-format": "{used:0.1f} GiB of {total:0.1f} GiB   swap {swapUsed:0.1f}G",
+    "on-click": "ergon-launch-tui btop"
+  },
+
+  "wireplumber": {
+    "format": "{icon} {volume}%",
+    "format-muted": "󰝟",
+    "format-icons": ["󰕿", "󰖀", "󰕾"],
+    "on-click": "ergon-launch-tui wiremix",
+    "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+    "scroll-step": 5
+  },
+
+  "backlight": {
+    "format": "{icon} {percent}%",
+    "format-icons": ["󰃞", "󰃟", "󰃠"],
+    "tooltip": false
+  },
+
+  "network": {
+    "format-wifi": "󰖩 {essid}",
+    "format-ethernet": "󰈀 {ipaddr}",
+    "format-disconnected": "󰖪",
+    "tooltip-format-wifi": "{essid}  {signalStrength}%  {ipaddr}\n{bandwidthDownBits} down  {bandwidthUpBits} up",
+    "on-click": "ergon-launch-tui nmtui"
+  },
+
+  "bluetooth": {
+    "format": "󰂯",
+    "format-disabled": "",
+    "format-connected": "󰂱 {num_connections}",
+    "tooltip-format-connected": "{device_enumerate}",
+    "on-click": "blueman-manager"
+  },
+
+  "battery": {
+    "interval": 30,
+    "states": { "warning": 25, "critical": 10 },
+    "format": "{icon} {capacity}%",
+    "format-charging": "󰂄 {capacity}%",
+    "format-plugged": "󰚥 {capacity}%",
+    "format-icons": ["󰁺", "󰁽", "󰁿", "󰂁", "󰁹"],
+    "tooltip-format": "{timeTo}   {power:0.1f} W"
+  },
+
+  // Blocked from touching amdgpu panel power — see
+  // hardware/framework-13-amd/. Left
+  // clickable so you can drop to power-saver before a flight without a TUI.
+  "power-profiles-daemon": {
+    "format": "{icon}",
+    "tooltip-format": "{profile}",
+    "format-icons": {
+      "performance": "󰓅",
+      "balanced": "󰾅",
+      "power-saver": "󰾆"
+    }
+  },
+
+  // UTC on hover: every timestamp the fleet writes is UTC, and doing the
+  // arithmetic in your head at 2am is how you misread a log.
+  "clock": {
+    "interval": 30,
+    "format": "{:%a %d %b  %H:%M}",
+    "tooltip-format": "<tt>{calendar}</tt>",
+    "calendar": {
+      "mode": "month",
+      "format": { "today": "<b><u>{}</u></b>" }
+    },
+    "actions": { "on-click-right": "mode" }
+  },
+
+  "tray": {
+    "icon-size": 16,
+    "spacing": 8
+  }
+}

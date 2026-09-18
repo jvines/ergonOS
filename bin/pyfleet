@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# The fleet's shared Python environment.
+#
+#   pyfleet sync      create or update it from packages/python  (idempotent)
+#   pyfleet add PKG   add a package without putting it in packages/python
+#   pyfleet drop PKG  remove one, unless packages/python declares it or an
+#                     installed package still requires it
+#   pyfleet path      print the venv location
+#   pyfleet list      what is installed
+#   pyfleet destroy   delete it; `sync` rebuilds from scratch
+#
+# One uv venv, same versions on Debian, macOS and Arch. uv rather than the
+# distro packages because there are three package managers across this fleet and
+# the numpy you get from trixie is not the numpy you get from Arch rolling --
+# and a back-of-the-envelope answer that differs by host is worse than useless.
+#
+# This is NOT where heavy work goes. Per-project uv environments are; this is
+# the one you get for free in any shell.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+LIST="$ERGON/packages/python"
+
+# 3.13, not 3.14 (the current stable). One minor behind is deliberate: scipy and
+# friends ship wheels for the new CPython last, and a missing wheel means a
+# source build that needs a compiler this fleet does not all have.
+PYVER="${PYFLEET_PYTHON:-3.13}"
+
+# uv lands in ~/.local/bin, which is not on the default non-interactive PATH.
+# Look for it explicitly rather than trusting `command -v` -- the same reason
+# install.sh hunts for sops by absolute path.
+UV=""
+for p in "$HOME/.local/bin/uv" /usr/local/bin/uv /opt/homebrew/bin/uv /usr/bin/uv; do
+  [ -x "$p" ] && { UV="$p"; break; }
+done
+[ -n "$UV" ] || { echo "uv not found — install it first (it is in packages/pacman and provision-debian.sh)" >&2; exit 1; }
+
+_pkglist() { sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/[[:space:]]*$//' "$LIST"; }
+
+# uv keeps its downloaded interpreters and its cache under XDG_DATA_HOME. If
+# anything has ever run as root in this HOME, that tree is root-owned and every
+# uv command dies with a bare `Permission denied (os error 13)` naming a path
+# and nothing else -- which reads as a uv bug rather than as an ownership
+# problem. Say what is actually wrong.
+# Figure provenance, installed into the venv rather than asked of the user.
+#
+# A save_with_provenance() helper would be correct and unused; the value is in
+# never thinking about it. A .pth file is executed by the interpreter at
+# startup, so every plot made by this python records the script, the commit and
+# the date -- see lib/ergon_figprov.py.
+#
+# The symlink means editing the repo copy takes effect immediately, with no
+# reinstall step to forget.
+_install_provenance() {
+  local sp
+  sp=$("$VENV/bin/python" -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])' 2>/dev/null) || return 0
+  [ -d "$sp" ] || return 0
+  ln -sfn "$ERGON/lib/ergon_figprov.py" "$sp/ergon_figprov.py"
+  printf 'import ergon_figprov\n' > "$sp/zzz-ergon-provenance.pth"
+  # zzz- so it sorts last: .pth files run in filename order and this one wants
+  # the rest of site-packages already set up.
+}
+
+_check_writable() {
+  local d="${XDG_DATA_HOME:-$HOME/.local/share}"
+  mkdir -p "$d" 2>/dev/null || true
+  if [ ! -w "$d" ]; then
+    echo "pyfleet: $d is not writable by $(id -un)" >&2
+    ls -ld "$d" 2>/dev/null | sed 's/^/  /' >&2
+    echo "  something ran as root in this HOME. Fix with:" >&2
+    echo "    sudo chown -R $(id -un):$(id -gn) $d" >&2
+    exit 1
+  fi
+}
+
+case "${1:-sync}" in
+  sync)
+    _check_writable
+    mapfile -t PKGS < <(_pkglist)
+    [ "${#PKGS[@]}" -gt 0 ] || { echo "packages/python is empty" >&2; exit 1; }
+    if [ ! -x "$VENV/bin/python" ]; then
+      echo "  creating $VENV (python $PYVER)"
+      # --python pins the INTERPRETER, and uv downloads it if the host does not
+      # have it. Without this the venv inherits whatever python the host
+      # happens to ship -- 3.12 on checo, something else via homebrew on the
+      # Macs, whatever Arch is rolling this week -- and "the same environment
+      # everywhere" quietly is not.
+      "$UV" venv --python "$PYVER" "$VENV" >/dev/null
+    fi
+    # --python pins the venv's interpreter so uv does not resolve against
+    # whatever python happens to be first on PATH, which differs between the
+    # Debian boxes and the Macs.
+    VIRTUAL_ENV="$VENV" "$UV" pip install --python "$VENV/bin/python" --quiet --upgrade "${PKGS[@]}"
+    _install_provenance
+    printf '   ok   %d packages in %s\n' "${#PKGS[@]}" "$VENV"
+    "$VENV/bin/python" -c 'import sys; print("   python", sys.version.split()[0])'
+    ;;
+  ensure)
+    # Create it only if it is missing. install.sh calls this, and install.sh is
+    # re-run daily by dotfiles-sync -- an --upgrade on that schedule would move
+    # numpy under a running analysis without anyone asking. Upgrading is
+    # `pyfleet sync`, explicitly, when you decide to.
+    if [ -x "$VENV/bin/python" ]; then
+      exit 0
+    fi
+    exec "$0" sync
+    ;;
+  add)
+    _check_writable
+    # Install extra packages into the shared venv WITHOUT adding them to
+    # packages/python. This is how bundles land: opting into the inference
+    # bundle should mean `import emcee` works in the python you get for free,
+    # and packages/python stays the description of the BASE environment.
+    #
+    # A venv rebuild (`destroy` then `sync`) drops these. That is what
+    # `ergon-bundle sync` is for, and why host.env records the bundles rather than
+    # the installer merely applying them.
+    #
+    # `--` before the names: a requirement starting with `-` is an option to uv
+    # (--index-url=, -e), and ergon-bundle hands this a bundle's lines.
+    shift; [ "${1:-}" != -- ] || shift
+    [ "$#" -gt 0 ] || { echo "usage: pyfleet add [--] <pkg>..." >&2; exit 2; }
+    [ -x "$VENV/bin/python" ] || "$0" sync >/dev/null
+    VIRTUAL_ENV="$VENV" "$UV" pip install --python "$VENV/bin/python" --quiet --upgrade -- "$@"
+    printf '   ok   added %d package(s) to %s\n' "$#" "$VENV"
+    ;;
+  drop)
+    shift; [ "${1:-}" != -- ] || shift
+    [ "$#" -gt 0 ] || { echo "usage: pyfleet drop [--] <pkg>..." >&2; exit 2; }
+    # A package in packages/python is part of the BASE environment, and a
+    # bundle being removed must not take numpy with it.
+    keep=$(_pkglist)
+    rm=()
+    for p in "$@"; do
+      # `NAME @ git+URL` drops by NAME. A bare git+URL typed by hand drops by
+      # its last segment, which is only a guess: nereus-py installs as
+      # astronereus.
+      case $p in
+        *' @ '*) n=${p%% @ *} ;;
+        *)       n=${p##*/}; n=${n%%[@#]*} ;;
+      esac
+      if printf '%s\n' "$keep" | grep -qixF -- "$n"; then
+        printf '   ·   %s is in packages/python, keeping it\n' "$n"
+        continue
+      fi
+      # Nor anything an installed package still needs: `uv pip uninstall`
+      # checks no reverse dependencies, so a bundle that listed pillow would
+      # take it out from under the base environment's matplotlib.
+      by=$(VIRTUAL_ENV="$VENV" "$UV" pip show --python "$VENV/bin/python" -- "$n" 2>/dev/null \
+             | sed -n 's/^Required-by: *//p' | tr ',' '\n' | sed 's/^ *//; /^$/d' || true)
+      for q in "$@"; do
+        q=${q%% @ *}
+        by=$(printf '%s\n' "$by" | grep -vixF -- "$q" || true)
+      done
+      if [ -n "$by" ]; then
+        printf '   ·   %s kept: required by %s\n' "$n" "$(printf '%s' "$by" | tr '\n' ' ')"
+        continue
+      fi
+      rm+=("$n")
+    done
+    [ "${#rm[@]}" -gt 0 ] || { echo "   nothing to remove"; exit 0; }
+    VIRTUAL_ENV="$VENV" "$UV" pip uninstall --python "$VENV/bin/python" -- "${rm[@]}" || true
+    printf '   ok   removed %d package(s)\n' "${#rm[@]}"
+    ;;
+  path)    echo "$VENV" ;;
+  list)    VIRTUAL_ENV="$VENV" "$UV" pip list --python "$VENV/bin/python" ;;
+  destroy)
+    [ -d "$VENV" ] || { echo "  nothing at $VENV"; exit 0; }
+    rm -rf "${VENV:?}"
+    echo "  removed $VENV — run 'pyfleet sync' to rebuild"
+    ;;
+  -h|--help|help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "pyfleet: unknown command '$1'" >&2; exit 2 ;;
+esac

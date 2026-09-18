@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# ergon:summary=Everything about a target, from any identifier, in one card
+# ergon:group=data
+# ergon:args=<name|TOI|TIC|HD|Gaia>
+#
+#   ergon target TOI-5205
+#   ergon target "HD 209458"
+#
+# Coordinates, spectral type, parallax and distance, magnitudes, and for a TOI
+# the TIC id, the current TFOPWG disposition, period, depth and sectors.
+#
+# Needs the astronomy bundle: ergon bundle add astronomy
+set -euo pipefail
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+[ -x "$VENV/bin/python" ] || { echo "ergon-target: run: pyfleet sync" >&2; exit 1; }
+exec "$VENV/bin/python" "$ERGON/lib/ergon_target.py" "$@"

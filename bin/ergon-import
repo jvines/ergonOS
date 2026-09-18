@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# ergon:summary=Turn a conda environment.yml into a uv project
+# ergon:group=data
+# ergon:args=[FILE] [--name NAME]
+#
+#   ergon import environment.yml
+#
+# Everyone in science has conda environments and most of them resent conda. The
+# single biggest thing between "this distro looks nice" and "I can move my work
+# to it this afternoon" is not having to redo that by hand.
+#
+# It is HONEST about what it cannot map. conda packages are not PyPI packages:
+# some are compilers, some are C libraries with no wheel, some are named
+# differently. Anything unmapped is reported and left in a comment rather than
+# silently dropped, because a lockfile missing a dependency you did not notice
+# is worse than no lockfile.
+set -euo pipefail
+
+FILE="${1:-environment.yml}"
+[ -f "$FILE" ] || { echo "ergon-import: no such file: $FILE" >&2; exit 1; }
+NAME=""
+[ "${2:-}" = "--name" ] && NAME="${3:?}"
+
+python3 - "$FILE" "$NAME" <<'PY'
+import re, sys, os
+
+path, forced_name = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+
+name = forced_name or (re.search(r"^name:\s*(\S+)", text, re.M) or [None, "imported"])[1]
+pyver = None
+
+# Things that exist only in conda's world. Listing them beats guessing: a
+# compiler toolchain or a C library has no PyPI equivalent, and pretending
+# otherwise produces a project that cannot resolve.
+CONDA_ONLY = {
+    "python", "pip", "conda", "setuptools", "wheel",
+    "gcc_linux-64", "gxx_linux-64", "gfortran_linux-64", "compilers",
+    "libgcc-ng", "libstdcxx-ng", "libgfortran-ng", "binutils",
+    "cudatoolkit", "cudnn", "mkl", "openblas", "blas", "libblas",
+    "hdf5", "netcdf4-c", "libnetcdf", "fftw", "gsl", "cfitsio",
+    "openmp", "llvm-openmp", "_libgcc_mutex", "_openmp_mutex", "ca-certificates",
+}
+# conda names that differ from the PyPI ones people actually want.
+RENAME = {"pytorch": "torch", "tensorflow-gpu": "tensorflow",
+          "opencv": "opencv-python", "pytables": "tables",
+          "scikit-image": "scikit-image", "ruamel_yaml": "ruamel.yaml"}
+
+deps, pip_deps, unmapped = [], [], []
+in_deps = in_pip = False
+for line in text.splitlines():
+    if re.match(r"^dependencies:", line):
+        in_deps = True; continue
+    if in_deps and re.match(r"^\S", line):
+        in_deps = in_pip = False
+    if not in_deps:
+        continue
+    stripped = line.strip()
+    if stripped.startswith("- pip:"):
+        in_pip = True; continue
+    if not stripped.startswith("- "):
+        continue
+    spec = stripped[2:].strip().strip('"\'')
+    if in_pip:
+        pip_deps.append(spec); continue
+    # Keep the OPERATOR, do not assume ==. conda writes a bare `=` for what
+    # PyPI spells `==`, but `>=6.0` means something different and rewriting it
+    # as `==6.0` silently pins an environment the user never asked for -- the
+    # exact class of change nobody reviews and everybody inherits.
+    m = re.match(r"^([A-Za-z0-9_.\-]+)\s*([=<>!~]*)\s*([0-9][^=\s]*)?", spec)
+    if not m:
+        continue
+    pkg, op, ver = m.group(1).lower(), m.group(2) or "", m.group(3)
+    if op == "=":
+        op = "=="
+    if pkg == "python":
+        pyver = ver
+        continue
+    if pkg in CONDA_ONLY:
+        unmapped.append(spec); continue
+    pkg = RENAME.get(pkg, pkg)
+    deps.append(f"{pkg}{op or '=='}{ver}" if ver else pkg)
+
+deps += pip_deps
+pyver = (pyver or "3.13").rsplit(".", 1)[0] if pyver and pyver.count(".") > 1 else (pyver or "3.13")
+
+out = "pyproject.toml"
+if os.path.exists(out):
+    print(f"ergon-import: {out} already exists here — move it aside first", file=sys.stderr)
+    raise SystemExit(1)
+
+body = [f'[project]', f'name = "{name}"', 'version = "0.1.0"',
+        f'requires-python = ">={pyver}"', "dependencies = ["]
+body += [f'    "{d}",' for d in deps]
+body += ["]"]
+if unmapped:
+    body += ["", "# Not imported: these are conda-only (compilers, C libraries, BLAS",
+             "# implementations) and have no PyPI equivalent. uv gets its own wheels",
+             "# with these built in; if something here was load-bearing, say so",
+             "# explicitly rather than assuming it carried over."]
+    body += [f"#   {u}" for u in unmapped]
+open(out, "w").write("\n".join(body) + "\n")
+
+print(f"   ok  pyproject.toml  ({len(deps)} packages, python >={pyver})")
+if unmapped:
+    print(f"   !!  {len(unmapped)} conda-only entries not imported:")
+    for u in unmapped[:8]:
+        print(f"         {u}")
+    if len(unmapped) > 8:
+        print(f"         ... and {len(unmapped) - 8} more (listed in pyproject.toml)")
+print("\n   next:  uv lock && uv sync     then: ergon kernel")
+PY

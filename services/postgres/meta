@@ -1,0 +1,3 @@
+DESCRIPTION="Postgres with the science extensions (pgvector, postgis, q3c)"
+IDLE_MIN=0
+PORT=5432

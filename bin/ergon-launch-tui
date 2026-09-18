@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# ergon:summary=Focus a TUI if it is already open, otherwise start one
+# ergon:group=launch
+# ergon:args=<command> [args...]
+#
+# btop, wiremix and nmtui are all things you open, glance at and leave running.
+# Without focus-or-launch you end up with six btop windows across six
+# workspaces, which is how the waybar click handlers behave by default.
+set -euo pipefail
+
+cmd="${1:?usage: ergon-launch-tui <command> [args...]}"; shift || true
+# app_id has to be stable and distinct per tool; the command name is both.
+class="ergon-tui-${cmd##*/}"
+
+note() { command -v notify-send >/dev/null && notify-send -u critical "ergon-launch-tui" "$1"; echo "ergon-launch-tui: $1" >&2; }
+
+if command -v hyprctl >/dev/null; then
+  addr=$(hyprctl clients -j 2>/dev/null \
+         | jq -r --arg c "$class" 'map(select(.class == $c)) | first | .address // empty')
+  if [ -n "$addr" ]; then
+    # hl.dsp.exec_raw, not `dispatch focuswindow address:...`.
+    #
+    # A Lua-configured Hyprland evaluates the dispatch payload AS LUA, so the
+    # classic form arrives as `return hl.dispatch(focuswindow address:0x...)`
+    # and dies on a syntax error nothing here would ever have seen -- the window
+    # simply never came forward, and a second one opened instead. exec_raw is
+    # the escape hatch that takes the classic string; verified against a running
+    # compositor, along with the typed forms hl.dsp.focus{} and hl.dsp.cursor.
+    exec hyprctl dispatch "hl.dsp.exec_raw(\"focuswindow address:$addr\")"
+  fi
+fi
+
+command -v "$cmd" >/dev/null || { note "$cmd not installed"; exit 1; }
+
+# One resolver, shared with the keybinds (bin/ergon-term). The waybar modules that
+# call this are the only way to reach btop/nmtui/wiremix with the mouse, and
+# hard-coding wezterm meant a click on the CPU module did nothing at all, with
+# the failure two processes deep where nothing surfaces it.
+set -- ergon-term --class "$class" "$cmd" "$@"
+
+# uwsm-app gives it its own systemd scope, so it outlives a Hyprland reload
+# instead of being reaped with the compositor's children. It REQUIRES a
+# uwsm-managed session: outside one the window never appears, which from the
+# bar is indistinguishable from the click not registering at all.
+#
+# Detect the session by its unit rather than by an environment variable, and
+# fail SAFE -- if the unit is not found the app still launches, just as a child
+# of the compositor. Losing the scope is a much smaller problem than losing the
+# window.
+if command -v uwsm-app >/dev/null \
+   && systemctl --user list-units --state=active --no-legend 'wayland-wm@*.service' 2>/dev/null | grep -q .; then
+  exec uwsm-app -- "$@"
+fi
+exec "$@"

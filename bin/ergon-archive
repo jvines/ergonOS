@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# ergon:summary=Find the stale gigabytes and move them somewhere else
+# ergon:group=data
+# ergon:args=[PATH] [--older-than DAYS] [--min-size MB] [--to DEST] [--move]
+#
+#   ergon archive                      what is big and cold here (lists only)
+#   ergon archive ~/work --older-than 180
+#   ergon archive --to akane:/jvnas/archive --move
+#
+# Computational science accumulates hundreds of gigabytes nobody will open
+# again -- old chains, intermediate FITS, a hundred variants of one figure --
+# and you find out when the disk fills in the middle of a run.
+#
+# LISTING IS THE DEFAULT AND --move IS REQUIRED. A tool that deletes or
+# relocates data because you typed its name is not one to have on a machine
+# holding the only copy of something. --move also prints the exact set and asks
+# before touching anything.
+set -euo pipefail
+
+ROOT="${PWD}"
+DAYS=90
+MIN_MB=200
+DEST=""
+MOVE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --older-than) DAYS="${2:?}"; shift 2 ;;
+    --min-size)   MIN_MB="${2:?}"; shift 2 ;;
+    --to)         DEST="${2:?}"; shift 2 ;;
+    --move)       MOVE=1; shift ;;
+    -h|--help)    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*)           echo "ergon-archive: unknown flag $1" >&2; exit 2 ;;
+    *)            ROOT="$1"; shift ;;
+  esac
+done
+[ -d "$ROOT" ] || { echo "ergon-archive: no such directory: $ROOT" >&2; exit 1; }
+
+# Candidates are DIRECTORIES, not files: a chain is a directory of a thousand
+# files and reporting them individually is unreadable. Depth 3 keeps it to
+# project/run-level granularity rather than descending into every leaf.
+CAND=$(mktemp); trap 'rm -f "$CAND" "$CAND.all"' EXIT
+find "$ROOT" -mindepth 1 -maxdepth 3 -type d \
+     ! -path '*/.git/*' ! -name '.git' ! -path '*/.venv/*' ! -name '.venv' \
+     -print0 2>/dev/null |
+while IFS= read -r -d '' d; do
+  # Newest file inside decides staleness. A directory's own mtime only tracks
+  # its immediate entries, so a tree written to last week can look years old.
+  newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+  [ -n "$newest" ] || continue
+  age=$(( ( $(date +%s) - ${newest%.*} ) / 86400 ))
+  [ "$age" -ge "$DAYS" ] || continue
+  mb=$(du -sm "$d" 2>/dev/null | cut -f1)
+  [ "${mb:-0}" -ge "$MIN_MB" ] || continue
+  printf '%s\t%s\t%s\n' "$mb" "$age" "$d"
+done | sort -rn > "$CAND.all" || true
+
+# Drop any candidate that lives inside another candidate.
+#
+# Without this a stale tree is reported once for itself and once for every
+# stale ancestor, and the total counts the same bytes several times -- 951 MB
+# of spectra showed up as "1902 MB in 2 directories". Walk shallowest-first and
+# keep only paths that are not under something already kept.
+sort -t"$(printf '\t')" -k3,3 "$CAND.all" | awk -F'\t' '
+  { keep = 1
+    for (i = 1; i <= n; i++)
+      if (index($3 "/", kept[i] "/") == 1) { keep = 0; break }
+    if (keep) { kept[++n] = $3; print } }
+' | sort -rn > "$CAND"
+rm -f "$CAND.all"
+
+if [ ! -s "$CAND" ]; then
+  printf '   nothing older than %s days and larger than %s MB under %s\n' "$DAYS" "$MIN_MB" "$ROOT"
+  exit 0
+fi
+
+TOTAL=$(awk -F'\t' '{s+=$1} END {print s+0}' "$CAND")
+printf '\n  %8s  %5s  %s\n' SIZE AGE PATH
+printf '  %8s  %5s  %s\n' '--------' '-----' '------------------------------'
+while IFS=$'\t' read -r mb age d; do
+  printf '  %6s MB  %4sd  %s\n' "$mb" "$age" "${d#"$ROOT"/}"
+done < "$CAND"
+printf '\n  %s MB in %s directories\n' "$TOTAL" "$(wc -l < "$CAND")"
+
+if [ "$MOVE" != 1 ]; then
+  printf '\n  listing only. To move these, re-run with --to DEST --move\n'
+  exit 0
+fi
+[ -n "$DEST" ] || { echo "ergon-archive: --move needs --to DEST" >&2; exit 2; }
+
+printf '\n  This MOVES %s MB to %s and removes the originals.\n' "$TOTAL" "$DEST"
+printf '  Type MOVE to confirm: '
+read -r confirm
+[ "$confirm" = "MOVE" ] || { echo "  aborted"; exit 1; }
+
+command -v rsync >/dev/null || { echo "ergon-archive: rsync is required" >&2; exit 1; }
+while IFS=$'\t' read -r mb age d; do
+  rel="${d#"$ROOT"/}"
+  printf '   ·   %s\n' "$rel"
+  # --remove-source-files only deletes what actually transferred, so an
+  # interrupted copy loses nothing. The empty directories it leaves are cleaned
+  # afterwards, and only if the rsync succeeded.
+  if rsync -a --info=progress2 --remove-source-files \
+       -e 'ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4' \
+       "$d/" "$DEST/$rel/"; then
+    find "$d" -type d -empty -delete 2>/dev/null || true
+    printf '%s\tarchived to %s/%s\n' "$(date -Iseconds)" "$DEST" "$rel" \
+      >> "$ROOT/.ergon-archived"
+    printf '   ok  %s\n' "$rel"
+  else
+    printf '   FAIL %s — left in place\n' "$rel" >&2
+  fi
+done < "$CAND"
+printf '\n  a record of what went where is in %s/.ergon-archived\n' "$ROOT"

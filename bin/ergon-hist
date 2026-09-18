@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# ergon:summary=What you have run, when, for how long, and whether it worked
+# ergon:group=data
+# ergon:args=[N] [--failed] [--name PATTERN] [--json]
+#
+#   ergon hist                 the last 20 runs
+#   ergon hist 100 --failed    what broke
+#   ergon hist --name fit      everything matching
+#
+# "Which run in March was the one that worked" is a question everyone has and
+# nobody can answer. Every `ergon watch` writes here: command, working
+# directory, commit, duration, exit code, peak memory.
+#
+# Together with ergon-fig this is the provenance spine -- the figure tells you
+# which run produced it, and this tells you what that run was.
+set -euo pipefail
+
+JOURNAL="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/runs.jsonl"
+N=20; ONLY_FAILED=0; PATTERN=""; JSON=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --failed) ONLY_FAILED=1; shift ;;
+    --name)   PATTERN="${2:?--name needs a pattern}"; shift 2 ;;
+    --json)   JSON=1; shift ;;
+    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *[0-9]*)  N="$1"; shift ;;
+    *) echo "ergon-hist: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
+[ -f "$JOURNAL" ] || { echo "   no runs recorded yet — use: ergon watch -- <command>"; exit 0; }
+
+python3 - "$JOURNAL" "$N" "$ONLY_FAILED" "$PATTERN" "$JSON" <<'PY'
+import json, sys
+path, n, only_failed, pattern, as_json = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "1", sys.argv[4], sys.argv[5] == "1"
+
+rows = []
+for line in open(path, encoding="utf-8", errors="replace"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        rows.append(json.loads(line))
+    except json.JSONDecodeError:
+        # A partial line is a run that was killed mid-write. Skip it rather
+        # than refusing to show the other four hundred.
+        continue
+
+if only_failed:
+    rows = [r for r in rows if r.get("exit", 0) != 0]
+if pattern:
+    rows = [r for r in rows if pattern in r.get("name", "") or pattern in r.get("cmd", "")]
+rows = rows[-n:]
+
+if as_json:
+    print(json.dumps(rows, indent=2))
+    raise SystemExit(0)
+if not rows:
+    print("   nothing matches")
+    raise SystemExit(0)
+
+def dur(s):
+    return f"{s//3600}h{(s%3600)//60:02d}m" if s >= 3600 else (f"{s//60}m{s%60:02d}s" if s >= 60 else f"{s}s")
+
+w = min(max((len(r.get("name", "")) for r in rows), default=4), 24)
+print(f"  {'when':<17} {'name':<{w}} {'dur':>7} {'peak':>7}  {'git':<14} status")
+for r in rows:
+    when = r.get("started", "")[:16].replace("T", " ")
+    rc = r.get("exit", 0)
+    status = "ok" if rc == 0 else f"FAILED ({rc})"
+    print(f"  {when:<17} {r.get('name','')[:w]:<{w}} {dur(r.get('seconds',0)):>7} "
+          f"{str(r.get('peak_mb',0))+'M':>7}  {r.get('git','') or '-':<14} {status}")
+PY

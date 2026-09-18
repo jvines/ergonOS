@@ -1,0 +1,368 @@
+#!/usr/bin/env bash
+# ergon:summary=Detect this machine and apply what its hardware needs
+# ergon:group=system
+# ergon:args=detect|apply|list [--force NAME]
+#
+# Two layers, in this order:
+#
+#   capabilities  what the machine HAS, read from sysfs: s2idle-only firmware,
+#                 a working hibernation setup, an amdgpu-driven built-in
+#                 panel, a fingerprint daemon, an ambient light
+#                 sensor. The same image does the right thing on a Framework,
+#                 a ThinkPad, a desktop or a VM, because nothing here names a
+#                 model.
+#   profiles      quirks that belong to ONE model, matched by DMI
+#                 (hardware/<name>/). Only what cannot be expressed as a
+#                 capability goes there.
+#
+# ERGON_SYSROOT and ERGON_DESTROOT exist for bin/test-hardware.sh: sysfs and
+# /proc are read under the first, /etc and /boot written under the second.
+set -uo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+HWDIR="$ERGON/hardware"
+ROOT="${ERGON_SYSROOT:-}"
+DEST="${ERGON_DESTROOT:-}"
+DMI="$ROOT/sys/class/dmi/id"
+
+ok()   { printf '   ok  %s\n' "$*"; }
+skip() { printf '   ·   %s\n' "$*"; }
+warn() { printf '   !!  %s\n' "$*" >&2; }
+
+# Every file this writes carries the marker, and only a file carrying it is ever
+# removed: when a capability goes away (a dock, a BIOS setting), the config that
+# depended on it has to go too, but never a file somebody wrote by hand.
+MARK="# Written by ergon-hardware from what this machine has; removed when that stops being true."
+
+_put() {  # _put <path> < content
+  sudo install -Dm644 /dev/stdin "$DEST$1"
+}
+_unput() {  # _unput <path>...
+  local f
+  for f in "$@"; do
+    if [ -f "$DEST$f" ] && grep -qxF -- "$MARK" "$DEST$f"; then
+      sudo rm -f -- "$DEST$f" && ok "removed $f (no longer applies)"
+    fi
+  done
+}
+
+# --- what the machine has ------------------------------------------------------
+
+# No `deep` (S3) in mem_sleep: suspend is s2idle, which on most such laptops
+# drains a noticeable share of the battery overnight.
+_s2idle_only() {
+  local m; m=$(cat "$ROOT/sys/power/mem_sleep" 2>/dev/null) || return 1
+  case $m in *s2idle*) ;; *) return 1 ;; esac
+  case $m in *deep*) return 1 ;; esac
+}
+
+# Hibernation that can actually resume: the kernel offers it, the cmdline says
+# where to resume from, and swap is active. Lid-to-hibernate without all three
+# is a laptop that cold-boots and loses the session.
+_hibernate_ready() {
+  grep -qw disk "$ROOT/sys/power/state" 2>/dev/null || return 1
+  grep -q 'resume=' "$ROOT/proc/cmdline" 2>/dev/null || return 1
+  [ "$(grep -c . "$ROOT/proc/swaps" 2>/dev/null || echo 0)" -gt 1 ]
+}
+
+# A built-in panel (eDP) on a card whose driver is amdgpu.
+_amdgpu_panel() {
+  local c card drv
+  for c in "$ROOT"/sys/class/drm/card*-eDP-*; do
+    [ -e "$c" ] || continue
+    card=${c##*/}; card=${card%%-*}
+    drv=$(readlink "$ROOT/sys/class/drm/$card/device/driver" 2>/dev/null) || continue
+    [ "${drv##*/}" = amdgpu ] && return 0
+  done
+  return 1
+}
+
+# The illuminance file, as a glob over the iio device number: that number is
+# assigned at probe time and changes between boots on some machines.
+_als() {
+  local f
+  for f in "$ROOT"/sys/bus/iio/devices/iio:device*/in_illuminance_raw \
+           "$ROOT"/sys/bus/iio/devices/iio:device*/in_illuminance_input; do
+    [ -r "$f" ] || continue
+    f=${f#"$ROOT"}
+    printf '%s\n' "$(printf '%s' "$f" | sed 's/iio:device[0-9]*/iio:device*/')"
+    return 0
+  done
+  return 1
+}
+
+# The panel backlight. A GPU driver's `raw` interface first: `firmware` and
+# `platform` ones exist too on some laptops and do nothing.
+_backlight() {
+  local b best=""
+  for b in "$ROOT"/sys/class/backlight/*; do
+    [ -r "$b/brightness" ] || continue
+    [ -n "$best" ] || best=${b#"$ROOT"}
+    [ "$(cat "$b/type" 2>/dev/null)" = raw ] && { best=${b#"$ROOT"}; break; }
+  done
+  [ -n "$best" ] && printf '%s\n' "$best"
+}
+
+_has_unit() { [ -e "$ROOT/usr/lib/systemd/system/$1" ]; }
+
+# --- what to do about it ---------------------------------------------------------
+
+_capabilities() {
+  local als bl
+
+  # Lid. s2idle-only firmware plus working hibernation: fall through to
+  # hibernate. Anything else keeps logind's default, which is right for S3.
+  if _s2idle_only && _hibernate_ready; then
+    _put /etc/systemd/logind.conf.d/10-lid.conf <<EOF
+$MARK
+# s2idle only (no S3 in firmware), and hibernation is set up: a plain suspend
+# drains the battery overnight, so the lid falls through to hibernate.
+[Login]
+HandleLidSwitch=suspend-then-hibernate
+HandleLidSwitchExternalPower=suspend
+EOF
+    _put /etc/systemd/sleep.conf.d/10-hibernate.conf <<EOF
+$MARK
+[Sleep]
+HibernateMode=shutdown
+HibernateDelaySec=45min
+EOF
+    ok "lid: suspend-then-hibernate (s2idle-only firmware, hibernation ready)"
+  else
+    _unput /etc/systemd/logind.conf.d/10-lid.conf /etc/systemd/sleep.conf.d/10-hibernate.conf
+    if _s2idle_only; then
+      skip "lid: logind default (s2idle only, but hibernation is not set up: resume=, swap)"
+    else
+      skip "lid: logind default (firmware offers S3)"
+    fi
+  fi
+
+  # PPD >= 0.20 on kernel >= 6.9 turns on amdgpu Adaptive Backlight Management
+  # on battery, which desaturates the panel. On a machine for reading spectra
+  # and colormapped plots that is a correctness problem, not a cosmetic one.
+  if _amdgpu_panel && _has_unit power-profiles-daemon.service; then
+    _put /etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf <<EOF
+$MARK
+[Service]
+ExecStart=
+ExecStart=/usr/lib/power-profiles-daemon --block-action=amdgpu_panel_power
+EOF
+    ok "panel: amdgpu Adaptive Backlight Management blocked"
+  else
+    _unput /etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf
+  fi
+
+  # Fingerprint readers can come back from suspend dead until fprintd restarts
+  # (reported on Goodix readers). try-restart does nothing when fprintd is not
+  # running, so this costs nothing on a machine without one.
+  if _has_unit fprintd.service; then
+    _put /etc/systemd/system/ergon-fprintd-resume.service <<EOF
+$MARK
+[Unit]
+Description=Restart fprintd after resume, so the fingerprint reader works again
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart fprintd.service
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+EOF
+    sudo systemctl daemon-reload 2>/dev/null || true
+    sudo systemctl enable ergon-fprintd-resume.service >/dev/null 2>&1 \
+      && ok "fingerprint: fprintd restarted after resume" || warn "could not enable ergon-fprintd-resume.service"
+  fi
+
+  # Auto-brightness wherever there is a sensor and a backlight to drive. It moves
+  # the backlight only when the room's light crosses a step, so a manual change
+  # holds until the light does. Off: sudo systemctl disable --now illuminanced
+  als=$(_als) || als=""
+  bl=$(_backlight) || bl=""
+  if [ -n "$als" ] && [ -n "$bl" ]; then
+    sudo pacman -S --needed --noconfirm illuminanced >/dev/null || { warn "illuminanced failed to install"; return 0; }
+    # The curve is illuminanced's own default. It was tuned on another laptop;
+    # retune light_N/illuminance_N against this sensor's readings.
+    _put /etc/illuminanced.toml <<EOF
+$MARK
+[daemonize]
+log_to = "syslog"
+pid_file = "/run/illuminanced.pid"
+log_level = "ERROR"
+
+[general]
+check_period_in_seconds = 1
+light_steps = 10
+min_backlight = 70
+step_barrier = 0.1
+max_backlight_file = "$bl/max_brightness"
+backlight_file = "$bl/brightness"
+illuminance_file = "$als"
+event_device_mask = "/dev/input/event*"
+# No key toggles modes: nothing is named this, so it stays in auto.
+event_device_name = "ergon-no-als-toggle-key"
+enable_max_brightness_mode = false
+filename_for_sensor_activation = ""
+switch_key_code = 560
+
+[kalman]
+q = 1
+r = 20
+covariance = 10
+
+[light]
+points_count = 6
+illuminance_0 = 0
+light_0 = 0
+illuminance_1 = 20
+light_1 = 1
+illuminance_2 = 300
+light_2 = 3
+illuminance_3 = 700
+light_3 = 4
+illuminance_4 = 1100
+light_4 = 5
+illuminance_5 = 7100
+light_5 = 10
+EOF
+    sudo systemctl enable --now illuminanced.service >/dev/null 2>&1 \
+      && ok "auto-brightness: $als -> $bl" || warn "could not start illuminanced"
+  elif [ -f "$DEST/etc/illuminanced.toml" ] && grep -qxF -- "$MARK" "$DEST/etc/illuminanced.toml"; then
+    sudo systemctl disable --now illuminanced.service >/dev/null 2>&1 || true
+    _unput /etc/illuminanced.toml
+  fi
+}
+
+# --- profiles ----------------------------------------------------------------------
+
+_matches() {  # _matches <profile dir>
+  local m="$1/match" key want have
+  [ -f "$m" ] || return 1
+  while IFS='=' read -r key want; do
+    case "$key" in ''|'#'*) continue ;; esac
+    key=$(printf '%s' "$key" | tr -d '[:space:]')
+    [ -r "$DMI/$key" ] || return 1
+    have=$(cat "$DMI/$key" 2>/dev/null)
+    # Substring, case-insensitive: vendors revise product_name between batches
+    # and an equality match would silently stop applying after a refresh.
+    printf '%s' "$have" | grep -qiF -- "$want" || return 1
+  done < "$m"
+  return 0
+}
+
+_detected() {
+  local d
+  for d in "$HWDIR"/*/; do
+    [ -d "$d" ] || continue
+    _matches "${d%/}" && printf '%s\n' "$(basename "${d%/}")"
+  done
+}
+
+# Kernel parameters a profile needs, added to GRUB's default cmdline if absent.
+# They take effect on the next boot, and are never removed automatically: a
+# parameter someone relies on disappearing because DMI changed is worse than one
+# lingering.
+_kernel_args() {  # _kernel_args <param>...
+  local g="$DEST/etc/default/grub" cur new a added=()
+  [ -f "$g" ] || { warn "no /etc/default/grub; add these kernel parameters by hand: $*"; return 0; }
+  cur=$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"$/\1/p' "$g")
+  new=$cur
+  for a in "$@"; do
+    case " $new " in *" $a "*) ;; *) new="${new:+$new }$a"; added+=("$a") ;; esac
+  done
+  [ "${#added[@]}" -gt 0 ] || { skip "kernel parameters already set: $*"; return 0; }
+  sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$new\"|" "$g"
+  grep -qxF "GRUB_CMDLINE_LINUX_DEFAULT=\"$new\"" "$g" || { warn "could not set kernel parameters in $g"; return 1; }
+  if sudo grub-mkconfig -o "$DEST/boot/grub/grub.cfg" >/dev/null 2>&1; then
+    ok "kernel parameters: ${added[*]} (next boot)"
+  else
+    warn "kernel parameters written to $g but grub-mkconfig failed"
+  fi
+}
+
+_apply_one() {  # _apply_one <name>
+  local LC_ALL=C
+  local n="$1" d="$HWDIR/$1" a K=()
+  [ -d "$d" ] || { warn "no hardware profile '$n'"; return 1; }
+  printf '   applying %s\n' "$n"
+
+  if [ -s "$d/packages" ]; then
+    mapfile -t P < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/[[:space:]]*$//' "$d/packages")
+    [ "${#P[@]}" -gt 0 ] && { sudo pacman -S --needed --noconfirm -- "${P[@]}" >/dev/null \
+      && ok "packages: ${P[*]}" || warn "some packages failed"; }
+  fi
+
+  # etc/ mirrors the filesystem, so what lands where is readable from the tree
+  # rather than from a script.
+  if [ -d "$d/etc" ]; then
+    local f dest
+    while IFS= read -r f; do
+      dest="/etc/${f#"$d/etc/"}"
+      sudo install -Dm644 "$f" "$DEST$dest"
+      ok "installed $dest"
+    done < <(find "$d/etc" -type f | sort)
+    sudo systemctl daemon-reload 2>/dev/null || true
+  fi
+
+  if [ -s "$d/cmdline" ]; then
+    while read -r a; do
+      a=${a%%#*}; a=${a//[[:space:]]/}
+      [ -n "$a" ] || continue
+      # Checked, because it goes into a sed expression and onto the kernel cmdline.
+      [[ $a =~ ^[A-Za-z0-9_.-]+(=[A-Za-z0-9_.,:/+-]+)?$ ]] || { warn "$n/cmdline: '$a' is not a kernel parameter"; return 1; }
+      K+=("$a")
+    done < "$d/cmdline"
+    [ "${#K[@]}" -eq 0 ] || _kernel_args "${K[@]}"
+  fi
+
+  [ -x "$d/apply.sh" ] && bash "$d/apply.sh"
+  return 0
+}
+
+case "${1:-detect}" in
+  list)
+    for d in "$HWDIR"/*/; do
+      [ -d "$d" ] || continue
+      n=$(basename "${d%/}")
+      _matches "${d%/}" && printf '  %-22s matches this machine\n' "$n" \
+                        || printf '  %-22s\n' "$n"
+    done
+    ;;
+  detect)
+    printf '  sys_vendor:   %s\n' "$(cat "$DMI/sys_vendor" 2>/dev/null || echo unknown)"
+    printf '  product_name: %s\n' "$(cat "$DMI/product_name" 2>/dev/null || echo unknown)"
+    has() { if "$@" >/dev/null; then echo yes; else echo no; fi; }
+    printf '  s2idle only:  %s\n' "$(has _s2idle_only)"
+    printf '  hibernation:  %s\n' "$(has _hibernate_ready)"
+    printf '  amdgpu panel: %s\n' "$(has _amdgpu_panel)"
+    printf '  light sensor: %s\n' "$(_als || echo no)"
+    printf '  backlight:    %s\n' "$(_backlight || echo no)"
+    d=$(_detected)
+    [ -n "$d" ] && printf '  profile(s):   %s\n' "$(printf '%s ' $d)" \
+                || printf '  profile(s):   none — no model-specific quirks\n'
+    ;;
+  apply)
+    shift
+    _capabilities
+    FORCE="${ERGON_HARDWARE:-}"
+    [ "${1:-}" = "--force" ] && FORCE="${2:?--force needs a name}"
+    if [ -n "$FORCE" ]; then
+      # Forcing exists for two real cases: a VM, where DMI says QEMU and no
+      # profile can ever match, and debugging a profile on hardware it was not
+      # written for.
+      warn "forcing profile '$FORCE' (DMI says $(cat "$DMI/product_name" 2>/dev/null))"
+      _apply_one "$FORCE"
+      exit $?
+    fi
+    d=$(_detected)
+    if [ -z "$d" ]; then
+      skip "no hardware profile matches $(cat "$DMI/product_name" 2>/dev/null || echo 'this machine')"
+      exit 0
+    fi
+    rc=0
+    for n in $d; do _apply_one "$n" || rc=1; done
+    exit $rc
+    ;;
+  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) warn "unknown command '$1' (detect|apply|list)"; exit 2 ;;
+esac

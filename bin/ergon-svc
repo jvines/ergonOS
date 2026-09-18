@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# ergon:summary=Start and stop the optional background services
+# ergon:group=system
+# ergon:args=list|up|down|status|reap [name]
+#
+#   ergon svc list
+#   ergon svc up marimo
+#   ergon svc down marimo
+#
+# Everything is OFF by default and reaped when idle. The rule comes from
+# bin/llama-server.sh and from the reason it exists: a thing useful a few times
+# a day should not hold memory all day. A distro that idles at 4 GB because it
+# started six daemons for you is one people uninstall.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+SVCDIR="$ERGON/services"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"
+mkdir -p "$STATE"
+
+_meta() {  # _meta <svc> <KEY>
+  [ -f "$SVCDIR/$1/meta" ] || return 0
+  # shellcheck disable=SC1090
+  ( . "$SVCDIR/$1/meta" 2>/dev/null; eval "printf '%s' \"\${$2:-}\"" )
+}
+_all() { find "$SVCDIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort; }
+_running() { [ -x "$SVCDIR/$1/status.sh" ] && bash "$SVCDIR/$1/status.sh" >/dev/null 2>&1; }
+
+_run() {  # _run <svc> <up|down>
+  local s="$1" what="$2"
+  [ -d "$SVCDIR/$s" ] || { echo "ergon-svc: no service '$s' (ergon svc list)" >&2; exit 1; }
+  [ -x "$SVCDIR/$s/$what.sh" ] || { echo "ergon-svc: $s has no $what.sh" >&2; exit 1; }
+  # Exported so the scripts do not each re-parse meta.
+  PORT=$(_meta "$s" PORT) IDLE_MIN=$(_meta "$s" IDLE_MIN) \
+    bash "$SVCDIR/$s/$what.sh"
+  [ "$what" = up ] && date +%s > "$STATE/$s.started" || rm -f "$STATE/$s.started"
+  return 0
+}
+
+case "${1:-list}" in
+  list)
+    printf '  %-12s %-8s %-6s %s\n' SERVICE STATE IDLE DESCRIPTION
+    for s in $(_all); do
+      _running "$s" && st=running || st="-"
+      idle=$(_meta "$s" IDLE_MIN)
+      [ "${idle:-0}" = 0 ] && idle="never" || idle="${idle}m"
+      printf '  %-12s %-8s %-6s %s\n' "$s" "$st" "$idle" "$(_meta "$s" DESCRIPTION)"
+    done
+    ;;
+  up)   _run "${2:?usage: ergon svc up <name>}" up ;;
+  down) _run "${2:?usage: ergon svc down <name>}" down ;;
+  status)
+    s="${2:-}"
+    if [ -n "$s" ]; then
+      _running "$s" && { echo "   ok  $s is running"; exit 0; } || { echo "   ·   $s is not running"; exit 1; }
+    fi
+    for s in $(_all); do _running "$s" && echo "   ok  $s"; done
+    ;;
+  reap)
+    # Idleness from the service's own log mtime, where it has one: a server
+    # that has answered nothing has written nothing. Falls back to uptime,
+    # which is cruder but never stops something that just started.
+    for s in $(_all); do
+      idle=$(_meta "$s" IDLE_MIN)
+      [ -n "$idle" ] && [ "$idle" != 0 ] || continue
+      _running "$s" || continue
+      log="$STATE/$s.log"
+      if [ -f "$log" ]; then
+        quiet=$(( ( $(date +%s) - $(stat -c %Y "$log") ) / 60 ))
+      elif [ -f "$STATE/$s.started" ]; then
+        quiet=$(( ( $(date +%s) - $(cat "$STATE/$s.started") ) / 60 ))
+      else
+        continue
+      fi
+      if [ "$quiet" -ge "$idle" ]; then
+        echo "   ·   $s idle ${quiet}m (limit ${idle}m) — stopping"
+        _run "$s" down || true
+      fi
+    done
+    ;;
+  -h|--help|help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "ergon-svc: unknown command '$1' (list|up|down|status|reap)" >&2; exit 2 ;;
+esac

@@ -1,0 +1,15 @@
+# Ensemble and gradient samplers.
+emcee                # affine-invariant ensemble; the field default
+zeus-mcmc            # slice sampling, better for correlated posteriors
+numpyro              # NUTS on JAX, for models where gradients exist
+blackjax             # samplers as composable functions, same JAX backend
+
+# Nested sampling: evidence, not just posteriors. The reason model comparison
+# is tractable at all.
+dynesty
+ultranest
+
+# Looking at the output. arviz for diagnostics that will tell you the chain did
+# not converge; corner because every paper in this field has that figure.
+arviz
+corner

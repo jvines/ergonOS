@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# ergon:summary=Run something long: keep the machine awake, journal it, say when it ends
+# ergon:group=data
+# ergon:args=[--name N] [--quiet] -- <command>...
+#
+#   ergon watch --name fit-toi5205 -- python fit.py
+#
+# Three things a long run needs on a laptop, none of which it gets by default:
+#
+#   the machine must not sleep.  Lid closes to suspend-then-hibernate (correct
+#     for every other purpose), so a six-hour chain dies when you pack up.
+#     systemd-inhibit holds it awake for exactly as long as the run lasts, and
+#     not one second longer -- which is the part a manual setting gets wrong.
+#
+#   you must be told it ended.  Success and failure both, because a run that
+#     died at minute three and a run still going look identical from the other
+#     room.
+#
+#   it must be in the journal.  Command, commit, duration, exit code, peak
+#     memory. "Which run in March was the one that worked" is a question
+#     everyone has and nobody can answer. See `ergon hist`.
+set -euo pipefail
+
+NAME=""; QUIET=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name)  NAME="${2:?--name needs a value}"; shift 2 ;;
+    --quiet) QUIET=1; shift ;;
+    --)      shift; break ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)       break ;;
+  esac
+done
+[ $# -gt 0 ] || { echo "usage: ergon watch [--name N] -- <command>..." >&2; exit 2; }
+
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}/ergon"
+JOURNAL="$DATA/runs.jsonl"
+mkdir -p "$DATA"
+NAME="${NAME:-$(basename "$1")}"
+
+GIT=$(git rev-parse --short HEAD 2>/dev/null || true)
+[ -n "$GIT" ] && [ -n "$(git status --porcelain 2>/dev/null)" ] && GIT="$GIT-dirty"
+
+START=$(date +%s)
+STARTED=$(date -Iseconds)
+RSSFILE=$(mktemp); trap 'rm -f "$RSSFILE"' EXIT
+
+[ "$QUIET" = 1 ] || printf '   ·   %s started (%s)\n' "$NAME" "$STARTED"
+
+# Warn rather than refuse on battery: it is the user's machine and sometimes the
+# run matters more than the charge.
+if [ "$(cat /sys/class/power_supply/AC*/online 2>/dev/null | head -1)" = "0" ]; then
+  printf '   !!   on battery — a long run will not finish on it\n' >&2
+fi
+
+# systemd-inhibit around the whole thing, and /usr/bin/time for peak RSS. The
+# `|| true` is deliberate: a failing run must still be journalled, and set -e
+# would abandon it here with no record at all -- losing exactly the runs you
+# most want to look up later.
+set +e
+# PROBE the inhibitor rather than assuming it works.
+#
+# systemd-inhibit needs a logind session and polkit's blessing, and has neither
+# over ssh or in a container -- it exits "Failed to inhibit: Access denied"
+# WITHOUT running the command. Wrapping the run in it unconditionally meant a
+# six-hour job did not start at all, and the journal recorded exit 1 from the
+# inhibitor rather than anything about the job. Keeping the machine awake is a
+# nicety; running the command is the point.
+INHIBIT=""
+if command -v systemd-inhibit >/dev/null 2>&1 \
+   && systemd-inhibit --what=sleep --who=ergon --why=probe true >/dev/null 2>&1; then
+  INHIBIT="systemd-inhibit --what=sleep:idle --who=ergon --why=$NAME"
+else
+  [ "$QUIET" = 1 ] || printf '   !!   cannot inhibit sleep here; the machine may suspend mid-run\n' >&2
+fi
+# GNU time gives peak RSS, and is not installed everywhere -- Debian and macOS
+# both leave it out by default, and the shell's `time` is a builtin that cannot
+# report memory. Hardcoding /usr/bin/time meant the command did not run AT ALL
+# on a machine without it, exit 127, for the sake of one number. Same lesson as
+# the inhibitor directly above: probe, and degrade to running the thing.
+TIMER=""
+for t in /usr/bin/time /bin/time /opt/homebrew/bin/gtime /usr/local/bin/gtime; do
+  [ -x "$t" ] && { TIMER="$t -f %M -o $RSSFILE --"; break; }
+done
+[ -n "$TIMER" ] || [ "$QUIET" = 1 ] || \
+  printf '   !!   GNU time not installed; peak memory will not be recorded\n' >&2
+
+# shellcheck disable=SC2086  # both are deliberate word lists, or empty
+$INHIBIT $TIMER "$@"
+RC=$?
+set -e
+
+END=$(date +%s)
+SECS=$(( END - START ))
+RSS_KB=$(tail -1 "$RSSFILE" 2>/dev/null | tr -dc '0-9')
+RSS_MB=$(( ${RSS_KB:-0} / 1024 ))
+
+# One JSON object per line: appendable, greppable, survives a partial write,
+# and needs nothing installed to read. A database would be a dependency for a
+# file that is only ever appended to and read back in order.
+esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+printf '{"name":"%s","cmd":"%s","cwd":"%s","git":"%s","started":"%s","seconds":%d,"exit":%d,"peak_mb":%d,"host":"%s"}\n' \
+  "$(esc "$NAME")" "$(esc "$*")" "$(esc "$PWD")" "$(esc "$GIT")" \
+  "$STARTED" "$SECS" "$RC" "$RSS_MB" "$(uname -n)" >> "$JOURNAL"
+
+human() { printf '%dh%02dm%02ds' $(( $1/3600 )) $(( ($1%3600)/60 )) $(( $1%60 )); }
+if [ "$RC" -eq 0 ]; then
+  MSG="$NAME finished in $(human "$SECS") (peak ${RSS_MB} MB)"
+  [ "$QUIET" = 1 ] || printf '   ok   %s\n' "$MSG"
+  command -v notify-send >/dev/null && notify-send "ergon watch" "$MSG" || true
+else
+  MSG="$NAME FAILED after $(human "$SECS") (exit $RC)"
+  [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2
+  command -v notify-send >/dev/null && notify-send -u critical "ergon watch" "$MSG" || true
+fi
+exit "$RC"

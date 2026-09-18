@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# ergon:summary=Read the provenance stamped into a figure
+# ergon:group=data
+# ergon:args=whence <file> | status
+#
+# Every figure saved by the shared python carries where it came from: the
+# script, the git commit (with -dirty if the tree was not clean), the date, the
+# host and the environment. Six months later that is the difference between
+# "which script made this" and reconstructing it from memory.
+#
+#   ergon fig whence plot.png
+#   ergon fig status               # is stamping active in this environment
+#
+# Stamping is automatic -- see lib/ergon_figprov.py. ERGON_FIG_PROVENANCE=0
+# turns it off for a run.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+PY="$VENV/bin/python"
+[ -x "$PY" ] || { echo "ergon-fig: the shared python is not built — run: pyfleet sync" >&2; exit 1; }
+
+case "${1:-whence}" in
+  whence)
+    f="${2:?usage: ergon fig whence <file>}"
+    [ -f "$f" ] || { echo "ergon-fig: no such file: $f" >&2; exit 1; }
+    exec "$PY" "$ERGON/lib/ergon_figread.py" "$f"
+    ;;
+  status)
+    "$PY" - <<'PY'
+import matplotlib.figure as F
+import sys
+patched = getattr(F.Figure.savefig, "_ergon_provenance", False)
+print("   ok   provenance stamping is ACTIVE" if patched
+      else "   !!   stamping is NOT active — run: pyfleet sync")
+sys.exit(0 if patched else 1)
+PY
+    ;;
+  -h|--help|help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "ergon-fig: unknown command '$1' (whence|status)" >&2; exit 2 ;;
+esac

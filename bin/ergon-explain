@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# ergon:summary=Print what this system knows about a topic
+# ergon:group=help
+# ergon:args=[--list] [topic]
+#
+# The knowledge base, as a COMMAND rather than a file format.
+#
+# Every agent harness disagrees about where to look for instructions -- Claude
+# wants .claude/skills/, Codex wants AGENTS.md, Cursor wants .cursor/rules/, and
+# the next one will want something else. All of them can run a shell command. So
+# the content lives in plain markdown, written once, and this is how anything
+# reads it: an agent, a harness that does not exist yet, or a person whose bar
+# just went blank.
+#
+# That also means the documentation and the agent knowledge cannot disagree,
+# because they are the same bytes.
+set -euo pipefail
+
+# Prefer the installed copy, fall back to the repo. A distro installs to
+# /usr/share; a developer is working in a checkout.
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+DIRS=("/usr/share/ergon/knowledge" "$ERGON/knowledge")
+
+_find() {  # _find <topic> -> path, or empty
+  local d
+  for d in "${DIRS[@]}"; do
+    [ -f "$d/$1.md" ] && { printf '%s' "$d/$1.md"; return 0; }
+  done
+  return 1
+}
+
+_topics() {
+  local d f
+  for d in "${DIRS[@]}"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*.md; do
+      [ -f "$f" ] || continue
+      f=${f##*/}; printf '%s\n' "${f%.md}"
+    done
+  done | sort -u
+}
+
+case "${1:---list}" in
+  --list|-l|"")
+    printf 'Topics (ergon explain <topic>):\n\n'
+    while read -r t; do
+      p=$(_find "$t") || continue
+      # The first heading is the title; the first paragraph after it is the gist.
+      printf '  %-18s %s\n' "$t" "$(sed -n '3,6p' "$p" | tr '\n' ' ' | cut -c1-56)"
+    done < <(_topics)
+    ;;
+  -h|--help|help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *)
+    p=$(_find "$1") || {
+      printf 'no topic %s\n\n' "$1" >&2
+      "$0" --list >&2
+      exit 1
+    }
+    cat "$p"
+    ;;
+esac

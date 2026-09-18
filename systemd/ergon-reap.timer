@@ -1,0 +1,13 @@
+# Every 10 minutes, which is far more often than any IDLE_MIN worth setting.
+# The reaper is cheap -- a status probe per service -- and the alternative is
+# discovering a 19 GB model still resident an hour after you stopped using it.
+[Unit]
+Description=Reap idle ergon services
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,199 @@
+# Packages installed by provision-arch.sh with `pacman -S --needed`.
+#
+# One per line, comments and blank lines stripped. This is the laptop's manifest
+# and NOT a fleet list — the Debian boxes have packages/apt, and the overlap is
+# deliberate but partial. Adding something here does not put it on chiki.
+#
+# Everything below is in the official repos. AUR packages live in packages/aur
+# and are built by hand after a PKGBUILD review; keep it that way.
+
+# --- shell and the TUIs that are the actual working environment ------------
+zsh
+tmux
+git
+openssh
+rsync
+fzf
+zoxide
+atuin
+eza
+bat
+fd
+ripgrep
+yazi                # file manager
+btop                # system monitor
+lnav                # log viewer
+jless               # JSON viewer
+visidata            # tabular data
+lazygit
+lazydocker
+dive                # container layers
+git-delta
+glow                # markdown; styled by glow/cool.json
+dust                # disk usage
+gping
+doggo               # DNS
+xh                  # HTTP
+newsboat
+croc                # host-to-host file transfer
+jq
+unzip
+wget
+curl
+man-db
+man-pages
+
+# --- system ----------------------------------------------------------------
+inetutils           # hostname(1); arch-bootstrap writes /etc/hostname
+networkmanager      # nmtui is the network UI; waybar's network module reads it
+pacman-contrib      # paccache, checkupdates
+reflector           # mirror ranking
+informant           # BLOCKS an upgrade until the Arch news item is read.
+                    # On a rolling distro the manual-intervention notices are
+                    # the ones that break a machine, and they are always
+                    # announced before they land.
+docker
+docker-compose
+tailscale
+age
+sops
+uv                  # python tooling; per-tool venvs, never a system python
+
+# --- compositor and session ------------------------------------------------
+hyprland
+uwsm                # launches Hyprland under systemd, so the session has a
+                    # real scope and apps are not children of the compositor
+xdg-desktop-portal-hyprland
+xdg-desktop-portal-gtk      # the file chooser every GTK app opens
+xdg-user-dirs
+qt5-wayland
+qt6-wayland                 # moonlight-qt is Qt6
+
+# --- login -----------------------------------------------------------------
+greetd
+greetd-tuigreet     # a TUI greeter, not a display manager. This machine
+                    # hibernates rather than shuts down, so the greeter is
+                    # seen rarely; SDDM would drag in Qt and a theme engine to
+                    # render a login box you look at once a month.
+
+# --- the desktop surfaces --------------------------------------------------
+# waybar is NOT here -- see packages/aur. extra/waybar 0.15.0 cannot switch
+# workspaces when clicked against a Lua-configured Hyprland.
+mako                # notifications
+fuzzel              # launcher
+hyprlock
+hypridle
+hyprpaper
+swayosd             # volume/brightness overlay
+hyprpicker          # colour picker
+hyprsunset          # colour temperature
+hyprpolkitagent     # authentication prompts
+
+# --- audio -----------------------------------------------------------------
+pipewire
+pipewire-alsa
+pipewire-pulse
+wireplumber
+pamixer
+playerctl
+wiremix             # TUI mixer; waybar's volume click target
+
+# --- bluetooth -------------------------------------------------------------
+bluez
+bluez-utils
+blueman
+
+# --- secrets, storage, power ----------------------------------------------
+gnome-keyring       # Secret Service for firefox/discord credentials
+libsecret
+udiskie             # automount removable media
+gvfs
+brightnessctl
+ddcutil             # brightness on EXTERNAL monitors over DDC/CI. brightnessctl
+                    # only drives the internal panel; an external display has
+                    # no /sys/class/backlight entry at all.
+fprintd             # the fingerprint reader. hypr/hyprlock.conf declares a
+                    # fingerprint auth block, which silently does nothing
+                    # without this -- it talks to fprintd over D-Bus.
+power-profiles-daemon   # PPD, never TLP: the two conflict. ergon-hardware adds the
+                        # drop-in that stops it desaturating an amdgpu panel.
+fwupd                   # firmware updates from LVFS (BIOS, fingerprint reader,
+                        # docks, SSDs). ergon-sleep check reports pending ones.
+
+# --- graphics ------------------------------------------------------------
+# mesa and the loader are vendor-neutral and always needed; the ICD that
+# actually drives your GPU is chosen at provision time from what is on the PCI
+# bus (see the "graphics" stage in provision-arch.sh). Listing every vendor's
+# driver here would pull Intel and Nouveau onto an AMD laptop for nothing.
+#
+# Hyprland needs a working Vulkan or GLES path. Without an ICD it starts,
+# renders through llvmpipe, and feels broken in a way that reads as a compositor
+# problem rather than a missing package.
+mesa
+vulkan-icd-loader
+libva-utils         # `vainfo` is how you find out whether hardware video
+                    # decode is actually working, rather than assuming
+
+# --- clipboard and capture -------------------------------------------------
+wl-clipboard
+cliphist            # clipboard history
+grim
+slurp
+satty               # screenshot annotation
+imagemagick         # bin/ergon-wallpaper generates the background from the
+                    # palette; also the general-purpose image converter
+wf-recorder
+tesseract           # OCR; see bin/ergon-ocr
+tesseract-data-eng
+
+time                # GNU time, for peak RSS. ergon-watch records it per run;
+                    # without this the journal's peak_mb column is always zero
+                    # and "what did that fit actually need" stays unanswerable.
+
+# --- synthetic input -------------------------------------------------------
+# Injects events at the kernel level (uinput), so the compositor sees them as a
+# real device rather than as a client request. That is the only way to test a
+# CLICK: every waybar module's on-click is a shell command that nothing else in
+# this repo ever executes, and "waybar mapped a layer surface" says nothing
+# about whether pressing it does anything. See test/arch-vm/guest-desktop.sh.
+ydotool
+
+# --- fonts -----------------------------------------------------------------
+ttf-jetbrains-mono-nerd     # the glyphs waybar and the prompts use
+otf-font-awesome
+noto-fonts
+noto-fonts-emoji
+noto-fonts-cjk
+
+# --- icons and GTK theming -------------------------------------------------
+papirus-icon-theme
+adwaita-icon-theme
+gnome-themes-extra          # Adwaita-dark for GTK3 apps
+
+# --- editor ----------------------------------------------------------------
+emacs-wayland       # pgtk build: a native Wayland client, not XWayland.
+                    # The fleet's Debian boxes run the 31.1 build from
+                    # bin/build-emacs-deb.sh instead; this is the one host
+                    # where the distro package is current enough.
+
+# --- science ---------------------------------------------------------------
+julia               # extra/julia, not juliaup from the AUR: juliaup installs
+                    # toolchains into ~/.julia outside pacman, which puts them
+                    # outside snapper's coverage — and rollback is the whole
+                    # reason this machine is btrfs. If a chain has to match a
+                    # cluster's Julia exactly, add juliaup on top then.
+
+# --- GUI apps --------------------------------------------------------------
+foot                # NOT the daily terminal -- wezterm is, for its tmux -CC
+                    # integration. foot is the ESCAPE HATCH: wezterm comes
+                    # from the AUR, and if that build fails on a fresh
+                    # install you are sitting in a compositor with no way to
+                    # open a terminal to fix it. 1 MB, official repo, bound
+                    # to SUPER+SHIFT+ALT+RETURN and otherwise never used.
+firefox
+discord
+moonlight-qt        # game/desktop streaming
+zathura             # PDF; vim keys, opens papers in a tenth of a second
+zathura-pdf-mupdf
+imv                 # images
+mpv

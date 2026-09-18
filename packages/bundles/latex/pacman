@@ -1,0 +1,8 @@
+texlive-basic
+texlive-latexextra
+texlive-mathscience      # amsmath and the physics/astronomy packages
+texlive-bibtexextra      # the .bst files journals ask for
+texlive-fontsextra
+texlive-pictures         # tikz/pgf
+texlive-binextra         # latexmk lives here
+biber

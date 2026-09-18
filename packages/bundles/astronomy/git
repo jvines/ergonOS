@@ -1,0 +1,8 @@
+# Trans-dimensional Bayesian inference for exoplanet orbits: RV, transits,
+# astrometry, Rossiter-McLaughlin, Doppler tomography and TTVs under one
+# likelihood. Not on PyPI yet.
+#
+# It carries its OWN pinned Julia runtime and depot rather than using a system
+# julia -- Enzyme tracks the Julia compiler closely enough that a rolling julia
+# breaks it. See the julia bundle's NOTE; the two must not share a depot.
+astronereus @ git+https://github.com/jvines/nereus-py

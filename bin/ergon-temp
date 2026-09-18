@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# ergon:summary=CPU package temperature as waybar JSON
+# ergon:group=bar
+#
+# The hwmon index is NOT stable across boots — k10temp can be hwmon2 today and
+# hwmon5 tomorrow depending on probe order, so a hardcoded /sys path in
+# waybar's config works until the first reboot that reorders it and then
+# silently reports nothing. Find it by name every time.
+set -euo pipefail
+
+WARN=${ERGON_TEMP_WARN:-80}
+CRIT=${ERGON_TEMP_CRIT:-90}
+
+find_input() {
+  local h name
+  # k10temp is AMD. coretemp is the Intel name, kept so this script is not
+  # quietly wrong if it ever runs somewhere else.
+  for want in k10temp coretemp acpitz; do
+    for h in /sys/class/hwmon/hwmon*; do
+      [ -r "$h/name" ] || continue
+      read -r name < "$h/name"
+      [ "$name" = "$want" ] || continue
+      # Tctl on k10temp is temp1; prefer a labelled package sensor if present.
+      for t in "$h"/temp*_input; do
+        [ -r "$t" ] && { printf '%s\n' "$t"; return 0; }
+      done
+    done
+  done
+  return 1
+}
+
+if ! input=$(find_input); then
+  printf '{"text":"--","tooltip":"no hwmon sensor found","class":"unknown"}\n'
+  exit 0
+fi
+
+milli=$(cat "$input")
+c=$(( (milli + 500) / 1000 ))
+
+class=""
+(( c >= WARN )) && class="warm"
+(( c >= CRIT )) && class="hot"
+
+sensor=$(dirname "$input"); read -r sname < "$sensor/name"
+
+printf '{"text":" %d°","tooltip":"%s  %d°C   warn %d  crit %d","class":"%s"}\n' \
+  "$c" "$sname" "$c" "$WARN" "$CRIT" "$class"

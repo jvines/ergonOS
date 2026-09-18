@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# ergon:summary=Check the repo's shell scripts for heredoc expansion hazards
+# ergon:group=dev
+#
+# Heredocs are a blind spot: shellcheck does not look inside them, so an
+# UNQUOTED heredoc is a place where ordinary-looking prose becomes code. A
+# comment line beginning with the tool's own name is read as a directive, which
+# is why this sentence does not. Two real bugs shipped from that blind spot
+# in this repo:
+#
+#   arch-bootstrap.sh   a comment reading  no `resume' hook  -- one backtick,
+#                       read as an unterminated command substitution. Killed
+#                       every install at the chroot stage, AFTER partitioning
+#                       and pacstrapping 150 packages.
+#   test-arch-vm.sh     a comment containing a backtick PAIR, which bash happily
+#                       executed, and Tcl variables ($timeout) eaten by the
+#                       shell before expect ever saw them.
+#
+# Both are invisible in review and neither fails at parse time. This finds them.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+rc=0
+
+report() { printf '  %s:%s: %s\n' "$1" "$2" "$3"; rc=1; }
+
+while IFS= read -r f; do
+  # Walk each file tracking whether we are inside an unquoted heredoc. A QUOTED
+  # delimiter (<<'EOF' or <<"EOF") disables all expansion, so those are safe and
+  # deliberately skipped.
+  awk -v F="${f#"$ERGON"/}" '
+    # <<TAG or <<-TAG, unquoted
+    match($0, /<<-?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*$/) {
+      tag = substr($0, RSTART, RLENGTH)
+      gsub(/[<>[:space:]-]/, "", tag)
+      inhd = 1; next
+    }
+    inhd && $0 ~ ("^" tag "[[:space:]]*$") { inhd = 0; next }
+    # An ESCAPED backtick is literal text, not command substitution. Strip
+    # those before testing, or every heredoc that legitimately writes markdown
+    # is a finding -- and a lint people learn to ignore is worse than none.
+    inhd { line = $0; gsub(/\\`/, "", line)
+           if (line ~ /`/) printf "%s\t%d\tbacktick inside an unquoted heredoc\n", F, NR }
+  ' "$f"
+done < <(find -L "$ERGON/bin" "$ERGON/test" -type f ! -name 'erg-*' \( -name '*.sh' -o -name 'ergon' -o -name 'ergon-*' \) 2>/dev/null | sort) \
+  | while IFS=$'\t' read -r file line msg; do report "$file" "$line" "$msg"; done
+
+# ---------------------------------------------------------------------------
+# Single-line expect blocks.
+#
+#     expect { timeout {} "PAT" { set x 1 } }
+#
+# never matches. It does not error and it is not a syntax problem -- the pattern
+# simply never fires, so a poll loop spins to exhaustion while the output it is
+# waiting for scrolls past. The identical block written over two lines matches on
+# the first try. Verified empirically; this cost several 12-minute VM runs.
+#
+# Detected by brace balance rather than by a pattern: a line that opens an expect
+# block AND closes every brace it opened is a complete one-line block.
+if find -L "$ERGON/bin" "$ERGON/test" -type f ! -name 'erg-*' -exec awk '
+    /^[[:space:]]*#/ { next }
+    /expect[[:space:]]*\{/ {
+      o = gsub(/\{/, "{"); c = gsub(/\}/, "}")
+      if (o > 0 && o == c) {
+        printf "  %s:%d: %s\n", FILENAME, FNR, $0
+        found = 1
+      }
+    }
+    END { exit (found ? 1 : 0) }
+  ' {} + 2>/dev/null; then
+  echo "  ok   no single-line expect blocks"
+else
+  echo "  FAIL single-line expect block(s) above -- split the block across lines" >&2
+  rc=1
+fi
+
+# The while-read above runs in a subshell, so recompute rc from the output.
+if find -L "$ERGON/bin" "$ERGON/test" -type f ! -name 'erg-*' \( -name '*.sh' -o -name 'ergon' -o -name 'ergon-*' \) \
+   -exec awk '
+       match($0, /<<-?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*$/) {
+         tag = substr($0, RSTART, RLENGTH); gsub(/[<>[:space:]-]/, "", tag); inhd = 1; next
+       }
+       inhd && $0 ~ ("^" tag "[[:space:]]*$") { inhd = 0; next }
+       inhd { line = $0; gsub(/\\`/, "", line); if (line ~ /`/) found = 1 }
+       END { exit (found ? 1 : 0) }
+     ' {} + 2>/dev/null; then
+  echo "  ok   no backticks inside unquoted heredocs"
+else
+  echo "  FAIL backticks found inside an unquoted heredoc (see above)" >&2
+  rc=1
+fi
+
+# ---------------------------------------------------------------------------
+# Classic `hyprctl dispatch` against a Lua config.
+#
+# This repo configures Hyprland in Lua, and a Lua-configured Hyprland evaluates
+# the dispatch IPC payload AS LUA. So the twenty-year-old form
+#
+#     hyprctl dispatch workspace 3
+#
+# arrives as `return hl.dispatch(workspace 3)` and dies on a syntax error that
+# only the caller sees -- and almost nothing checks a dispatch's exit status, so
+# it looks exactly like nothing happening. It cost an evening in waybar (whose
+# workspace buttons send precisely that string), and it had silently broken
+# hypridle's dpms on/off, which means a laptop whose screen never blanks and,
+# worse, never comes back.
+#
+# The Lua form is `hyprctl dispatch 'hl.dsp.<...>'`, with
+# `hl.dsp.exec_raw("<classic string>")` as the general escape hatch.
+if find -L "$ERGON/bin" "$ERGON/hypr" "$ERGON/waybar" "$ERGON/fuzzel" \
+        "$ERGON/test" -type f ! -name 'erg-*' \
+   -exec grep -nE "hyprctl[[:space:]]+dispatch[[:space:]]+[^\"'\$]" {} + \
+   | grep -vE '(ergon|erg)-lint' \
+   | grep -vE '^[^:]*:[0-9]*:[[:space:]]*(#|--|//)' ; then
+  echo "  FAIL classic 'hyprctl dispatch <word>' above -- a Lua config parses that as Lua." >&2
+  echo "       use: hyprctl dispatch 'hl.dsp.exec_raw(\"<the classic string>\")'" >&2
+  rc=1
+else
+  echo "  ok   no classic hyprctl dispatch calls"
+fi
+
+# Every check sets rc rather than exiting, so one failure does not hide another.
+
+# ---------------------------------------------------------------------------
+# Every command must be executable.
+#
+# `ergon` finds commands by scanning bin/ for executables, and provisioning runs
+# them by path. A command committed 644 is invisible to the first and fails the
+# second with "Permission denied" -- which is what ergon-boot-guard did, from
+# provisioning, inside a VM, an hour into a test run.
+while IFS= read -r f; do
+  [ -x "$f" ] || report "${f#"$ERGON"/}" 1 "not executable, so ergon cannot run it"
+done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
+
+exit $rc

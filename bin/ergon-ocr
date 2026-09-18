@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# ergon:summary=OCR a screen region straight to the clipboard
+# ergon:group=capture
+#
+# Select a region, run it through tesseract, put the text on the clipboard.
+# The case this exists for is a number in a figure or a table in a PDF that you
+# want in a terminal without retyping it.
+#
+# Deliberately NOT written into ~/screenshots-outgoing: that directory is
+# watched by screenshot-sync.path and mirrored to checo, and an OCR scratch
+# image is not something to ship across the fleet.
+set -euo pipefail
+
+command -v tesseract >/dev/null || { notify-send -u critical "ergon-ocr" "tesseract not installed"; exit 1; }
+
+tmp=$(mktemp --suffix=.png); trap 'rm -f "$tmp"' EXIT
+
+geom=$(slurp) || exit 0          # empty selection or Esc: not an error
+grim -g "$geom" "$tmp"
+
+# --psm 6 assumes a uniform block of text. The default (3, full page layout
+# analysis) is tuned for scanned pages and mangles a tight crop of a few words
+# or a single table row, which is what this is nearly always pointed at.
+text=$(tesseract "$tmp" - --psm 6 2>/dev/null | sed -e 's/[[:space:]]*$//' -e '/^$/d')
+
+if [ -z "$text" ]; then
+  notify-send -u normal "ergon-ocr" "no text found in selection"
+  exit 0
+fi
+
+printf '%s' "$text" | wl-copy
+lines=$(printf '%s\n' "$text" | wc -l)
+notify-send "ergon-ocr" "$(printf '%s' "$text" | head -c 200)$([ "$lines" -gt 4 ] && echo ' …')"

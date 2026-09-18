@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# ergon:summary=Regenerate the wallpaper from the cool palette
+# ergon:group=theme
+# ergon:args=[WIDTHxHEIGHT]
+#
+# The wallpaper is generated, never downloaded: it is the `cool` colormap
+# blended over the dark ground from theme/cool.env — the same ramp as every plot
+# this machine makes.
+#
+# It is NOT committed, unlike the rendered configs. It is derived data, it is
+# binary, and its correct size is a property of the panel it will be shown on,
+# so a repo copy would be a 300 KB blob that is wrong for every machine but one.
+# provision-arch.sh runs this; re-run it after editing theme/cool.env.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+OUT="${ERGON_WALLPAPER_OUT:-$HOME/.local/share/ergon/wallpaper.png}"
+
+# shellcheck source=/dev/null
+. "$ERGON/theme/cool.env"
+
+command -v magick >/dev/null || { echo "imagemagick required" >&2; exit 1; }
+
+# Default to the largest connected output, so this is right on the laptop panel
+# and right again once it is docked to something bigger.
+if [ -n "${1:-}" ]; then
+  SIZE="$1"
+elif command -v hyprctl >/dev/null && SIZE=$(hyprctl monitors -j 2>/dev/null \
+     | jq -r 'max_by(.width * .height) | "\(.width)x\(.height)"' 2>/dev/null) \
+     && [ -n "$SIZE" ] && [ "$SIZE" != "null" ]; then
+  :
+else
+  SIZE=2880x1920          # Framework 13 panel
+fi
+
+mkdir -p "$(dirname "$OUT")"
+
+# A true diagonal two-point ramp via sparse-color, NOT gradient: + -rotate --
+# rotating a gradient leaves the canvas corners empty and you then have to
+# oversize and crop to hide it.
+#
+# Blended at 18% over the dark ground so this reads as a dark desktop with the
+# palette in it rather than a screensaver. Windows sit on top of it all day and
+# it must not compete with them.
+#
+# NO added noise, however tempting as a debanding trick: gaussian grain defeats
+# PNG's filters completely and takes this file from 324 KB to 29 MB. At an 18%
+# blend the tonal range is narrow enough that there is nothing much to band.
+magick -size "$SIZE" xc:"$COOL_BG0" \
+  \( -size "$SIZE" xc: -sparse-color barycentric \
+       "0,0 $COOL_0  %[fx:w-1],%[fx:h-1] $COOL_4" \) \
+  -compose blend -define compose:args=18 -composite \
+  "$OUT"
+
+echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
+command -v hyprctl >/dev/null && hyprctl hyprpaper reload ,"$OUT" >/dev/null 2>&1 || true

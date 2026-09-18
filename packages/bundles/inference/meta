@@ -1,0 +1,3 @@
+DESCRIPTION="MCMC and nested sampling"
+SIZE_MB=400
+NOTE="Deliberately not in the base python: a sampler stack that drifts from the one on the cluster is worse than no sampler stack."

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# ergon:summary=Build and install one AUR package
+# ergon:group=system
+# ergon:args=<pkgname>
+#
+# Clone, review, makepkg. No helper: the point is that a PKGBUILD gets looked at
+# before it runs as you.
+#
+# This is a separate command because provisioning and `ergon-bundle` both need it,
+# and the conflict handling below is the kind of thing that must exist in
+# exactly one place.
+set -euo pipefail
+
+pkg="${1:?usage: ergon-aur <pkgname>}"
+AURDIR="${AURDIR:-$HOME/.cache/aur}"
+mkdir -p "$AURDIR"
+
+# The name becomes a path under $AURDIR and an argument to git and pacman, and
+# ergon-bundle hands this whatever a bundle's aur file says. `../x` or `-x`
+# must not get that far.
+_is_pkg() { local LC_ALL=C; [[ $1 =~ ^[a-z0-9@_+][a-z0-9@._+-]{0,127}$ ]]; }
+_is_pkg "$pkg" || { echo "ergon-aur: '$pkg' is not a package name" >&2; exit 2; }
+
+pacman -Qi -- "$pkg" >/dev/null 2>&1 && { printf '   ·   %s (already installed)\n' "$pkg"; exit 0; }
+
+[ -d "$AURDIR/$pkg" ] || git clone -q -- "https://aur.archlinux.org/$pkg.git" "$AURDIR/$pkg"
+cd "$AURDIR/$pkg"
+git pull -q --ff-only 2>/dev/null || true
+# Not paused for review: provisioning is non-interactive. Saying "review before
+# continuing" and then continuing was a promise this never kept.
+printf '   building %s from %s/PKGBUILD (read it there)\n' "$pkg" "$AURDIR/$pkg"
+
+# An AUR package that REPLACES a repo one cannot be installed by
+# `makepkg -si --noconfirm` alone. pacman prompts
+#
+#     waybar-git and waybar are in conflict. Remove waybar? [y/N]
+#
+# and --noconfirm takes the default, No, then aborts with "unresolvable package
+# conflicts". The build succeeds and the install does not, so the machine keeps
+# the repo version and the only trace is one line in a log. That is exactly how
+# waybar-git quietly failed to replace extra/waybar while the test suite went on
+# asserting a bar that could not switch workspaces.
+#
+# Read the conflicts from the PKGBUILD's own declaration rather than from a list
+# here that would go stale.
+for c in $(makepkg --printsrcinfo 2>/dev/null | awk -F' = ' '$1 ~ /conflicts$/ { print $2 }'); do
+  if [ "$c" != "$pkg" ] && pacman -Qq -- "$c" >/dev/null 2>&1; then
+    # Bundles may not replace packages. waybar-git replacing waybar was
+    # reviewed as part of provisioning; a bundle's AUR line displacing a base
+    # package is something nobody looked at.
+    if [ "${ERGON_AUR_NO_REPLACE:-0}" = 1 ]; then
+      printf '   !!   %s would replace installed %s; bundles may not replace packages\n' "$pkg" "$c" >&2
+      exit 3
+    fi
+    printf '   removing %s, which %s replaces\n' "$c" "$pkg"
+    sudo pacman -Rdd --noconfirm "$c" || true
+  fi
+done
+
+makepkg -si --noconfirm

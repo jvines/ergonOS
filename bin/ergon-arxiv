@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# ergon:summary=The daily arXiv listing, filtered to what you care about
+# ergon:group=data
+# ergon:args=[--days N] [--save N] [--cite N]
+#
+# Not astro-only: arXiv carries most of physics, maths, CS, statistics,
+# quantitative biology and economics, and the morning ritual is the same in all
+# of them. Categories and keywords in ~/.config/ergon/arxiv.toml.
+set -euo pipefail
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+PY="$VENV/bin/python"; [ -x "$PY" ] || PY=python3
+exec "$PY" "$ERGON/lib/ergon_arxiv.py" "$@"

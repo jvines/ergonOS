@@ -1,0 +1,34 @@
+# AUR packages. Few enough that provision-arch.sh clones and runs makepkg
+# directly — no helper is installed or needed. Review each PKGBUILD once and
+# record the reviewed version here.
+#
+# Install paru or yay by hand if you want interactive AUR searching; do not
+# build machinery around it.
+#
+# A line whose comment contains "(slow build)" is skipped by ERGON_SKIP_AUR=1.
+# Everything else builds even then, because the difference between a package
+# that is merely convenient and one the desktop does not work without is the
+# whole reason that flag needs to be selective.
+
+claude-code       # native Bun binary from downloads.claude.ai. depends=bash only,
+                  # no node. Note its wrapper sets DISABLE_UPDATES=1, so hotfixes
+                  # wait on the packager — the tradeoff against Anthropic's own
+                  # installer, which is always current but invisible to this file.
+openai-codex-bin  # static musl binary from GitHub releases
+waybar-git        # NOT extra/waybar. A Lua-configured Hyprland evaluates the
+                  # dispatch IPC payload as Lua, and waybar 0.15.0 sends the
+                  # classic string — so `dispatch workspace 3` arrives as
+                  # `return hl.dispatch(workspace 3)` and dies on a syntax
+                  # error. Clicking a workspace highlights it and does nothing
+                  # else; every other module works, which makes it look like a
+                  # config problem rather than a protocol one.
+                  # Fixed upstream in Alexays/Waybar#5013, on master, NOT in a
+                  # tagged release. Drop this the moment extra/waybar is past
+                  # 0.15.0 and carries that PR.
+
+wezterm-git       # (slow build) NOT extra/wezterm. The packaged snapshot predates the fix for
+                  # wezterm#8001: SendKeys terminates with CR, tmux >=3.7b reads
+                  # control commands with EVBUFFER_EOL_LF, and the first keystroke
+                  # into any `tmux -CC` pane freezes it permanently. Arch ships
+                  # tmux 3.7. Recheck extra/wezterm only when its pkgver commit
+                  # postdates 2026-08-04.

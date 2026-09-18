@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# ergon:summary=Check how this machine sleeps, and measure whether it wakes
+# ergon:group=hardware
+# ergon:args=check | cycle N [--hibernate]
+#
+#   check           what the firmware offers (s2idle, S3), what the lid does,
+#                   whether hibernation can resume, whether the last suspend
+#                   reached hardware sleep, and pending firmware updates
+#   cycle N         suspend N times, woken by the RTC after 30 s, and count
+#                   how many came back and reached hardware sleep
+#   cycle N --hibernate
+#                   the same through hibernate. An attempt that cold-boots
+#                   kills this run; the next run reports it.
+#
+# `cycle` exists because resume problems are reported per platform and per
+# firmware, mostly as forum anecdotes, with workarounds that cost every other
+# machine something. Measure on this one before applying any of them.
+set -uo pipefail
+
+ROOT="${ERGON_SYSROOT:-}"
+STATS="$ROOT/sys/power/suspend_stats"
+RUNFILE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/sleep-cycle"
+
+ok()   { printf '   ok   %s\n' "$*"; }
+warn() { printf '   !!   %s\n' "$*"; }
+info() { printf '   ·    %s\n' "$*"; }
+die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
+
+_read() { cat "$1" 2>/dev/null || true; }
+_kb()   { awk -v k="$1:" '$1 == k { print $2; exit }' "$ROOT/proc/meminfo" 2>/dev/null; }
+_secs() { awk -v u="${1:-0}" 'BEGIN { printf "%.1f", u / 1000000 }'; }
+
+check() {
+  local modes lid ram swap hw
+  modes=$(_read "$ROOT/sys/power/mem_sleep")
+  case $modes in
+    '')      warn "sleep modes: unknown (no /sys/power/mem_sleep)" ;;
+    *deep*)  ok "sleep modes: $modes -- the firmware offers S3" ;;
+    *)       info "sleep modes: $modes -- s2idle only, so suspend relies on the platform's low-power idle" ;;
+  esac
+
+  lid=$(systemd-analyze cat-config systemd/logind.conf 2>/dev/null | sed -n 's/^HandleLidSwitch=//p' | tail -1)
+  info "lid: ${lid:-suspend (logind default)}"
+
+  ram=$(_kb MemTotal); swap=$(_kb SwapTotal)
+  if ! grep -qw disk "$ROOT/sys/power/state" 2>/dev/null; then
+    warn "hibernation: the kernel does not offer it"
+  elif ! grep -q 'resume=' "$ROOT/proc/cmdline" 2>/dev/null; then
+    warn "hibernation: no resume= on the kernel cmdline, so it cannot resume"
+  elif [ "${swap:-0}" -eq 0 ]; then
+    warn "hibernation: no active swap to write the image to"
+  elif [ "$swap" -lt $(( ${ram:-0} * 2 / 5 )) ]; then
+    warn "hibernation: swap $((swap / 1024)) MiB is under 2/5 of RAM ($((ram / 1024)) MiB); a busy session may not fit"
+  else
+    ok "hibernation: ready (resume= set, swap $((swap / 1024)) MiB for $((ram / 1024)) MiB RAM)"
+  fi
+
+  if [ -r "$STATS/success" ]; then
+    info "suspends since boot: $(_read "$STATS/success") ok, $(_read "$STATS/fail") failed"
+    hw=$(_read "$STATS/last_hw_sleep")
+    if [ "$(_read "$STATS/success")" = 0 ]; then
+      info "hardware sleep: no suspend yet this boot (ergon-sleep cycle 1)"
+    elif [ -z "$hw" ]; then
+      info "hardware sleep: this kernel does not report it"
+    elif [ "$hw" = 0 ]; then
+      # The drain case: suspended, but the SoC never reached its deepest state,
+      # so the laptop burned battery as if it were idling with the lid shut.
+      warn "hardware sleep: the last suspend never reached it -- expect battery drain while suspended"
+    else
+      ok "hardware sleep: $(_secs "$hw") s in the last suspend"
+    fi
+  fi
+
+  if command -v fwupdmgr >/dev/null 2>&1; then
+    local out rc=0
+    out=$(timeout 60 fwupdmgr get-updates --no-unreported-check 2>&1) || rc=$?
+    case $rc in
+      0) warn "firmware: updates available -- fwupdmgr update"; printf '%s\n' "$out" | grep -E '^[│├└ ]*[A-Za-z].*:' | head -8 | sed 's/^/          /' ;;
+      2) ok "firmware: up to date (per LVFS)" ;;
+      *) info "firmware: could not check ($(printf '%s' "$out" | tail -1))" ;;
+    esac
+  else
+    info "firmware: fwupd not installed"
+  fi
+}
+
+cycle() {
+  local n="${1:-}" mode=suspend i boot okc=0 hwc=0 s0 f0 s1 f1 hw
+  [ "${2:-}" = --hibernate ] && mode=hibernate
+  [[ $n =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le 100 ] || die "usage: ergon-sleep cycle N [--hibernate]   (1 <= N <= 100)"
+  [ "$(id -u)" -ne 0 ] || die "run as your user; sudo is asked for once"
+  boot=$(_read /proc/sys/kernel/random/boot_id)
+
+  # A run file from another boot is an attempt that never came back.
+  if [ -f "$RUNFILE" ]; then
+    read -r old_boot old_i old_n old_mode < "$RUNFILE" || true
+    if [ "${old_boot:-}" != "$boot" ]; then
+      warn "the previous run's $old_mode attempt $old_i of $old_n did NOT resume: the machine booted fresh"
+    fi
+    rm -f "$RUNFILE"
+  fi
+  mkdir -p "$(dirname "$RUNFILE")"
+  sudo -v || die "sudo is needed for rtcwake and $mode"
+
+  for i in $(seq "$n"); do
+    s0=$(_read "$STATS/success"); f0=$(_read "$STATS/fail")
+    printf '%s %s %s %s\n' "$boot" "$i" "$n" "$mode" > "$RUNFILE"
+    info "$mode $i of $n (waking in 30 s)"
+    sudo rtcwake -m no -s 30 >/dev/null || die "rtcwake could not set the alarm"
+    # systemctl returns once the sleep job has finished, i.e. after resume.
+    if ! sudo systemctl "$mode"; then
+      warn "$mode $i: systemctl refused"
+      continue
+    fi
+    sleep 5
+    if [ "$mode" = suspend ]; then
+      s1=$(_read "$STATS/success"); f1=$(_read "$STATS/fail")
+      if [ "${s1:-0}" -gt "${s0:-0}" ] && [ "${f1:-0}" = "${f0:-0}" ]; then
+        okc=$((okc + 1))
+        hw=$(_read "$STATS/last_hw_sleep")
+        if [ "${hw:-0}" -gt 0 ]; then hwc=$((hwc + 1)); ok "suspend $i: resumed, $(_secs "$hw") s in hardware sleep"
+        else warn "suspend $i: resumed, but never reached hardware sleep"; fi
+      else
+        warn "suspend $i: the kernel counted it as failed"
+      fi
+    else
+      # Still running with the same boot_id: this process was restored.
+      okc=$((okc + 1)); ok "hibernate $i: resumed"
+    fi
+  done
+  rm -f "$RUNFILE"
+  printf '\n   %d of %d %s attempts resumed' "$okc" "$n" "$mode"
+  [ "$mode" = suspend ] && printf ', %d reached hardware sleep' "$hwc"
+  printf '\n'
+  [ "$okc" -eq "$n" ]
+}
+
+case "${1:-check}" in
+  check) check ;;
+  cycle) shift; cycle "$@" ;;
+  -h|--help|help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$1' (check|cycle)" ;;
+esac

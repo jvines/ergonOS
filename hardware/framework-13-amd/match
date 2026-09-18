@@ -1,0 +1,6 @@
+# /sys/class/dmi/id/sys_vendor and product_name. Substring, case-insensitive:
+# Framework revises product_name between batches ("Laptop 13 (AMD Ryzen 7040
+# Series)", "Laptop 13 (AMD Ryzen AI 300 Series)") and an equality match would
+# silently stop applying after a refresh.
+sys_vendor=Framework
+product_name=Laptop 13 (AMD

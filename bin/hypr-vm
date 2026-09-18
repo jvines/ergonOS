@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# Boot the built Arch VM with a real display, reachable over VNC.
+#
+#   ./bin/test-arch-vm.sh --keep      # once, to build the disk
+#   ./bin/test-hypr-session.sh        # once, to provision and run install.sh
+#   ./bin/hypr-vm                     # then this, to USE it
+#
+# The tests are headless on purpose -- they drive a serial console. This is the
+# opposite: a display you can actually click around in, because "86 keybindings
+# registered" is not the same as seeing whether the bar is where you want it.
+#
+# virtio-VGA, not virtio-gpu-pci. The -pci variant gives the guest a DRM device
+# but no VGA scanout, so qemu has nothing to show a VNC client and you connect
+# to a black screen -- with the compositor running perfectly behind it. That
+# distinction never came up in the automated tests, which only ever asked
+# hyprctl questions and needed no pixel drawn.
+#
+# WHAT THIS IS NOT: a fair judge of how the desktop performs. There is no
+# working dmabuf path here (aquamarine throws EGL_BAD_ALLOC), so rendering falls
+# back to software. Layout, colours, fonts and behaviour are accurate;
+# smoothness is not.
+set -euo pipefail
+
+CACHE="${CACHE:-$HOME/.cache/fleet-artifacts}"
+WORK="${WORK:-$CACHE/arch-vm}"
+IMAGE=fleet-qemu
+VM_RAM_MB="${VM_RAM_MB:-4096}"
+VM_CPUS="${VM_CPUS:-4}"
+PASSPHRASE="${LUKS_PASSPHRASE:-testpass123}"
+USERPASS="${USER_PASSWORD:-testuser123}"
+USERNAME="${USERNAME:-jayvains}"
+VMHOST="${HOSTNAME_NEW:-testarch}"
+ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+
+# Published on the LAN and on the tailnet both.
+#
+# This used to be tailnet-only, on the argument that the tailnet is already
+# authenticated. That argument is fine and the machine it was made about is
+# sitting on the same LAN as the person using it -- so it just meant every
+# connection took the slow path, or hung, while the address that would have
+# worked was two feet away. The VNC password below is the access control here.
+#
+# HYPR_VM_BIND=<addr> pins it to exactly one address if you want the old
+# behaviour.
+LAN=$(/sbin/ip -4 -o addr show scope global 2>/dev/null \
+      | awk '$2 !~ /^(tailscale|docker|br-|veth)/ { print $4 }' | cut -d/ -f1 | head -1)
+TSNET=$(/sbin/ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+
+if [ -n "${HYPR_VM_BIND:-}" ]; then
+  BINDS="$HYPR_VM_BIND"
+else
+  BINDS=$(printf '%s\n%s\n' "$LAN" "$TSNET" | awk 'NF && !seen[$0]++')
+fi
+[ -n "$BINDS" ] || { echo "no address to bind to; set HYPR_VM_BIND explicitly" >&2; exit 1; }
+BIND=$(printf '%s\n' "$BINDS" | head -1)   # the one printed in the banner
+
+PUBLISH=""
+for a in $BINDS; do PUBLISH="$PUBLISH -p $a:${HYPR_VM_PORT:-5900}:5900"; done
+
+PORT="${HYPR_VM_PORT:-5900}"
+
+# A VNC password, because macOS Screen Sharing ALWAYS prompts for credentials --
+# with qemu offering no authentication there is simply nothing to type and the
+# dialog is a dead end. Classic VNC auth truncates at 8 characters, so anything
+# longer is silently only its first 8. This is not the security boundary; the
+# tailnet binding above is. It exists so the prompt has an answer.
+VNCPASS="${HYPR_VM_VNC_PASS:-hyprvm}"
+
+[ -f "$WORK/disk.qcow2" ] || { echo "no disk — run ./bin/test-arch-vm.sh --keep first" >&2; exit 1; }
+[ -c /dev/kvm ] || { echo "/dev/kvm missing" >&2; exit 1; }
+cp "$ERGON/test/arch-vm/lib.exp" "$WORK/lib.exp"
+mkdir -p "$WORK/out"; chmod 777 "$WORK/out"
+
+cat <<BANNER
+
+  Booting the VM with a display on:
+$(printf '%s\n' $BINDS | sed "s|^|      vnc://|; s|\$|:$PORT|")
+
+  password: $VNCPASS        (8 chars max -- VNC protocol limit, not a typo)
+
+  From the Mac:  Finder -> Go -> Connect to Server
+                 (macOS Screen Sharing speaks VNC; nothing to install)
+
+  Log in at the greeter as $USERNAME / $USERPASS
+  (the disk unlocks itself here; the greeter is the only thing to answer)
+
+  Boot takes ~30s. Ctrl-C here stops the VM.
+
+BANNER
+
+cat > "$WORK/vnc.exp" <<EXPECT
+set timeout 900
+log_user 1
+source /w/lib.exp
+
+# -vnc binds inside the CONTAINER on all interfaces; docker's -p is what
+# restricts it to the tailnet address. Two layers, and the outer one is the
+# one that matters.
+#
+# qemu-xhci + usb-tablet, not the default PS/2 mouse: a PS/2 mouse is RELATIVE,
+# and a VNC client can only send absolute coordinates. qemu then feeds the guest
+# deltas derived from them and the guest pointer drifts away from the one you
+# are actually moving -- you click one thing and hit another. usb-tablet is an
+# absolute device, so the guest pointer is exactly where your cursor is.
+spawn qemu-system-x86_64 \
+  -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
+  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+  -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
+  -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
+  -device virtio-vga \
+  -device qemu-xhci -device usb-tablet \
+  -object secret,id=vncsec,data=$VNCPASS \
+  -vnc 0.0.0.0:0,password-secret=vncsec \
+  -virtfs local,path=/ergon,mount_tag=ergon,security_model=none,readonly=on \
+  -virtfs local,path=/w/out,mount_tag=out,security_model=none \
+  -nic user,model=virtio-net-pci \
+  -serial mon:stdio -no-reboot
+
+# Unlock the disk, and then GET OUT OF THE WAY.
+#
+# This used to log in on the serial console and start Hyprland by hand. That
+# gave a compositor, and not a session: no logind seat, so polkit prompts could
+# not be answered by any password; no systemd user manager, so environment.d was
+# never applied and every ergon-* in the bar resolved to nothing; no uwsm, so
+# uwsm-app failed and clicking a module opened no window. Three separate ways
+# for the desktop to look right and do nothing, none of which exist on real
+# hardware, all of them introduced by the harness.
+#
+# greetd owns vt1 from here. Log in through the greeter over VNC, exactly as the
+# Framework will boot.
+unlock_and_login "$PASSPHRASE" "$VMHOST" "$USERNAME" "$USERPASS"
+
+# Bring the guest's copy of the repo up to date with this checkout before you
+# look at it. The disk is built once and reused for weeks; without this you are
+# always looking at whatever the repo was on the day it was installed, and every
+# config change costs a twelve-minute reinstall to see.
+#
+# The serial console is a different tty from the greeter's vt1, so this runs
+# while greetd waits, and neither is aware of the other.
+send "echo '$USERPASS' | sudo -S mkdir -p /mnt\r"
+send "echo '$USERPASS' | sudo -S mount -t 9p -o trans=virtio,version=9p2000.L,ro ergon /mnt\r"
+send "echo '$USERPASS' | sudo -S bash /mnt/test/arch-vm/guest-sync.sh\r"
+expect {
+  timeout { puts "\n!! the repo sync did not finish; the desktop may be stale" }
+  "SYNC_FAIL" { puts "\n!! the repo sync FAILED; the desktop is stale" }
+  "SYNC_OK"   { puts "\n-- repo synced; the desktop matches this checkout" }
+}
+
+puts "\n-- booted. The greeter is on vt1; connect to vnc://$BIND:$PORT"
+puts "-- log in as $USERNAME / $USERPASS"
+puts "-- Ctrl-C here stops the VM\n"
+
+# The serial console stays live, so you can still type into the guest here
+# while looking at the desktop over VNC.
+interact
+EXPECT
+
+# HYPR_VM_DETACH=1 leaves the VM running in the background instead of holding
+# this terminal. The serial console is still there (`docker attach hyprvm`), and
+# `docker rm -f hyprvm` stops it.
+if [ "${HYPR_VM_DETACH:-0}" = 1 ]; then
+  docker rm -f hyprvm >/dev/null 2>&1 || true
+  # shellcheck disable=SC2086  # PUBLISH is a deliberate list of -p flags
+  docker run -d -it --name hyprvm --device /dev/kvm $PUBLISH \
+    -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
+    "$IMAGE" expect -f /w/vnc.exp >/dev/null
+  echo "  running in the background as container 'hyprvm'"
+  echo "  stop it with: docker rm -f hyprvm"
+  exit 0
+fi
+
+# shellcheck disable=SC2086  # PUBLISH is a deliberate list of -p flags
+exec docker run --rm -it --device /dev/kvm $PUBLISH \
+  -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
+  "$IMAGE" expect -f /w/vnc.exp

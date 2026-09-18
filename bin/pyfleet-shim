@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Dispatches on its own name, so `python`, `ipython` and `jupyter` are commands
+# rather than paths you have to remember. Symlinked as bin/python, bin/ipython,
+# bin/jupyter -- one file, because three near-identical wrappers is three places
+# to fix a bug.
+#
+# It execs the venv binary by ABSOLUTE PATH rather than symlinking ~/.local/bin
+# straight at it. A venv's python works out which environment it belongs to from
+# the path it was invoked as, so a symlink from outside the venv can leave it
+# resolving to the wrong prefix and importing nothing.
+#
+# DELIBERATELY NOT python3. Every host already has a real python3 -- /usr/bin on
+# the Linux boxes, /opt/homebrew on the Macs -- and system tooling depends on it.
+# `python`, `ipython` and `jupyter` are absent on checo, fio and bronco alike,
+# so these shadow nothing.
+set -euo pipefail
+
+self="$(basename "$0")"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+
+if [ ! -x "$VENV/bin/$self" ]; then
+  cat >&2 <<MSG
+  $self is not in the shared environment at $VENV
+
+  Build it:      pyfleet sync
+  Or check it:   pyfleet list
+MSG
+  exit 127
+fi
+
+exec "$VENV/bin/$self" "$@"

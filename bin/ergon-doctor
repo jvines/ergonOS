@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# ergon:summary=Check this machine for the things that quietly go wrong
+# ergon:group=system
+# ergon:args=[--json]
+#
+# Two jobs. It tells you what is wrong with your machine, and it is the format
+# a bug report should take -- "paste `ergon doctor`" beats twenty questions from
+# someone who cannot see your laptop.
+#
+# Every check is a thing that has actually cost someone time. None of them are
+# "is the package installed": that question has been wrong at least four times
+# in this repo's history, because a package being present says nothing about
+# whether the behaviour happens.
+set -uo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+JSON=0; [ "${1:-}" = "--json" ] && JSON=1
+
+R_NAME=(); R_STATE=(); R_NOTE=()
+n=0; warns=0; fails=0
+rec() {  # rec <state> <name> <note>
+  R_STATE[n]="$1"; R_NAME[n]="$2"; R_NOTE[n]="$3"; n=$((n+1))
+  case "$1" in warn) warns=$((warns+1));; fail) fails=$((fails+1));; esac
+}
+
+# --- threads ---------------------------------------------------------------
+# The one nobody gets right. numpy and scipy link OpenBLAS, which grabs every
+# core. Run an emcee pool or a multiprocessing dynesty on top of that and you
+# get cores^2 oversubscription: a sampler that runs SLOWER than single-threaded
+# while the machine looks pegged. On a 16-core laptop that is a 16x mistake.
+t="${OMP_NUM_THREADS:-}"; o="${OPENBLAS_NUM_THREADS:-}"
+if [ -n "$t" ] || [ -n "$o" ]; then
+  rec ok "blas-threads" "OMP=${t:-unset} OPENBLAS=${o:-unset}"
+else
+  rec warn "blas-threads" "unset; a sampler with a process pool will oversubscribe $(nproc) cores"
+fi
+
+# --- the python you get for free -------------------------------------------
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+if [ -x "$VENV/bin/python" ]; then
+  pv=$("$VENV/bin/python" -c 'import sys;print(".".join(map(str,sys.version_info[:3])))' 2>/dev/null)
+  # Which BLAS numpy ACTUALLY linked, not which one is installed.
+  # show_config("dicts") is a nested dict, not a string -- read the field
+  # rather than regexing its repr. Reports the threading library too, because
+  # OpenBLAS built with pthreads and with OpenMP oversubscribe differently and
+  # are told to stop by different environment variables.
+  bl=$("$VENV/bin/python" - <<'NUMPY' 2>/dev/null
+try:
+    import numpy
+    b = numpy.show_config("dicts")["Build Dependencies"]["blas"]
+    cfg = (b.get("openblas configuration") or "").lower()
+    thr = "pthreads" if "pthread" in cfg else ("openmp" if "openmp" in cfg else "")
+    out = f"{b.get('name','unknown')} {b.get('version','')}".strip()
+    print(out + (f" ({thr})" if thr else ""))
+except Exception:
+    print("no numpy")
+NUMPY
+)
+  rec ok "pyfleet" "python $pv, numpy on ${bl:-unknown}"
+else
+  rec warn "pyfleet" "not built — run: pyfleet sync"
+fi
+
+d="${XDG_DATA_HOME:-$HOME/.local/share}"
+if [ -w "$d" ]; then rec ok "data-dir" "$d writable"
+else rec fail "data-dir" "$d not writable by $(id -un) — uv will fail with a bare errno"; fi
+
+# --- bundles: declared vs installed ----------------------------------------
+HOSTENV="$ERGON/hosts/$(hostname -s)/host.env"
+if [ -f "$HOSTENV" ]; then
+  # shellcheck disable=SC1090
+  B=$( . "$HOSTENV" 2>/dev/null; printf '%s' "${BUNDLES:-}" )
+  rec ok "bundles" "${B:-none declared}"
+else
+  rec warn "bundles" "no $HOSTENV — this machine is not described anywhere"
+fi
+
+# --- rollback ----------------------------------------------------------------
+# Checks what ergon-rollback needs, NOT what `snapper rollback` needs. The
+# first version of this check conflated them and reported a hard FAIL on a
+# machine whose rollback had just been rehearsed successfully in the same test
+# run -- because it flagged rootflags=subvol=@, which is correct and required
+# here.
+#
+# ergon-rollback replaces the CONTENT of @ (see that file for why). So a pin by
+# NAME is fine and expected; the thing that breaks it is a pin by numeric
+# subvolid, because the replacement @ has a different id and the machine would
+# boot the old one.
+if command -v findmnt >/dev/null 2>&1 && findmnt -no FSTYPE / 2>/dev/null | grep -q btrfs; then
+  why=""
+  grep -qE '^[^#].*[[:space:]]/[[:space:]].*subvolid=' /etc/fstab 2>/dev/null && why="fstab pins a numeric subvolid"
+  grep -q 'rootflags=subvolid=' /proc/cmdline 2>/dev/null && why="${why:+$why; }kernel cmdline pins a numeric subvolid"
+  if [ -n "$why" ]; then
+    rec fail "rollback" "$why — the replacement @ gets a new id, so a rollback would boot the old one"
+  else
+    rec ok "rollback" "pinned by name, not id; ergon-rollback can replace @"
+  fi
+
+  # snapper needs root to read its configs. Running this as the user returned
+  # nothing and was reported as "no pre snapshots", contradicting an assertion
+  # in the same test run that had counted seven. Say "cannot check" rather than
+  # inventing an answer.
+  if command -v snapper >/dev/null 2>&1; then
+    if snaps=$(sudo -n snapper -c root list 2>/dev/null); then
+      p=$(printf '%s\n' "$snaps" | grep -cw pre || true)
+      [ "${p:-0}" -ge 1 ] && rec ok "snapshots" "$p pre-transaction snapshot(s)" \
+                          || rec warn "snapshots" "none yet — snap-pac takes one on the next pacman transaction"
+    else
+      rec ok "snapshots" "cannot check without root (run: sudo ergon doctor)"
+    fi
+  else
+    rec fail "snapshots" "snapper missing"
+  fi
+else
+  rec warn "rollback" "root is not btrfs; snapshots and rollback are unavailable"
+fi
+
+# --- firmware --------------------------------------------------------------
+# Which BIOS this machine is actually running. Every vendor publishes a support
+# article telling you to install dmidecode and read this by hand; it is three
+# files in sysfs, needs no root and no package, and belongs in the output you
+# paste into a bug report -- a firmware bug is unattributable without it.
+#
+# Printed as the vendor writes it. Framework says 3.20 and fwupd says 0.0.3.20
+# for the same firmware; they are one number said two ways, and reconciling
+# them here would only invent a third.
+DMI="${ERGON_SYSROOT:-}/sys/class/dmi/id"
+if [ -r "$DMI/bios_version" ]; then
+  bios_v=$(cat "$DMI/bios_version" 2>/dev/null)
+  bios_n=$(cat "$DMI/bios_vendor" 2>/dev/null)
+  bios_d=$(cat "$DMI/bios_date" 2>/dev/null)
+  rec ok "bios" "${bios_n:-unknown} ${bios_v:-unknown}${bios_d:+, $bios_d}"
+else
+  rec ok "bios" "no DMI here — a VM, or firmware that does not publish it"
+fi
+
+# Whether firmware updates can reach this machine at all, which is a different
+# question from whether fwupd is installed -- and the one that matters. A
+# vendor who does not publish to LVFS, or a machine with no plugin for its
+# firmware, leaves you updating the BIOS from Windows or a USB stick. You want
+# to know that now, not on the day a firmware fix is the thing you need.
+#
+# --filter=updatable asks the running daemon and touches no network, so this
+# stays fast and works offline. `ergon update` is what refreshes the metadata
+# and names pending versions.
+if command -v fwupdmgr >/dev/null 2>&1; then
+  devs=$(timeout 10 fwupdmgr get-devices --filter=updatable 2>/dev/null)
+  u=$(printf '%s\n' "$devs" | grep -c 'Device ID:')
+  if [ "${u:-0}" -ge 1 ]; then
+    rec ok "firmware" "$u device(s) fwupd can update, BIOS included if the vendor ships to LVFS"
+  else
+    rec warn "firmware" "fwupd manages nothing here — firmware updates would be manual"
+  fi
+else
+  rec warn "firmware" "fwupd not installed — nothing updates this machine's firmware, BIOS included"
+fi
+
+# --- the session -----------------------------------------------------------
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  case ":$PATH:" in
+    *":$ERGON/bin:"*) rec ok "session-path" "repo bin is on PATH" ;;
+    *) rec fail "session-path" "repo bin NOT on PATH — every ergon-* in the bar is a no-op. Is environment.d/10-ergon-path.conf linked?" ;;
+  esac
+  if command -v waybar >/dev/null 2>&1; then
+    if pacman -Qi waybar-git >/dev/null 2>&1; then
+      rec ok "waybar" "waybar-git (workspace clicks work)"
+    else
+      rec warn "waybar" "$(waybar --version 2>/dev/null | head -1) — clicking a workspace does nothing against a Lua config. See packages/aur"
+    fi
+  fi
+else
+  rec ok "session" "not in a graphical session; session checks skipped"
+fi
+
+# --- disk ------------------------------------------------------------------
+avail=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')
+if [ -n "$avail" ]; then
+  [ "$avail" -lt 10 ] && rec fail "disk" "${avail}G free on / — a long run will die mid-flight" \
+                      || rec ok "disk" "${avail}G free on /"
+fi
+
+# --- report ----------------------------------------------------------------
+if [ "$JSON" = 1 ]; then
+  printf '{"checks":['
+  for i in $(seq 0 $((n-1))); do
+    [ "$i" -gt 0 ] && printf ','
+    printf '{"name":"%s","state":"%s","note":"%s"}' \
+      "${R_NAME[i]}" "${R_STATE[i]}" "$(printf '%s' "${R_NOTE[i]}" | sed 's/"/\\"/g')"
+  done
+  printf '],"warnings":%d,"failures":%d}\n' "$warns" "$fails"
+else
+  for i in $(seq 0 $((n-1))); do
+    case "${R_STATE[i]}" in
+      ok)   printf '   ok   %-14s %s\n' "${R_NAME[i]}" "${R_NOTE[i]}" ;;
+      warn) printf '   !!   %-14s %s\n' "${R_NAME[i]}" "${R_NOTE[i]}" ;;
+      fail) printf '   FAIL %-14s %s\n' "${R_NAME[i]}" "${R_NOTE[i]}" ;;
+    esac
+  done
+  printf '\n   %d ok, %d warning(s), %d failure(s)\n' "$((n-warns-fails))" "$warns" "$fails"
+fi
+[ "$fails" -gt 0 ] && exit 1 || exit 0

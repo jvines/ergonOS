@@ -1,0 +1,130 @@
+/* GENERATED from waybar/style.css.in — edit the .in, then run: ergon theme
+ *
+ * The bar is flat and unblurred on purpose: blur on a laptop bar is a constant
+ * GPU cost for a surface you look at for half a second at a time, and the panel
+ * is the one thing on screen that never gets composited away.
+ */
+
+* {
+  font-family: "JetBrainsMono Nerd Font", "Font Awesome 7 Free", monospace;
+  font-size: 13px;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+}
+
+window#waybar {
+  background: #1A1A2E;
+  color: #EDEDF8;
+  border-bottom: 1px solid #3A3A4E;
+}
+
+/* Hyprland is told not to render a border on fullscreen windows, so the bar
+ * hiding is what signals fullscreen. Keep the transition cheap. */
+window#waybar.hidden { opacity: 0.0; }
+
+/* -- workspaces ---------------------------------------------------------- */
+#workspaces { margin-left: 4px; }
+
+#workspaces button {
+  padding: 0 9px;
+  color: #9494B0;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+}
+
+#workspaces button.empty { color: #3A3A4E; }
+
+#workspaces button:hover {
+  color: #EDEDF8;
+  background: #2A2A3E;
+}
+
+#workspaces button.active {
+  color: #40FFFF;
+  border-bottom: 2px solid #40FFFF;
+}
+
+/* Urgent uses the 0.25 ramp, not the 0.68 one. A pastel alert is not an alert. */
+#workspaces button.urgent {
+  color: #1A1A2E;
+  background: #FF40FF;
+}
+
+#submap {
+  color: #1A1A2E;
+  background: #EBC2FF;
+  padding: 0 10px;
+}
+
+/* -- window title -------------------------------------------------------- */
+#window {
+  color: #D6D6FF;
+  padding: 0 10px;
+}
+
+window#waybar.empty #window { background: transparent; }
+
+/* -- right-hand group ---------------------------------------------------- */
+#custom-temperature,
+#cpu, #memory, #wireplumber, #backlight,
+#network, #bluetooth, #battery, #power-profiles-daemon,
+#clock, #tray {
+  padding: 0 9px;
+  color: #EDEDF8;
+}
+
+/* The load trio reads as one unit, tinted along the ramp so you can tell them
+ * apart at a glance without labels. */
+#custom-temperature { color: #ADFFFF; }
+#cpu                { color: #C2EBFF; }
+#memory             { color: #D6D6FF; }
+
+#wireplumber { color: #EBC2FF; }
+#backlight   { color: #EBC2FF; }
+#network     { color: #FFADFF; }
+#bluetooth   { color: #FFADFF; }
+
+#wireplumber.muted,
+#network.disconnected,
+#bluetooth.disabled,
+#bluetooth.off { color: #9494B0; }
+
+#battery { color: #D0FFEA; }
+#battery.charging, #battery.plugged { color: #D0FFEA; }
+#battery.warning:not(.charging) { color: #EBC2FF; }
+
+/* Critical blinks. Everything else on this bar is static, so motion here is
+ * unambiguous — it is the only thing that ever moves. */
+#battery.critical:not(.charging) {
+  color: #1A1A2E;
+  background: #FF40FF;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink { to { background: #1A1A2E; color: #FF40FF; } }
+
+#power-profiles-daemon.performance  { color: #FF40FF; }
+#power-profiles-daemon.balanced     { color: #D6D6FF; }
+#power-profiles-daemon.power-saver  { color: #D0FFEA; }
+
+#custom-temperature.hot {
+  color: #1A1A2E;
+  background: #FF40FF;
+}
+
+#clock {
+  color: #EDEDF8;
+  background: #2A2A3E;
+}
+
+#tray { padding-right: 10px; }
+#tray > .passive { -gtk-icon-effect: dim; }
+#tray > .needs-attention { -gtk-icon-effect: highlight; }
+
+tooltip {
+  background: #2A2A3E;
+  border: 1px solid #3A3A4E;
+  border-radius: 4px;
+}
+tooltip label { color: #EDEDF8; padding: 4px; }

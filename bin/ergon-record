@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# ergon:summary=Start or stop a screen recording
+# ergon:group=capture
+# ergon:args=[region]
+#
+# Toggle. Running it with a recording in flight stops that recording.
+#
+# pkill -x, never pkill -f: -f matches the whole command line, which includes
+# THIS script's own invocation, so `pkill -f wf-recorder` kills the toggle
+# before it can signal the recorder. -x matches the executable name only.
+set -euo pipefail
+
+OUT="${ERGON_RECORD_DIR:-$HOME/recordings}"
+
+if pgrep -x wf-recorder >/dev/null; then
+  # SIGINT, not SIGTERM: wf-recorder finalises the container on INT and leaves
+  # an unplayable file on TERM.
+  pkill -INT -x wf-recorder
+  notify-send "ergon-record" "stopped — $OUT"
+  exit 0
+fi
+
+mkdir -p "$OUT"
+file="$OUT/$(date +%Y%m%d-%H%M%S).mp4"
+
+args=(-f "$file")
+if [ "${1:-}" = "region" ]; then
+  geom=$(slurp) || exit 0
+  args+=(-g "$geom")
+fi
+
+# VAAPI on the iGPU. Software encoding a 2880x1920 panel pins several cores,
+# which on this machine means competing with whatever is actually running.
+if [ -e /dev/dri/renderD128 ]; then
+  args+=(-c h264_vaapi -d /dev/dri/renderD128)
+fi
+
+notify-send "ergon-record" "recording → $(basename "$file")"
+exec wf-recorder "${args[@]}"

@@ -1,0 +1,677 @@
+#!/usr/bin/env bash
+# ergon:summary=Add, remove and list optional package bundles
+# ergon:group=system
+# ergon:args=list|info|add|remove|update|sync [--yes] [--as NAME] [name|source...]
+#
+# The base system is small on purpose: Arch, uv, and packages/python. A bundle
+# is a group of packages for one kind of work, chosen at install time and
+# CHANGEABLE AFTERWARDS -- nobody knows at partition time whether they will want
+# the ML stack in March.
+#
+# The choice is recorded in hosts/<host>/host.env as BUNDLES="...", not just
+# applied, so reprovisioning a machine reproduces it. `sync` installs exactly
+# what that line declares and is what provisioning calls.
+#
+# Bundles from elsewhere -- a private overlay, someone's repository -- are added
+# by source: `ergon-bundle add github:me/overlay//fleet@v1`. The bundle's files
+# are COPIED into hosts/<host>/bundles/<name>/ with a .source saying where from,
+# and from then on it is local: sync, remove, list and info never fetch.
+# `update` is the one command that goes back to the source.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+BUNDLEDIR="$ERGON/packages/bundles"
+HOST="$(hostname -s)"
+HOSTENV="$ERGON/hosts/$HOST/host.env"
+COPYDIR="$ERGON/hosts/$HOST/bundles"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ergon"
+# What each bundle actually installed on THIS machine: `<bundle> pacman|python
+# <name>` lines. Machine state, not config, so it lives in the state dir and not
+# in the repo -- another machine's record of what it already had means nothing
+# here.
+LEDGER="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/bundle-ledger"
+LISTS="pacman aur python git"
+TMP=""
+trap '[ -z "$TMP" ] || rm -rf "$TMP"' EXIT
+
+ok()   { printf '   ok   %s\n' "$*"; }
+warn() { printf '   !!   %s\n' "$*" >&2; }
+die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
+
+# Anything that came from a bundle file goes through this before it reaches the
+# terminal, so an escape sequence in a description cannot redraw the screen
+# someone is about to say yes to.
+_clean() { LC_ALL=C tr -c '[:print:]\n' '?'; }
+
+_valid_name() { local LC_ALL=C; [[ $1 =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]]; }
+
+# One token per line, `#` to end of line is a comment. `|| [ -n "$l" ]`: a
+# last line with no newline is still a line -- editors that do not add one
+# would otherwise silently drop the last package.
+_list() {  # _list <file>
+  [ -f "$1" ] || return 0
+  local l
+  while IFS= read -r l || [ -n "$l" ]; do
+    l=${l%%#*}; l=${l#"${l%%[![:space:]]*}"}; l=${l%"${l##*[![:space:]]}"}
+    if [ -n "$l" ]; then printf '%s\n' "$l"; fi
+  done < "$1"
+}
+
+# What each list may contain. These tokens go straight into argv for `sudo
+# pacman` and uv, so the grammar is the injection defence: `--overwrite=*` on a
+# pacman line, or `--index-url=...` on a python line redirecting every package
+# including the base ones, must not parse. `--` before names is the second one.
+_token_ok() {  # _token_ok <kind> <token>
+  local LC_ALL=C
+  local pkg='^[a-z0-9@_+][a-z0-9@._+-]{0,127}$'
+  local op='(==|!=|<=|>=|~=|<|>)[A-Za-z0-9.*+!_-]+'
+  local py="^[A-Za-z0-9][A-Za-z0-9._-]*(\\[[A-Za-z0-9._,-]+\\])?(${op}(,${op})*)?\$"
+  # NAME @ git+URL. The name is required: pyfleet drops by distribution name,
+  # and a repository is often not named what it installs as (nereus-py is
+  # astronereus), so dropping by the URL's last segment silently removed nothing.
+  local git='^[A-Za-z0-9][A-Za-z0-9._-]* @ git\+(https|ssh)://[A-Za-z0-9][A-Za-z0-9._~:/@+-]*$'
+  case $1 in
+    pacman|aur) [[ $2 =~ $pkg ]] ;;
+    python)     [[ $2 =~ $py ]] ;;
+    git)        [[ $2 =~ $git ]] ;;
+    *)          return 1 ;;
+  esac
+}
+
+# meta is DATA. It used to be sourced, which is harmless for this repo's own
+# files and is running a stranger's shell the moment a bundle comes from
+# anywhere else -- `ergon-bundle list` would have done it, before anyone was
+# asked anything. A line is KEY=word or KEY="text" with nothing in the quotes a
+# shell would expand, so a file that passes means the same if a human sources it.
+META_RE='^([A-Z][A-Z0-9_]*)=("([^"$`\\]*)"|([A-Za-z0-9._-]*))[[:space:]]*$'
+
+_meta() {  # _meta <dir> <KEY>
+  [ -f "$1/meta" ] || return 0
+  local LC_ALL=C l
+  while IFS= read -r l || [ -n "$l" ]; do
+    if [[ $l =~ $META_RE ]] && [ "${BASH_REMATCH[1]}" = "$2" ]; then
+      printf '%s' "${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+      return 0
+    fi
+  done < "$1/meta"
+}
+
+# Everything a bundle directory may hold, checked before anything reads it.
+# A symlinked list could point at /etc/shadow or a FIFO; a script has no role in
+# the format, so the only reason to ship one is to have something run it later.
+#
+# Explicit returns throughout, never errexit: callers test this with `||`, and
+# bash switches errexit off for the whole body of a function called that way --
+# a failed check would fall through to "valid".
+_check() {  # _check <dir>
+  local LC_ALL=C d="$1" e f n l
+  [ -d "$d" ] && [ ! -L "$d" ] || { warn "${d#"$ERGON"/}: not a bundle directory"; return 1; }
+  for e in "$d"/* "$d"/.[!.]*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    f=${e##*/}
+    case $f in
+      meta|pacman|aur|python|git)
+        [ -f "$e" ] && [ ! -L "$e" ] || { warn "${d#"$ERGON"/}/$f: not a regular file"; return 1; }
+        [ "$(stat -c %s -- "$e")" -le 65536 ] || { warn "${d#"$ERGON"/}/$f: larger than 64 KiB"; return 1; } ;;
+      README|README.*|LICENSE|LICENSE.*|COPYING|.source) ;;
+      *) warn "${d#"$ERGON"/}/$(printf '%s' "$f" | _clean): a bundle holds package lists and nothing else -- no scripts"
+         return 1 ;;
+    esac
+  done
+  if [ -f "$d/meta" ]; then
+    n=0
+    while IFS= read -r l || [ -n "$l" ]; do
+      n=$((n + 1))
+      [[ $l =~ ^[[:space:]]*(#.*)?$ || $l =~ $META_RE ]] \
+        || { warn "${d#"$ERGON"/}/meta:$n: not KEY=value data"; return 1; }
+    done < "$d/meta"
+  fi
+  for f in $LISTS; do
+    [ -f "$d/$f" ] || continue
+    n=0
+    while IFS= read -r l || [ -n "$l" ]; do
+      n=$((n + 1))
+      l=${l%%#*}; l=${l#"${l%%[![:space:]]*}"}; l=${l%"${l##*[![:space:]]}"}
+      [ -n "$l" ] || continue
+      _token_ok "$f" "$l" \
+        || { warn "${d#"$ERGON"/}/$f:$n: '$(printf '%s' "$l" | _clean)' is not a valid $f line"; return 1; }
+    done < "$d/$f"
+  done
+}
+
+# --- what exists, what is enabled --------------------------------------------
+
+_all()    { find -P "$BUNDLEDIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort; }
+_copies() { find -P "$COPYDIR" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\n' 2>/dev/null | sort; }
+
+# The bundle's directory. Built-ins win: `add` refuses a copy under a built-in's
+# name, and sync refuses one that a later ergonOS starts shadowing.
+_dir() {  # _dir <name>
+  if [ -d "$BUNDLEDIR/$1" ]; then printf '%s' "$BUNDLEDIR/$1"
+  elif [ -f "$COPYDIR/$1/.source" ]; then printf '%s' "$COPYDIR/$1"
+  else return 1; fi
+}
+
+# What host.env declares: built-ins only. `set -f`, because an unquoted
+# expansion also globs, and a stray `*` would list the current directory.
+_declared() {
+  [ -f "$HOSTENV" ] || return 0
+  # shellcheck disable=SC1090
+  ( . "$HOSTENV" 2>/dev/null; set -f; printf '%s\n' ${BUNDLES:-} )
+}
+
+_enabled() { _declared; _copies; }
+
+# .source is data too: key=value, never sourced.
+_source() {  # _source <name> <key>
+  sed -n "s/^$2=//p" "$COPYDIR/$1/.source" 2>/dev/null | head -1
+}
+
+# A PEP 503-ish name for comparing lines across lists, so `Pillow>=10` in one
+# keeps `pillow` in another.
+_norm() {  # _norm <token>
+  local LC_ALL=C t=${1%% @ *}
+  if [[ $t =~ ^[A-Za-z0-9._@+-]+ ]]; then t=${BASH_REMATCH[0]}; fi
+  t=${t,,}; printf '%s\n' "${t//[._]/-}"
+}
+
+# Names the base system declares. A bundle that also lists one must never take
+# it away: julia is in packages/pacman AND is the julia bundle's only package,
+# so `remove julia` used to uninstall the base system's julia.
+_base() {
+  local h
+  _list "$ERGON/packages/pacman"; _list "$ERGON/packages/aur"; _list "$ERGON/packages/python"
+  for h in "$ERGON"/hardware/*/packages; do _list "$h"; done
+}
+
+# REQUIRES is a warning, not a gate. It reports what it actually FOUND, because
+# "no GPU detected" is useless next to "found an integrated Radeon, ROCm will
+# install and will probably be slower than your CPU". The machine is the user's;
+# this tells them what they are buying.
+_check_requires() {  # _check_requires <dir> <name>
+  local need; need=$(_meta "$1" REQUIRES)
+  [ -n "$need" ] || return 0
+  case "$need" in
+    amd-gpu|gpu)
+      local found
+      # `|| true`, because this file runs under `set -euo pipefail` and BOTH
+      # ordinary outcomes make the pipeline exit non-zero: grep matching
+      # nothing (a machine with no GPU) and lspci being absent. Without it the
+      # script died silently with status 1 and printed nothing at all -- which
+      # is precisely the warning it exists to print.
+      found=$(/sbin/lspci 2>/dev/null | grep -iE 'vga|3d|display' | sed 's/^.*: //' | head -3 || true)
+      [ -n "$found" ] || found="nothing on the PCI bus"
+      printf '   !!   %s expects a GPU. Found:\n' "$2" >&2
+      printf '          %s\n' "$found" >&2
+      # Name what was found and what it means. "No GPU detected" is useless
+      # next to "that is an integrated Radeon and ROCm will be slower than your
+      # CPU". Each vendor fails differently and deserves its own sentence.
+      if printf '%s' "$found" | grep -qiE 'nvidia'; then
+        printf '   !!   That is an Nvidia card. This bundle installs ROCm, which is AMD-only;\n' >&2
+        printf '        you want CUDA builds instead. Do not add this bundle.\n' >&2
+      elif printf '%s' "$found" | grep -qiE 'intel'; then
+        printf '   !!   That is Intel graphics. ROCm does not support it. Intel compute goes\n' >&2
+        printf '        through oneAPI/SYCL, which this bundle does not install.\n' >&2
+      elif printf '%s' "$found" | grep -qiE 'integrated|raphael|phoenix|hawk|strix|radeon graphics'; then
+        printf '   !!   That looks integrated. ROCm will install and run, and for\n' >&2
+        printf '        sampling it is routinely slower than the CPU -- while breaking\n' >&2
+        printf '        on kernel and mesa updates. Worth it for a discrete card.\n' >&2
+      fi
+      ;;
+    *) warn "$2 declares REQUIRES=$(printf '%s' "$need" | _clean), which nothing knows how to check" ;;
+  esac
+}
+
+# --- the ledger --------------------------------------------------------------
+
+# Everything installed right now, as `pacman NAME` and `python NAME` lines.
+# pacman -Qq, not -Qqe: a package already present as a dependency was not
+# installed BY the bundle, even if `-S --needed` leaves it alone.
+_snapshot() {
+  local v n
+  { pacman -Qq 2>/dev/null | sed 's/^/pacman /' || true
+    v=$("$ERGON/bin/pyfleet" path 2>/dev/null) || v=""
+    # `|| true`: a venv that is not built yet has no site-packages, and find
+    # failing on it under pipefail ended the script before anything installed.
+    if [ -n "$v" ]; then
+      find "$v"/lib/python*/site-packages -maxdepth 1 -name '*.dist-info' -printf '%f\n' 2>/dev/null \
+        | sed 's/-[^-]*\.dist-info$//' | while read -r n; do printf 'python %s\n' "$(_norm "$n")"; done || true
+    fi
+  } | LC_ALL=C sort -u
+}
+
+# What a bundle directory declares, in snapshot form.
+_declares() {  # _declares <dir>
+  local p
+  { _list "$1/pacman"; _list "$1/aur"; } | sed 's/^/pacman /'
+  { _list "$1/python"; _list "$1/git"; } | while read -r p; do printf 'python %s\n' "$(_norm "$p")"; done
+}
+
+# Record what appeared between two snapshots AND the bundle declares. The
+# intersection matters both ways: a dependency pulled in is not the bundle's to
+# name (-Rns takes orphans anyway), and a package that was already here before
+# the bundle arrived never becomes the bundle's to remove.
+_ledger_add() {  # _ledger_add <name> <before-file> <dir>
+  mkdir -p "$(dirname "$LEDGER")"; touch "$LEDGER"
+  { cat "$LEDGER"
+    LC_ALL=C comm -13 "$2" <(_snapshot) | grep -xF -f <(_declares "$3") | sed "s/^/$1 /" || true
+  } | LC_ALL=C sort -u > "$LEDGER.new"
+  mv -- "$LEDGER.new" "$LEDGER"
+}
+
+# --- install and remove ------------------------------------------------------
+
+_install_bundle() {  # _install_bundle <name>
+  local b="$1" d p fail=0 before
+  d=$(_dir "$b")
+  _check_requires "$d" "$b"
+  mkdir -p "$(dirname "$LEDGER")"
+  before=$(mktemp "$(dirname "$LEDGER")/.before.XXXXXX")
+  _snapshot > "$before"
+  # The ledger is written whatever happens next -- a pacman step that succeeds
+  # before a PyPI step fails, or Ctrl-C between them. Packages installed and
+  # not recorded would look pre-existing to every later run, and no remove
+  # would ever take them.
+  trap '_ledger_add "$b" "$before" "$d"; rm -f "$before"; exit 130' INT TERM
+
+  mapfile -t P < <(_list "$d/pacman")
+  [ "${#P[@]}" -eq 0 ] || sudo pacman -S --needed --noconfirm -- "${P[@]}" || fail=1
+
+  while read -r p; do
+    [ -n "$p" ] || continue
+    pacman -Qi -- "$p" >/dev/null 2>&1 && { ok "$p (already)"; continue; }
+    # A bundle may not REPLACE an installed package: ergon-aur otherwise
+    # removes whatever the PKGBUILD conflicts with, and a bundle's package
+    # displacing a base one is not something anyone agreed to.
+    ERGON_AUR_NO_REPLACE=1 "$ERGON/bin/ergon-aur" "$p" || warn "$p failed to build"
+  done < <(_list "$d/aur")
+
+  # Python goes into the pyfleet venv. That IS what opting in means: `import
+  # emcee` works in the python you get for free. Per-project environments are
+  # still the right place for a stack pinned to one paper.
+  mapfile -t PY < <(_list "$d/python"; _list "$d/git")
+  [ "${#PY[@]}" -eq 0 ] || "$ERGON/bin/pyfleet" add -- "${PY[@]}" || fail=1
+
+  trap - INT TERM
+  _ledger_add "$b" "$before" "$d"
+  rm -f -- "$before"
+  [ "$fail" = 0 ] || die "$b did not install completely; what did install is recorded, and ergon-bundle sync retries the rest"
+  ok "$b installed"
+}
+
+# Uninstalls what the LEDGER says this bundle installed -- never simply what it
+# lists, which would take packages the machine had before the bundle arrived.
+_remove_bundle() {  # _remove_bundle <name>
+  local b="$1" o od k n nn owner base others entries rest=""
+  local PAC=() PY=()
+  touch "$LEDGER" 2>/dev/null || true
+  # The base system keeps its packages outright: julia is in packages/pacman
+  # AND is the julia bundle's only package. Another ENABLED bundle keeps a
+  # package too, and takes over its ledger entry, so removing THAT bundle later
+  # still uninstalls it.
+  base=$(_base | while read -r n; do _norm "$n"; done | LC_ALL=C sort -u)
+  others=$(for o in $(_enabled); do
+             [ "$o" = "$b" ] && continue
+             od=$(_dir "$o") || continue
+             _declares "$od" | while read -r k n; do printf '%s %s\n' "$(_norm "$n")" "$o"; done
+           done)
+  entries=$(awk -v b="$b" '$1 == b { print $2, $3 }' "$LEDGER" 2>/dev/null || true)
+
+  if [ -z "$entries" ]; then
+    # State wiped, or installed before the ledger existed. Guessing from the
+    # lists is how base packages got removed; leaving them is the safe mistake.
+    warn "no record of what $b installed on this machine, so nothing is uninstalled"
+    printf '        what it lists, if you know it put them there:\n' >&2
+    _declares "$(_dir "$b")" | sed 's/^/          /' >&2
+  fi
+
+  while read -r k n; do
+    [ -n "$n" ] || continue
+    nn=$(_norm "$n")
+    if grep -qxF -- "$nn" <<< "$base"; then ok "$n kept (base system)"; continue; fi
+    owner=$(awk -v n="$nn" '$1 == n { print $2; exit }' <<< "$others")
+    if [ -n "$owner" ]; then
+      ok "$n kept ($owner also needs it)"
+      rest+="$owner $k $n"$'\n'
+      continue
+    fi
+    case $k in
+      # pacman -Rns aborts the WHOLE transaction on one target that is not
+      # installed, so one package removed by hand would keep all the others.
+      pacman) if pacman -Qq -- "$n" >/dev/null 2>&1; then PAC+=("$n"); fi ;;
+      python) PY+=("$n") ;;
+    esac
+  done <<< "$entries"
+
+  # -Rns: take the orphaned dependencies too, or removing a 4.5 GB bundle
+  # reclaims the 2 MB of the packages actually named in it.
+  if [ "${#PAC[@]}" -gt 0 ]; then
+    sudo pacman -Rns --noconfirm -- "${PAC[@]}" || warn "some packages would not remove"
+    # Whatever survived stays recorded, so a later remove can still take it.
+    for n in "${PAC[@]}"; do
+      if pacman -Qq -- "$n" >/dev/null 2>&1; then rest+="$b pacman $n"$'\n'; fi
+    done
+  fi
+  if [ "${#PY[@]}" -gt 0 ]; then
+    "$ERGON/bin/pyfleet" drop -- "${PY[@]}" || warn "pyfleet could not drop ${PY[*]}"
+  fi
+
+  { awk -v b="$b" '$1 != b' "$LEDGER" 2>/dev/null || true; printf '%s' "$rest"; } \
+    | sed '/^$/d' | LC_ALL=C sort -u > "$LEDGER.new"
+  mv -- "$LEDGER.new" "$LEDGER"
+  ok "$b removed"
+}
+
+_set_declared() {  # _set_declared <space separated list>
+  mkdir -p "$(dirname "$HOSTENV")"
+  [ -f "$HOSTENV" ] || printf '# What this machine IS.\nGRAPHICAL=0\nPROFILE=server\n' > "$HOSTENV"
+  local new="$1"
+  if grep -q '^BUNDLES=' "$HOSTENV"; then
+    sed -i "s|^BUNDLES=.*|BUNDLES=\"$new\"|" "$HOSTENV"
+  else
+    printf 'BUNDLES="%s"\n' "$new" >> "$HOSTENV"
+  fi
+  # Assert it, rather than trusting sed to have matched. A silent no-op here
+  # means the machine installs a bundle and forgets it by the next provision.
+  grep -q "^BUNDLES=\"$new\"$" "$HOSTENV" || die "could not record BUNDLES in $HOSTENV"
+}
+
+# --- sources -----------------------------------------------------------------
+
+# Anything with a `:` or a `/` is a source; bundle names have neither.
+_is_source() { case $1 in *:*|*/*) return 0 ;; *) return 1 ;; esac; }
+
+_url() {  # _url <location>  -> the URL git is given, and .source records
+  local LC_ALL=C s="$1"
+  case $s in
+    *::*)       warn "remote helpers (ext::, fd::) are not a source"; return 1 ;;
+    http://*|git://*)
+                warn "$(printf '%s' "$s" | _clean) is unauthenticated: anyone on the network path could change what installs as root. Use https:// or ssh://"
+                return 1 ;;
+    github:*)   s="https://github.com/${s#github:}"; s="${s%.git}.git" ;;
+    codeberg:*) s="https://codeberg.org/${s#codeberg:}"; s="${s%.git}.git" ;;
+    gitlab:*)   s="https://gitlab.com/${s#gitlab:}"; s="${s%.git}.git" ;;
+    https://*|ssh://*|file://*) ;;
+    /*|./*|../*|'~/'*)
+                [ "${s#\~/}" = "$s" ] || s="$HOME/${s#\~/}"
+                s=$(realpath -e -- "$s" 2>/dev/null) || { warn "$(printf '%s' "$1" | _clean): no such directory"; return 1; }
+                s="file://$s" ;;
+    *:*)        ;;  # scp-like: user@host:path, or an ~/.ssh/config Host alias
+    *)          return 1 ;;
+  esac
+  # No whitespace and nothing a shell or git would interpret. A host starting
+  # with `-` is how ssh:// URLs smuggled options into ssh.
+  [[ $s =~ ^[A-Za-z0-9/][A-Za-z0-9._~:/@+-]*$ && $s != *://-* && $s != *@-* ]] \
+    || { warn "not a source I can read: $(printf '%s' "$1" | _clean)"; return 1; }
+  printf '%s' "$s"
+}
+
+# Fetch without ever prompting. A passphrase or host-key question during
+# provisioning is a hang with nobody there to answer it, so ssh runs in
+# BatchMode unless the user has set their own ssh command. No hooks, no
+# submodules, no LFS smudge: nothing in the repository runs.
+_fetch() {  # _fetch <url> <ref> <dest>
+  local args=(clone --quiet --depth 1 --no-tags --single-branch --no-recurse-submodules)
+  [ -z "$2" ] || args+=(--branch "$2")
+  GIT_TERMINAL_PROMPT=0 GIT_LFS_SKIP_SMUDGE=1 GIT_ALLOW_PROTOCOL=https:ssh:file \
+  GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}" \
+    timeout 300 git -c core.hooksPath=/dev/null -c advice.detachedHead=false "${args[@]}" -- "$1" "$3" </dev/null
+}
+
+# Resolve LOCATION//BUNDLE[@REF] into a fetched, checked bundle directory.
+# Sets S_URL S_REF S_NAME S_DIR S_COMMIT. LOCATION// with no bundle lists what
+# the repository holds and exits.
+_resolve() {  # _resolve <source>
+  local s="$1" loc rest m
+  loc=${s%//*}; rest=${s##*//}
+  # A `//` must separate a location from a bundle: `https://host/repo` alone
+  # splits at the scheme and leaves `https:`.
+  case $s in *//*) ;; *) loc="" ;; esac
+  case $loc in
+    ''|*:) die "name the bundle: $(printf '%s' "$s" | _clean)//<bundle>   (LOCATION// on its own lists them)" ;;
+  esac
+  S_NAME=${rest%%@*}; S_REF=""
+  case $rest in *@*) S_REF=${rest#*@} ;; esac
+  S_URL=$(_url "$loc") || die "$(printf '%s' "$loc" | _clean): not a source (github:owner/repo, https://, ssh://, user@host:path, or a local git repository)"
+  if [ -n "$S_REF" ]; then
+    local LC_ALL=C
+    [[ $S_REF =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && $S_REF != *..* ]] \
+      || die "'$(printf '%s' "$S_REF" | _clean)' is not a branch or tag name"
+  fi
+
+  mkdir -p "$CACHE"
+  [ -z "$TMP" ] || rm -rf "$TMP"
+  TMP=$(mktemp -d "$CACHE/fetch.XXXXXX")
+  printf '   ·    fetching %s%s\n' "$S_URL" "${S_REF:+ ($S_REF)}"
+  _fetch "$S_URL" "$S_REF" "$TMP/repo" \
+    || die "could not fetch $S_URL${S_REF:+ at $S_REF}. Fetches never prompt: is the key in your ssh agent, and the host in known_hosts?"
+  S_COMMIT=$(git -C "$TMP/repo" rev-parse HEAD)
+
+  if [ -z "$S_NAME" ]; then
+    printf '%s holds, at %s:\n' "$S_URL" "${S_COMMIT:0:12}"
+    for m in "$TMP"/repo/*/meta; do
+      [ -f "$m" ] || continue
+      m=${m%/meta}
+      printf '  %-16s %s\n' "${m##*/}" "$(_meta "$m" DESCRIPTION | _clean)"
+    done
+    printf '   ·    name one: %s//<bundle>\n' "$(printf '%s' "$loc" | _clean)"
+    [ "$cmd" = info ] && exit 0
+    exit 1
+  fi
+  _valid_name "$S_NAME" || die "'$(printf '%s' "$S_NAME" | _clean)' is not a bundle name (a-z 0-9 -)"
+  S_DIR="$TMP/repo/$S_NAME"
+  [ -f "$S_DIR/meta" ] || die "no bundle $S_NAME at $S_URL (a bundle is a directory with a meta file)"
+  _check "$S_DIR" || die "$S_NAME from $S_URL is not a valid bundle; nothing installed"
+}
+
+_show() {  # _show <dir> <name>
+  local d="$1" f n
+  printf '%s — %s\n' "$2" "$(_meta "$d" DESCRIPTION | _clean)"
+  n=$(_meta "$d" SIZE_MB); [ -z "$n" ] || printf 'about %s MB\n' "$n"
+  n=$(_meta "$d" NOTE)
+  [ -z "$n" ] || printf '\n%s\n' "$n" | _clean | fold -s -w 74
+  for f in $LISTS; do
+    [ -s "$d/$f" ] || continue
+    case $f in
+      pacman) printf '\n[pacman]  official repositories, installed as root\n' ;;
+      aur)    printf '\n[aur]     built from the AUR: the PKGBUILD runs as you, its install script as root\n' ;;
+      python) printf '\n[python]  PyPI, into pyfleet\n' ;;
+      git)    printf '\n[git]     built from source into pyfleet: runs its build code\n' ;;
+    esac
+    _list "$d/$f" | sed 's/^/  /'
+  done
+}
+
+_confirm() {  # _confirm <question>
+  [ "$YES" = 0 ] || return 0
+  if [ ! -t 0 ]; then
+    warn "no terminal to ask on. Read the above, then re-run with --yes"
+    return 1
+  fi
+  local a
+  printf '   %s [y/N] ' "$1"
+  read -r a || return 1
+  case $a in y|Y|yes) return 0 ;; *) return 1 ;; esac
+}
+
+# Written to a sibling and moved into place, then checked: a half-written copy
+# would install half a bundle on every later sync.
+_write_copy() {  # _write_copy <from-dir> <name>
+  local new="$COPYDIR/.$2.new" f
+  mkdir -p "$COPYDIR"
+  rm -rf -- "$new"; mkdir -- "$new"
+  for f in meta $LISTS; do
+    [ ! -f "$1/$f" ] || cp -- "$1/$f" "$new/$f"
+  done
+  printf '# Where this bundle came from. Written by ergon-bundle; data, never sourced.\nurl=%s\nbundle=%s\nref=%s\ncommit=%s\n' \
+    "$S_URL" "$S_NAME" "$S_REF" "$S_COMMIT" > "$new/.source"
+  _check "$new" || die "the copy of $2 did not validate; nothing recorded"
+  rm -rf -- "${COPYDIR:?}/$2"
+  mv -- "$new" "$COPYDIR/$2"
+  [ "$(_source "$2" commit)" = "$S_COMMIT" ] || die "could not record $2 in ${COPYDIR#"$ERGON"/}"
+}
+
+_add_source() {  # _add_source <source>
+  _resolve "$1"
+  local name="${AS:-$S_NAME}"
+  _valid_name "$name" || die "--as $(printf '%s' "$name" | _clean): not a bundle name"
+  [ ! -d "$BUNDLEDIR/$name" ] || die "$name is a built-in bundle; add this one under another name with --as NAME"
+  if [ -f "$COPYDIR/$name/.source" ]; then
+    [ "$(_source "$name" url)" = "$S_URL" ] && [ "$(_source "$name" bundle)" = "$S_NAME" ] \
+      || die "$name is already added from $(_source "$name" url); add this one with --as NAME"
+    [ "$(_source "$name" commit)" != "$S_COMMIT" ] || { ok "$name already added at ${S_COMMIT:0:12}"; return 0; }
+    die "$name is already added at $(_source "$name" commit | cut -c1-12); to move it: ergon-bundle update $name"
+  fi
+
+  echo; _show "$S_DIR" "$name"
+  printf '\n   from    %s//%s%s\n   commit  %s\n' "$S_URL" "$S_NAME" "${S_REF:+@$S_REF}" "$S_COMMIT"
+  printf '   Not part of ergonOS, and nobody has reviewed it but you.\n'
+  _confirm "Add $name?" || die "$name: nothing installed"
+
+  # Recorded BEFORE installing: if an install fails halfway, sync retries it,
+  # rather than the machine carrying packages nothing accounts for.
+  _write_copy "$S_DIR" "$name"
+  _install_bundle "$name"
+  ok "recorded in hosts/$HOST/bundles/$name"
+  printf '   ·    commit it: git -C %s add -f hosts/%s/bundles/%s   (hosts/*/ is ignored upstream)\n' "$ERGON" "$HOST" "$name"
+}
+
+# Package-level lines, `kind token`, for diffing two versions of a bundle.
+_lines() { local f; for f in $LISTS; do _list "$1/$f" | sed "s/^/$f /"; done; }
+
+# --- commands ----------------------------------------------------------------
+
+YES=0; AS=""; ARGS=()
+cmd="${1:-list}"; [ "$#" -eq 0 ] || shift
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    --yes) YES=1 ;;
+    --as)  AS="${2:?--as needs a name}"; shift ;;
+    *)     ARGS+=("$1") ;;
+  esac
+  shift
+done
+
+case "$cmd" in
+  list)
+    printf '%-12s %-9s %-6s %s\n' BUNDLE STATUS SIZE DESCRIPTION
+    declared=$(_declared)
+    for b in $(_all); do
+      st=""; if grep -qxF -- "$b" <<< "$declared"; then st=installed; fi
+      printf '%-12s %-9s %-6s %s\n' "$b" "$st" "$(_meta "$BUNDLEDIR/$b" SIZE_MB)M" "$(_meta "$BUNDLEDIR/$b" DESCRIPTION | _clean)"
+    done
+    for b in $(_copies); do
+      [ -f "$COPYDIR/$b/.source" ] || continue
+      printf '%-12s %-9s %-6s %s\n' "$b" added "$(_meta "$COPYDIR/$b" SIZE_MB)M" "$(_meta "$COPYDIR/$b" DESCRIPTION | _clean)"
+      r=$(_source "$b" ref)
+      printf '%-12s from %s//%s%s  %s\n' "" "$(_source "$b" url)" "$(_source "$b" bundle)" "${r:+@$r}" "$(_source "$b" commit | cut -c1-12)"
+    done
+    ;;
+  info)
+    [ "${#ARGS[@]}" -eq 1 ] || die "usage: ergon-bundle info <name|source>"
+    t="${ARGS[0]}"
+    if _is_source "$t"; then
+      _resolve "$t"
+      _show "$S_DIR" "$S_NAME"
+      printf '\nfrom %s at %s\n' "$S_URL" "$S_COMMIT"
+    else
+      _valid_name "$t" && d=$(_dir "$t") || die "no bundle '$(printf '%s' "$t" | _clean)' (ergon-bundle list)"
+      _check "$d" || die "$t is not a valid bundle"
+      _show "$d" "$t"
+      [ ! -f "$d/.source" ] || printf '\nfrom %s//%s at %s\n' "$(_source "$t" url)" "$(_source "$t" bundle)" "$(_source "$t" commit)"
+    fi
+    ;;
+  add)
+    [ "${#ARGS[@]}" -gt 0 ] || die "usage: ergon-bundle add [--yes] [--as NAME] <name|source>..."
+    [ -z "$AS" ] || [ "${#ARGS[@]}" -eq 1 ] || die "--as names one bundle"
+    # Every built-in name is checked before anything installs, so a typo in the
+    # third name does not leave the first two installed.
+    for t in "${ARGS[@]}"; do
+      if _is_source "$t"; then continue; fi
+      _valid_name "$t" && [ -d "$BUNDLEDIR/$t" ] || die "no bundle '$(printf '%s' "$t" | _clean)' (ergon-bundle list)"
+      [ -z "$AS" ] || die "--as is for bundles added from a source"
+    done
+    mapfile -t cur < <(_declared)
+    for t in "${ARGS[@]}"; do
+      if _is_source "$t"; then _add_source "$t"; continue; fi
+      if printf '%s\n' "${cur[@]}" | grep -qxF -- "$t"; then ok "$t already enabled"; continue; fi
+      _check "$BUNDLEDIR/$t" || die "$t is not a valid bundle"
+      cur+=("$t")
+      # Recorded BEFORE installing, per bundle: a failure in this one or the next
+      # must not leave installed packages that host.env does not account for.
+      _set_declared "$(printf '%s\n' "${cur[@]}" | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+      _install_bundle "$t"
+    done
+    ;;
+  remove)
+    [ "${#ARGS[@]}" -gt 0 ] || die "usage: ergon-bundle remove <name>..."
+    for b in "${ARGS[@]}"; do
+      _valid_name "$b" || die "no bundle '$(printf '%s' "$b" | _clean)'"
+      if [ ! -d "$BUNDLEDIR/$b" ] && [ -f "$COPYDIR/$b/.source" ]; then
+        _remove_bundle "$b"
+        rm -rf -- "${COPYDIR:?}/$b"
+        [ ! -e "$COPYDIR/$b" ] || die "could not delete hosts/$HOST/bundles/$b"
+        continue
+      fi
+      [ -d "$BUNDLEDIR/$b" ] || die "no bundle '$b'"
+      mapfile -t cur < <(_declared)
+      if ! printf '%s\n' "${cur[@]}" | grep -qxF -- "$b"; then ok "$b is not enabled"; continue; fi
+      _remove_bundle "$b"
+      # `|| true`: removing the last enabled bundle leaves grep -v with no
+      # output and a non-zero status, which under errexit kills the script
+      # after the packages are already gone and before host.env is updated --
+      # leaving a machine whose record disagrees with itself.
+      _set_declared "$(printf '%s\n' "${cur[@]}" | grep -vxF -- "$b" | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)"
+    done
+    ;;
+  update)
+    [ -z "$AS" ] || die "--as is for add"
+    names=("${ARGS[@]}")
+    [ "${#names[@]}" -gt 0 ] || mapfile -t names < <(_copies)
+    [ "${#names[@]}" -gt 0 ] || { ok "no bundles added from a source"; exit 0; }
+    for b in "${names[@]}"; do
+      _valid_name "$b" && [ -f "$COPYDIR/$b/.source" ] \
+        || { warn "$(printf '%s' "$b" | _clean) was not added from a source (built-in bundles move with ergon sync)"; continue; }
+      r=$(_source "$b" ref)
+      _resolve "$(_source "$b" url)//$(_source "$b" bundle)${r:+@$r}"
+      if [ "$S_COMMIT" = "$(_source "$b" commit)" ]; then ok "$b up to date at ${S_COMMIT:0:12}"; continue; fi
+      changes=$(diff <(_lines "$COPYDIR/$b") <(_lines "$S_DIR") | sed -n 's/^< /  - /p; s/^> /  + /p' || true)
+      if [ -z "$changes" ]; then
+        _write_copy "$S_DIR" "$b"
+        ok "$b moved to ${S_COMMIT:0:12}; nothing that installs changed"
+        continue
+      fi
+      printf '\n%s: %s -> %s\n%s\n' "$b" "$(_source "$b" commit | cut -c1-12)" "${S_COMMIT:0:12}" "$changes"
+      if ! _confirm "Update $b?"; then warn "$b: not updated"; continue; fi
+      _write_copy "$S_DIR" "$b"
+      _install_bundle "$b"
+      # Dropped lines stay installed: uninstalling is remove's job, and a
+      # command run to GET things should not also take them away.
+      if grep -q '^  - ' <<< "$changes"; then
+        printf '   ·    lines marked - are no longer in %s but are still installed\n' "$b"
+      fi
+    done
+    ;;
+  sync)
+    mapfile -t declared < <(_declared)
+    for b in "${declared[@]}"; do
+      [ -n "$b" ] || continue
+      _valid_name "$b" && [ -d "$BUNDLEDIR/$b" ] || { warn "host.env names '$(printf '%s' "$b" | _clean)', which does not exist"; continue; }
+      _check "$BUNDLEDIR/$b" || { warn "$b is not a valid bundle; skipped"; continue; }
+      _install_bundle "$b"
+    done
+    # Copies never fetch: the committed files are the pin, so a fresh machine
+    # reinstalls them with no access to wherever they came from.
+    mapfile -t copies < <(_copies)
+    for b in "${copies[@]}"; do
+      [ -n "$b" ] || continue
+      _valid_name "$b" || { warn "hosts/$HOST/bundles/$(printf '%s' "$b" | _clean): not a bundle name; skipped"; continue; }
+      [ -f "$COPYDIR/$b/.source" ] || { warn "hosts/$HOST/bundles/$b has no .source; skipped"; continue; }
+      [ ! -d "$BUNDLEDIR/$b" ] || { warn "$b: a built-in bundle now has this name. Remove the copy and re-add it with --as NAME"; continue; }
+      _check "$COPYDIR/$b" || { warn "$b is not a valid bundle; skipped"; continue; }
+      _install_bundle "$b"
+    done
+    ;;
+  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$(printf '%s' "$cmd" | _clean)' (list|info|add|remove|update|sync)" ;;
+esac

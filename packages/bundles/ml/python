@@ -1,0 +1,8 @@
+scikit-learn
+xgboost
+optuna               # hyperparameter search that is not a for loop
+polars               # the dataframe you reach for when pandas runs out of RAM
+duckdb               # SQL over parquet without loading it
+pyarrow              # what pandas needs to read parquet at all. ergon-peek
+                     # tells a user without it to add this bundle, so the
+                     # bundle has to actually contain it.

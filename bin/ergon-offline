@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# ergon:summary=Pre-cache everything before a week without network
+# ergon:group=data
+# ergon:args=prep [--project DIR] | status
+#
+#   ergon offline prep          before you leave
+#   ergon offline status        what is cached and how stale
+#
+# Observing runs are a scheduled week with no usable network, and almost every
+# tool assumes otherwise. This warms the caches that would otherwise fail
+# silently at 3am on a mountain.
+set -euo pipefail
+
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ergon"
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+BIN="$ERGON/bin"
+mkdir -p "$CACHE"
+
+age() {  # age <file> -> human
+  [ -f "$1" ] || { echo "absent"; return; }
+  local s=$(( $(date +%s) - $(stat -c %Y "$1") ))
+  if   [ "$s" -lt 3600 ]  ; then echo "$(( s / 60 ))m old"
+  elif [ "$s" -lt 86400 ] ; then echo "$(( s / 3600 ))h old"
+  else                           echo "$(( s / 86400 ))d old"; fi
+}
+
+case "${1:-status}" in
+  prep)
+    PROJ="$PWD"
+    [ "${2:-}" = "--project" ] && PROJ="${3:?}"
+
+    printf '   ·   the TOI table (ExoFOP)\n'
+    "$BIN/ergon-target" "TOI-700" >/dev/null 2>&1 \
+      && printf '   ok  TOI table cached\n' \
+      || printf '   !!  could not cache the TOI table\n'
+
+    printf '   ·   the arXiv listing\n'
+    "$BIN/ergon-arxiv" --days 7 >/dev/null 2>&1 \
+      && printf '   ok  arXiv listing cached\n' \
+      || printf '   !!  could not cache the arXiv listing\n'
+
+    # The project environment is the one that actually stops work: a `uv sync`
+    # on the mountain fails and there is no way around it.
+    if [ -f "$PROJ/uv.lock" ]; then
+      printf '   ·   the project environment (%s)\n' "$(basename "$PROJ")"
+      UV=""
+      for p in "$HOME/.local/bin/uv" /usr/local/bin/uv /usr/bin/uv; do
+        [ -x "$p" ] && { UV="$p"; break; }
+      done
+      if [ -n "$UV" ] && ( cd "$PROJ" && "$UV" sync --frozen --quiet ); then
+        printf '   ok  .venv is complete and offline-ready\n'
+      else
+        printf '   !!  uv sync failed — the environment will NOT build offline\n'
+      fi
+    else
+      printf '   ·   no uv.lock here; skipping the environment\n'
+    fi
+
+    # astropy downloads IERS tables on first use and fails without them --
+    # which is how a coordinate transform breaks at an observatory and not
+    # before.
+    printf '   ·   astropy IERS tables\n'
+    VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+    if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" - <<'PY' 2>/dev/null
+from astropy.utils.iers import IERS_Auto
+IERS_Auto.open()
+print("ok")
+PY
+    then printf '   ok  IERS tables cached\n'
+    else printf '   ·   astropy not available or offline already\n'; fi
+
+    printf '\n   ok  cached. `ergon offline status` shows staleness.\n'
+    ;;
+  status)
+    printf '   %-22s %s\n' "TOI table"     "$(age "$CACHE/exofop-toi.csv")"
+    for f in "$CACHE"/arxiv-*.xml; do
+      [ -f "$f" ] && printf '   %-22s %s\n' "arXiv listing" "$(age "$f")"
+    done
+    if [ -f uv.lock ] && [ -d .venv ]; then
+      printf '   %-22s present\n' "project .venv"
+    elif [ -f uv.lock ]; then
+      printf '   %-22s MISSING — run: ergon offline prep\n' "project .venv"
+    fi
+    LIB="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/library"
+    # `|| true`: an AND-list whose test fails IS the script's exit status when
+    # it is the last command, so `status` reported failure on any machine
+    # without a paper library yet. Third time this shape has bitten today.
+    [ -d "$LIB" ] && printf '   %-22s %s PDFs\n' "paper library" \
+      "$(find "$LIB" -name '*.pdf' | wc -l)" || true
+    ;;
+  -h|--help|help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "ergon-offline: unknown command '$1' (prep|status)" >&2; exit 2 ;;
+esac

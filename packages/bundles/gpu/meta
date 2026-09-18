@@ -1,0 +1,4 @@
+DESCRIPTION="ROCm and GPU-accelerated builds"
+SIZE_MB=4500
+REQUIRES=amd-gpu
+NOTE="ROCm on an integrated GPU installs and runs, and is routinely slower than the CPU for sampling while breaking on kernel and mesa updates. Worth it for a discrete card; rarely otherwise."

@@ -1,0 +1,3 @@
+DESCRIPTION="Julia, for your own work"
+SIZE_MB=700
+NOTE="This is a julia for YOU -- REPL, kernel, your own projects. It is not what Nereus runs on: astronereus carries its own pinned runtime and depot because Enzyme tracks the Julia compiler closely and a rolling julia breaks it. Two runtimes, isolated by JULIA_DEPOT_PATH, on purpose."

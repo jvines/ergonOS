@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# ergon:summary=Look at a data file without caring what it is
+# ergon:group=data
+# ergon:args=<file>|-
+#
+# parquet, CSV, FITS, HDF5, npy/npz, netCDF, JSON -- schema, null counts,
+# per-column summaries and the first rows, from one command. The alternative is
+# four half-remembered incantations and a collaborator's file you cannot open.
+#
+#   ergon peek data.parquet
+#   ergon peek survey.fits
+#   wl-paste | ergon peek -        # a table copied out of a PDF or a webpage
+#
+# Runs in the pyfleet venv rather than the system python: that is the
+# environment guaranteed to have pandas and numpy on every machine in the fleet,
+# and it is the same one on Debian, macOS and Arch.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+
+PY="$VENV/bin/python"
+[ -x "$PY" ] || {
+  echo "ergon-peek: the shared python is not built" >&2
+  echo "            run: pyfleet sync" >&2
+  exit 1
+}
+
+exec "$PY" "$ERGON/lib/ergon_peek.py" "$@"

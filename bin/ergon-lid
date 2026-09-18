@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# ergon:summary=React to the laptop lid opening or closing
+# ergon:group=power
+# ergon:args=open|close
+#
+# Clamshell handling, and the reason it is a script rather than two lines in
+# the Hyprland config: "lid closed -> disable the internal panel" is WRONG when
+# it is the only display. Hyprland will happily disable your last output and
+# leave you typing into a machine with no picture, on a laptop whose lid is
+# shut, with no way to see that it worked.
+#
+# So: only disable eDP when something else is actually connected, and always
+# re-enable on open.
+set -euo pipefail
+
+command -v hyprctl >/dev/null || exit 0
+
+# The internal panel is eDP-* on every laptop worth the name. Matching the
+# description instead would break on a docked external that also reports eDP.
+internal=$(hyprctl monitors all -j | jq -r '.[] | select(.name | startswith("eDP")) | .name' | head -1)
+[ -n "$internal" ] || exit 0    # not a laptop; nothing to do
+
+externals=$(hyprctl monitors -j | jq -r --arg i "$internal" '[.[] | select(.name != $i)] | length')
+
+case "${1:?usage: ergon-lid open|close}" in
+  close)
+    if [ "$externals" -gt 0 ]; then
+      hyprctl keyword monitor "$internal, disable"
+    else
+      # Nothing else to draw on. Leave the panel alone and let logind's
+      # HandleLidSwitch=suspend-then-hibernate do its job instead.
+      exit 0
+    fi
+    ;;
+  open)
+    # `preferred` rather than a stored mode: the panel may have come back at a
+    # different scale if it was docked to something else in between. The
+    # per-host file re-applies the real mode on the next reload.
+    hyprctl keyword monitor "$internal, preferred, auto, 1"
+    ;;
+esac

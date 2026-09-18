@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# ergon:summary=Scaffold a project: locked env, LSP, git, and the directories
+# ergon:group=data
+# ergon:args=<name> [--template bare|analysis|paper] [--here]
+#
+# The twenty minutes between having an idea and running code, removed.
+#
+# What you get, and why each piece is there rather than left to taste:
+#   pyproject.toml + uv.lock   the lockfile is what ships to a cluster node and
+#                              what a reviewer needs; an environment without one
+#                              is not reproducible, it is just working today
+#   pyrightconfig.json         pointed at .venv, so imports resolve in any
+#                              editor. Without it the language server resolves
+#                              against the system python and underlines every
+#                              import in your own project
+#   data/ gitignored           data is not source. Committing it is how repos
+#                              reach 4 GB and stop cloning
+#   scratch/ gitignored        the place for things you will not delete, kept
+#                              out of backup and out of history
+#   figures/ tracked           they are the output you reason about, and
+#                              ergon-fig stamps their provenance
+#   refs.bib                   ergon-cite appends here
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+TEMPLATE=bare
+HERE=0
+NAME=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --template) TEMPLATE="${2:?--template needs a name}"; shift 2 ;;
+    --here)     HERE=1; shift ;;
+    -h|--help)  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*)         echo "ergon-new: unknown flag $1" >&2; exit 2 ;;
+    *)          NAME="$1"; shift ;;
+  esac
+done
+[ -n "$NAME" ] || { echo "usage: ergon new <name> [--template bare|analysis|paper]" >&2; exit 2; }
+
+case "$TEMPLATE" in
+  bare)     DEPS='"numpy", "scipy", "matplotlib"' ;;
+  analysis) DEPS='"numpy", "scipy", "matplotlib", "pandas", "arviz", "corner"' ;;
+  paper)    DEPS='"numpy", "scipy", "matplotlib", "pandas"' ;;
+  *) echo "ergon-new: unknown template '$TEMPLATE' (bare|analysis|paper)" >&2; exit 2 ;;
+esac
+
+UV=""
+for p in "$HOME/.local/bin/uv" /usr/local/bin/uv /opt/homebrew/bin/uv /usr/bin/uv; do
+  [ -x "$p" ] && { UV="$p"; break; }
+done
+[ -n "$UV" ] || { echo "ergon-new: uv not found (it is in packages/pacman)" >&2; exit 1; }
+
+if [ "$HERE" = 1 ]; then
+  DIR="$PWD"
+else
+  DIR="$PWD/$NAME"
+  [ -e "$DIR" ] && { echo "ergon-new: $DIR already exists" >&2; exit 1; }
+  mkdir -p "$DIR"
+fi
+cd "$DIR"
+mkdir -p data figures scratch src/"${NAME//-/_}"
+
+cat > pyproject.toml <<TOML
+[project]
+name = "${NAME}"
+version = "0.1.0"
+description = ""
+requires-python = ">=3.13"
+dependencies = [$DEPS]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/${NAME//-/_}"]
+TOML
+
+# The LSP config. Editor-agnostic on purpose: pyright is what most language
+# servers use under the hood, and pointing it at .venv is the one setting that
+# makes imports resolve. Doing it once here beats doing it per editor forever.
+cat > pyrightconfig.json <<'JSON'
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "include": ["src", "."],
+  "exclude": ["data", "scratch", ".venv", "**/__pycache__"],
+  "typeCheckingMode": "basic"
+}
+JSON
+
+cat > .gitignore <<'GIT'
+# Data is not source. Committing it is how a repo reaches 4 GB and stops
+# cloning; keep it reproducible or keep it in the archive, not in history.
+data/
+scratch/
+
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# LaTeX build products
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.synctex.gz
+GIT
+
+touch refs.bib
+printf '# %s\n\nScaffolded by `ergon new`.\n\n- `src/` the package\n- `data/` inputs, gitignored\n- `figures/` outputs, tracked, provenance-stamped by ergon-fig\n- `scratch/` things you will not delete, ignored and not backed up\n' "$NAME" > README.md
+touch "src/${NAME//-/_}/__init__.py"
+
+if [ "$TEMPLATE" = paper ]; then
+  mkdir -p paper
+  printf '%% Scaffolded by `ergon new --template paper`.\n%% ergon-cite appends to ../refs.bib\n\\documentclass{article}\n\\begin{document}\n\n\\bibliography{../refs}\n\\end{document}\n' > paper/ms.tex
+fi
+
+printf '   ok  %s/\n' "$DIR"
+"$UV" lock >/dev/null 2>&1 && printf '   ok  uv.lock (this is what ships to a node)\n' \
+  || printf '   !!  uv lock failed — run it by hand once you have network\n'
+"$UV" sync --quiet >/dev/null 2>&1 && printf '   ok  .venv\n' || true
+
+if command -v git >/dev/null && [ ! -d .git ]; then
+  git init -q
+  git add -A && git -c user.email=noreply -c user.name=ergon commit -qm "scaffold: $NAME ($TEMPLATE)" 2>/dev/null || true
+  printf '   ok  git initialised\n'
+fi
+printf '\n   next:  ergon kernel        register this env for notebooks\n'
+printf '          ergon cite <doi>    into refs.bib\n'

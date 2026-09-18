@@ -1,0 +1,2 @@
+marimo
+jupytext             # .ipynb <-> .py, for notebooks that arrive as JSON

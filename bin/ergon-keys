@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# ergon:summary=Searchable list of every Hyprland keybinding
+# ergon:group=help
+#
+# Reads the bindings out of the RUNNING compositor rather than parsing the Lua.
+# That is the whole point: a cheatsheet maintained alongside the config is a
+# second source of truth that drifts, and you only find out it drifted at the
+# moment you needed it. Every bind in hypr/common/binds.lua carries a
+# description= for exactly this.
+set -euo pipefail
+
+command -v hyprctl >/dev/null || { echo "not in a Hyprland session" >&2; exit 1; }
+
+# Hyprland reports modmask as an X11-style bitfield.
+render() {
+  hyprctl binds -j | jq -r '
+    def mods($m):
+      [ if ($m / 64 | floor) % 2 == 1 then "SUPER" else empty end,
+        if ($m /  4 | floor) % 2 == 1 then "CTRL"  else empty end,
+        if ($m /  8 | floor) % 2 == 1 then "ALT"   else empty end,
+        if ($m /  1 | floor) % 2 == 1 then "SHIFT" else empty end ] | join(" + ");
+
+    .[]
+    # Unnamed binds are the internal ones (submap escapes and the like) and are
+    # noise in a cheatsheet.
+    | select((.description // "") != "")
+    | (mods(.modmask) as $m
+       | if $m == "" then .key else $m + " + " + .key end) as $keys
+    | [$keys, .description]
+    | @tsv
+  ' | sort -t"$(printf '\t')" -k2,2 | column -t -s"$(printf '\t')"
+}
+
+# In a session with a launcher, make it searchable; otherwise just print.
+if [ -t 1 ] || ! command -v fuzzel >/dev/null; then
+  render
+else
+  render | fuzzel --dmenu --prompt 'keys  ' --width 70 >/dev/null
+fi

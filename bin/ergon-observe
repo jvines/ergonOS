@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# ergon:summary=Is the target up, from where, and when
+# ergon:group=data
+# ergon:args=<target> [--site NAME] [--date YYYY-MM-DD]
+#
+#   ergon observe TOI-700 --site paranal
+#
+# Airmass through the night, the observable window and the moon, in the
+# terminal. Needs the astronomy bundle.
+set -euo pipefail
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+[ -x "$VENV/bin/python" ] || { echo "ergon-observe: run: pyfleet sync" >&2; exit 1; }
+exec "$VENV/bin/python" "$ERGON/lib/ergon_observe.py" "$@"

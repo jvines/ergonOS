@@ -1,0 +1,3 @@
+# Trans-dimensional and standard nested sampling via mixtures of mutually
+# singular distributions. Not on PyPI.
+daedalus @ git+https://github.com/jvines/DAEDALUS

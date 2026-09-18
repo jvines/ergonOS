@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Installed as /etc/grub.d/09_ergon_boot_guard by ergon-boot-guard.
+#
+# This is a SHELL script that grub-mkconfig runs to PRINT grub script. The text
+# between the quoted heredocs is GRUB's own language, evaluated at boot time --
+# the two layers are easy to conflate, and only this file mixes them.
+#
+# What it prints:
+#   * a boot counter kept in a grubenv ON THE EFI PARTITION. GRUB has no counter
+#     of its own (Fedora and openSUSE each patch one in), and this layout puts
+#     /boot inside LUKS, where GRUB writing is undocumented even upstream. FAT it
+#     writes without question. GRUB also has no arithmetic, hence the ladder.
+#   * one extra menu entry that boots the last known-good snapshot, using that
+#     snapshot's OWN kernel and initramfs: after a kernel update the running
+#     kernel's modules are not in the snapshot, so its kernel is the only one
+#     that can boot it.
+#
+# It is numbered 09 so the counter runs before 10_linux sets the usual default.
+# Every value below is read at grub-mkconfig time; the env overrides exist for
+# bin/test-boot-guard.sh.
+set -euo pipefail
+
+BOOTDIR="${ERGON_GUARD_BOOT:-/boot}"
+GRUBDEF="${ERGON_GUARD_GRUB_DEFAULT:-/etc/default/grub}"
+TRIES="${ERGON_GUARD_TRIES:-2}"
+
+_esp() {
+  local m
+  for m in /efi /boot/efi /boot; do
+    [ "$(findmnt -no FSTYPE "$m" 2>/dev/null)" = vfat ] || continue
+    printf '%s\n' "$m"; return 0
+  done
+  return 1
+}
+
+ESPUUID="${ERGON_GUARD_ESP_UUID:-$(findmnt -no UUID "$(_esp)" 2>/dev/null || true)}"
+ROOTUUID="${ERGON_GUARD_ROOT_UUID:-$(findmnt -no UUID / 2>/dev/null || true)}"
+
+# Without these two there is nothing to write and nothing to boot; print nothing
+# rather than a broken entry, and let grub.cfg be exactly what it was before.
+if [ -z "$ESPUUID" ] || [ -z "$ROOTUUID" ]; then
+  echo "  ergon boot guard: no EFI partition or no root UUID; skipped" >&2
+  exit 0
+fi
+
+CMDLINE="$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"$/\1/p' "$GRUBDEF" 2>/dev/null || true)"
+CMDLINE="$CMDLINE $(sed -n 's/^GRUB_CMDLINE_LINUX="\(.*\)"$/\1/p' "$GRUBDEF" 2>/dev/null || true)"
+CMDLINE="$(printf '%s' "$CMDLINE" | sed 's/  */ /g; s/^ //; s/ $//')"
+
+cat <<GRUBCFG
+if search --no-floppy --fs-uuid --set=ergonesp $ESPUUID; then
+  if [ -f (\$ergonesp)/EFI/ergon/grubenv ]; then
+    load_env --file (\$ergonesp)/EFI/ergon/grubenv
+    if [ -z "\$ergon_tries" ]; then set ergon_tries=$TRIES; fi
+    echo "ergon boot guard: tries=\$ergon_tries good=\$ergon_good_snapshot"
+    if [ "\$ergon_tries" = "0" ]; then
+      if [ -n "\$ergon_good_snapshot" ]; then
+        set default="ergon-fallback"
+        set ergon_fell_back=1
+        # Reset the counter as we fall back. The snapshot is a rescue, not a new
+        # home: the next boot tries the normal system again, and only fails its
+        # way back here if it is still broken. Nothing has to boot well enough
+        # to run the success unit for the machine to get another chance.
+        set ergon_tries=$TRIES
+        save_env --file (\$ergonesp)/EFI/ergon/grubenv ergon_fell_back ergon_tries
+      fi
+    else
+      if [ "\$ergon_tries" = "3" ]; then
+        set ergon_tries=2
+      elif [ "\$ergon_tries" = "2" ]; then
+        set ergon_tries=1
+      else
+        set ergon_tries=0
+      fi
+      save_env --file (\$ergonesp)/EFI/ergon/grubenv ergon_tries
+    fi
+  fi
+fi
+GRUBCFG

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# ergon:summary=Set brightness on the internal panel or an external monitor
+# ergon:group=hardware
+# ergon:args=<+N|-N|N> [--external]
+#
+# Two completely different mechanisms behind one command:
+#
+#   internal panel -- /sys/class/backlight, driven by brightnessctl. Instant.
+#   external       -- DDC/CI over the video cable, driven by ddcutil. Takes
+#                     ~100ms per call and some monitors ignore it entirely.
+#
+# swayosd owns the internal panel for the hardware keys (see media.lua); this is
+# for the external, which has no backlight device and which those keys cannot
+# touch at all.
+set -euo pipefail
+
+VAL="${1:?usage: ergon-brightness <+N|-N|N> [--external]}"
+MODE="${2:-}"
+
+if [ "$MODE" = "--external" ]; then
+  command -v ddcutil >/dev/null || { echo "ddcutil not installed" >&2; exit 1; }
+  # i2c-dev is not autoloaded; without it ddcutil reports "no displays found"
+  # rather than a permissions error, which sends you looking in the wrong place.
+  lsmod | grep -q '^i2c_dev' || sudo modprobe i2c-dev
+  case "$VAL" in
+    +*) ddcutil setvcp 10 + "${VAL#+}" ;;
+    -*) ddcutil setvcp 10 - "${VAL#-}" ;;
+    *)  ddcutil setvcp 10 "$VAL" ;;
+  esac
+else
+  case "$VAL" in
+    +*) brightnessctl set "${VAL#+}%+" ;;
+    -*) brightnessctl set "${VAL#-}%-" ;;
+    *)  brightnessctl set "${VAL}%" ;;
+  esac
+fi

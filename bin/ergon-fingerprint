@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# ergon:summary=Enrol fingerprints for the reader
+# ergon:group=hardware
+# ergon:args=[finger]   (default: right-index-finger)
+#
+# hypr/hyprlock.conf declares a fingerprint auth block. That block does NOT use
+# PAM -- hyprlock talks to fprintd over D-Bus directly -- so the reader works on
+# the lock screen as soon as a finger is enrolled here, with no PAM edits.
+#
+# sudo is a separate question and deliberately NOT configured: a fingerprint on
+# the lock screen protects a laptop you already unlocked with a passphrase at
+# boot; a fingerprint on sudo lowers the bar for privilege escalation on a
+# machine holding cluster credentials.
+set -euo pipefail
+
+FINGER="${1:-right-index-finger}"
+
+command -v fprintd-enroll >/dev/null || { echo "fprintd not installed" >&2; exit 1; }
+
+if ! systemctl is-active --quiet fprintd.service; then
+  # fprintd is socket/dbus activated; this is a nudge, not a requirement.
+  sudo systemctl start fprintd.service 2>/dev/null || true
+fi
+
+if ! fprintd-list "$USER" 2>/dev/null | grep -q .; then
+  echo "no fingerprints enrolled yet"
+fi
+
+echo "enrolling $FINGER — touch the power button repeatedly when prompted"
+fprintd-enroll -f "$FINGER"
+echo
+fprintd-list "$USER"
+echo
+echo "  verify with: fprintd-verify"
+echo "  lock screen will now accept it; sudo deliberately will not."

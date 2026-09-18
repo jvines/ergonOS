@@ -1,0 +1,8 @@
+# Kernel parameters, one per line, added to GRUB's default cmdline.
+#
+# Framework's own Linux notes for the Ryzen AI 300 boards (FrameworkComputer/
+# linux-docs, framework13/Ryzen-AI-300-Series.md) give this for "system lag or
+# freezing". It turns off Panel Self Refresh and Panel Replay in amdgpu's display
+# core, at some cost in idle power. No kernel or BIOS version is stated as fixing
+# it. Drop it here once one is, and confirm on the machine that lag is gone.
+amdgpu.dcdebugmask=0x610

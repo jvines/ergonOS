@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# ergon:summary=Restore the root subvolume from a snapper snapshot
+# ergon:group=system
+# ergon:args=--list | <snapshot-number> [--device /dev/mapper/cryptroot]
+#
+# WHY THIS EXISTS, rather than `snapper rollback`:
+#
+# snapper rollback works by repointing the btrfs DEFAULT SUBVOLUME. That does
+# not work on this machine, and cannot be made to:
+#
+#   * grub-mkconfig's 10_linux detects root on a named subvolume and PREPENDS
+#     rootflags=subvol=@ to the kernel command line. Nothing in
+#     /etc/default/grub turns that off, and mounting via the default subvolume
+#     does not help -- grub-mkrelpath reports the subvolume's real path either
+#     way. So the kernel mounts @ no matter what the default points at.
+#   * even with the default set to @ and verified, snapper still refuses with
+#     "Cannot detect ambit since default subvolume is unknown".
+#
+# ArchWiki's note that the @ layout is "intended not to be used with snapper
+# rollback" turns out to mean exactly this.
+#
+# So: do what the layout DOES support. Move @ aside and replace it with a
+# writable copy of the snapshot. rootflags=subvol=@ stays correct throughout,
+# because @ becomes the restored content.
+#
+# This CANNOT run from @ itself -- you cannot replace the subvolume you are
+# running from. Boot a snapshot from the grub-btrfs submenu first, or boot the
+# Arch ISO. It refuses rather than half-finishing.
+set -euo pipefail
+
+DEV="${ERGON_ROLLBACK_DEV:-/dev/mapper/cryptroot}"
+KEEP_PREFIX="@.broken"
+
+die() { printf '   FAIL %s\n' "$*" >&2; exit 1; }
+ok()  { printf '   ok   %s\n' "$*"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --device) DEV="${2:?--device needs a path}"; shift 2 ;;
+    --list)   MODE=list; shift ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    *) TARGET="$1"; shift ;;
+  esac
+done
+
+[ -b "$DEV" ] || die "$DEV is not a block device (is the LUKS volume open?)"
+
+TOP=$(mktemp -d)
+cleanup() { mountpoint -q "$TOP" && umount "$TOP"; rmdir "$TOP" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# subvolid=5 is the filesystem root, above every named subvolume. This is the
+# only view from which @ can be moved.
+mount -o subvolid=5 "$DEV" "$TOP" || die "could not mount the btrfs top level"
+
+[ -d "$TOP/@snapshots" ] || die "no @snapshots subvolume — is this the right disk?"
+
+if [ "${MODE:-}" = list ]; then
+  printf '   snapshots on %s:\n' "$DEV"
+  for d in "$TOP"/@snapshots/*/; do
+    n=$(basename "$d")
+    [ -d "$d/snapshot" ] || continue
+    desc=$(sed -n 's:.*<description>\(.*\)</description>.*:\1:p' "$d/info.xml" 2>/dev/null | head -1)
+    date=$(sed -n 's:.*<date>\(.*\)</date>.*:\1:p' "$d/info.xml" 2>/dev/null | head -1)
+    printf '     %-5s %-20s %s\n' "$n" "${date:-?}" "${desc:-}"
+  done
+  exit 0
+fi
+
+[ -n "${TARGET:-}" ] || die "usage: ergon-rollback <snapshot-number> | --list"
+SNAP="$TOP/@snapshots/$TARGET/snapshot"
+[ -d "$SNAP" ] || die "snapshot $TARGET does not exist (try --list)"
+
+# Refuse if @ is the live root. Comparing the device is not enough -- a snapshot
+# boot uses the SAME device -- so compare the subvolume the running root came
+# from against @.
+# FSROOT names the subvolume directly ("/@"), where SOURCE wraps it in the
+# device string ("/dev/mapper/cryptroot[/@]") and needs unquoting to compare.
+# On the Arch ISO / is the archiso overlay, so this correctly allows the run.
+running_subvol=$(findmnt -no FSROOT / 2>/dev/null || echo unknown)
+if [ "$running_subvol" = "/@" ]; then
+  die "you are running FROM @ -- it cannot replace itself. Boot a snapshot from the grub-btrfs submenu, or the Arch ISO, then re-run."
+fi
+
+STAMP=$(date -u +%Y%m%d-%H%M%S)
+printf '   rolling %s back to snapshot %s\n' "$DEV" "$TARGET"
+
+# Move rather than delete. The broken root is the only copy of whatever went
+# wrong, and it is what you need to work out why. Prune them by hand later.
+mv "$TOP/@" "$TOP/$KEEP_PREFIX-$STAMP"
+ok "old root kept as $KEEP_PREFIX-$STAMP"
+
+btrfs subvolume snapshot "$SNAP" "$TOP/@" >/dev/null
+ok "@ restored from snapshot $TARGET"
+
+# The default subvolume still has to point at @, or a kernel that ignores
+# rootflags would land somewhere else.
+NEWID=$(btrfs subvolume list "$TOP" | awk '$NF == "@" { print $2 }')
+[ -n "$NEWID" ] && btrfs subvolume set-default "$NEWID" "$TOP"
+ok "default subvolume -> @ (id $NEWID)"
+
+cat <<EOF
+
+   Done. Reboot.
+
+   The previous root is $KEEP_PREFIX-$STAMP on the filesystem top level, not
+   deleted. To inspect it later:
+
+     mount -o subvolid=5 $DEV /mnt
+     ls /mnt/$KEEP_PREFIX-$STAMP
+
+   To reclaim the space once you are satisfied:
+
+     btrfs subvolume delete /mnt/$KEEP_PREFIX-$STAMP
+EOF

@@ -1,0 +1,3 @@
+rocm-hip-sdk
+rocm-opencl-runtime
+python-pytorch-opt-rocm
