@@ -941,7 +941,18 @@ W="$(getent passwd "$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)" | cu
 # The file existing is not the point; hyprpaper actually putting a surface on
 # the background layer is. A file that hyprpaper cannot read looks identical
 # from the outside to one that is not there.
-if hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b && /hyprpaper/{f=1} END{exit !f}'; then
+# Polled. hyprpaper is started by ergon-wallpaper during autostart and has to
+# render before it maps anything, so a single check here races it -- this
+# reported "background layer is empty" while the diagnosis printed immediately
+# below showed the layer present and full-screen a second later.
+_bg=0
+for _ in $(seq 15); do
+  if hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b && /hyprpaper/{f=1} END{exit !f}'; then
+    _bg=1; break
+  fi
+  sleep 1
+done
+if [ "$_bg" = 1 ]; then
   ok "hyprpaper mapped a background layer"
 elif grep -q "createImageFromDmaBufs failed" /run/user/1000/hypr/*/hyprland.log 2>/dev/null; then
   # Same VM limitation that stops grim capturing, and for the same reason:
