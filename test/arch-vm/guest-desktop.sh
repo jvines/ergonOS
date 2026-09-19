@@ -900,9 +900,18 @@ ok "greetd left enabled for interactive use"
 systemctl is-active --quiet power-profiles-daemon \
   && ok "power-profiles-daemon is running (the bar's profile button can switch)" \
   || bad "power-profiles-daemon is not running — clicking the profile icon does nothing"
+# Assert the thing that survives a REBOOT, not the rmmod we just did. The first
+# version of this checked /dev/fd0 in the same boot that removed the module by
+# hand: it passed, and the prompt was still there on the next boot, because the
+# module comes back from the initramfs. The cmdline is the durable fact.
+grep -q 'modprobe.blacklist=floppy' /proc/cmdline 2>/dev/null \
+  && ok "floppy blacklisted on the running cmdline" \
+  || { grep -q 'modprobe.blacklist=floppy' /boot/grub/grub.cfg 2>/dev/null \
+       && ok "floppy blacklisted in grub.cfg (takes effect next boot)" \
+       || bad "nothing blacklists floppy on the cmdline — the prompt returns every boot"; }
 [ -e /dev/fd0 ] \
-  && bad "/dev/fd0 exists — udiskie will ask polkit to mount a floppy on every boot" \
-  || ok "no floppy device, so nothing prompts to mount one"
+  && note "/dev/fd0 still present in this boot (it predates the blacklist)" \
+  || ok "no floppy device"
 
 # --- the bar's commands actually resolve ----------------------------------
 # waybar and autostart exec ergon-* BY NAME. If PATH does not carry them the bar

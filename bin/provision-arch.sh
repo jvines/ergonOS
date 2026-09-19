@@ -141,10 +141,34 @@ sudo install -Dm644 /dev/stdin /etc/modprobe.d/ergon-no-floppy.conf <<'EOF'
 blacklist floppy
 install floppy /bin/false
 EOF
-# Already bound on this boot? Take it away now so the prompt stops today rather
-# than after the next reboot.
-sudo rmmod floppy 2>/dev/null && ok "floppy module removed and blacklisted" \
-                              || ok "floppy blacklisted"
+# /etc/modprobe.d is NOT enough on its own, and believing it was is why this
+# came back: the module is loaded from the INITRAMFS, before the root filesystem
+# holding that file is mounted. The blacklist there is read far too late.
+#
+# modprobe.blacklist= on the kernel command line applies from the first module
+# load, initramfs included. That is what actually removes the drive.
+_g=/etc/default/grub
+if [ -f "$_g" ]; then
+  _cur=$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"$/\1/p' "$_g")
+  case " $_cur " in
+    *" modprobe.blacklist=floppy "*) ok "floppy already blacklisted on the cmdline" ;;
+    *)
+      sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${_cur:+$_cur }modprobe.blacklist=floppy\"|" "$_g"
+      sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 \
+        && ok "floppy blacklisted on the kernel cmdline" \
+        || warn "cmdline written but grub-mkconfig failed"
+      ;;
+  esac
+else
+  warn "no /etc/default/grub; the floppy will come back on the next boot"
+fi
+# Rebuild the initramfs too, so its copy of modprobe.d carries the blacklist.
+sudo mkinitcpio -P >/dev/null 2>&1 || warn "mkinitcpio failed; the cmdline still covers this"
+# And take it away on THIS boot, so the prompt stops now rather than after a
+# reboot. This is the convenience, not the fix.
+sudo rmmod floppy 2>/dev/null || true
+[ -e /dev/fd0 ] && warn "/dev/fd0 is still present on this boot; it is gone after the next one" \
+                || ok "no floppy device"
 
 say "services"
 # power-profiles-daemon belongs here and was missing: it is installed by
