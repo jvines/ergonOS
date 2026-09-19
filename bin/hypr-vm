@@ -85,7 +85,7 @@ VNCPASS="${HYPR_VM_VNC_PASS:-hyprvm}"
 RENDERNODE="${HYPR_VM_RENDERNODE:-/dev/dri/renderD128}"
 if [ -e "$RENDERNODE" ]; then
   GPU_DEV="virtio-vga-gl"
-  GPU_DISPLAY="egl-headless,rendernode=$RENDERNODE"
+  GPU_DISPLAY="egl-headless,gl=on,rendernode=$RENDERNODE"
   GPU_DOCKER="--device $RENDERNODE"
   GPU_NOTE="  GL: on ($RENDERNODE) -- wallpaper and screenshots work here"
 else

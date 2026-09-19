@@ -35,10 +35,10 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 # mean anything; without one they are skips. Run this on a host with a GPU.
 RENDERNODE="${HYPR_VM_RENDERNODE:-/dev/dri/renderD128}"
 if [ -e "$RENDERNODE" ]; then
-  GPU_DEV="virtio-vga-gl"; GPU_DISPLAY="egl-headless,rendernode=$RENDERNODE"
-  GPU_DOCKER="--device $RENDERNODE"
+  GPU_DEV="virtio-vga-gl"; GPU_DISPLAY="egl-headless,gl=on,rendernode=$RENDERNODE"
+  GPU_DOCKER="--device $RENDERNODE"; GPU_CONSOLE="-serial mon:stdio"
 else
-  GPU_DEV="virtio-gpu-pci"; GPU_DISPLAY="none"; GPU_DOCKER=""
+  GPU_DEV="virtio-gpu-pci"; GPU_DISPLAY="none"; GPU_DOCKER=""; GPU_CONSOLE="-nographic"
 fi
 
 cp "$ERGON/test/arch-vm/lib.exp" "$WORK/lib.exp"
@@ -74,7 +74,7 @@ spawn qemu-system-x86_64 \
   -virtfs local,path=/ergon,mount_tag=ergon,security_model=none,readonly=on \
   -virtfs local,path=/w/out,mount_tag=out,security_model=none \
   -nic user,model=virtio-net-pci \
-  -nographic -no-reboot
+  $GPU_CONSOLE -no-reboot
 
 unlock_and_login "$PASSPHRASE" "$VMHOST" "$USERNAME" "$USERPASS"
 
