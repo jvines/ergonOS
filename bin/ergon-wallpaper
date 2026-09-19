@@ -16,6 +16,9 @@ set -euo pipefail
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
 OUT="${ERGON_WALLPAPER_OUT:-$HOME/.local/share/ergon/wallpaper.png}"
 
+FORCE=0
+[ "${1:-}" = --force ] && { FORCE=1; shift; }
+
 # shellcheck source=/dev/null
 . "$ERGON/theme/cool.env"
 
@@ -46,11 +49,37 @@ mkdir -p "$(dirname "$OUT")"
 # NO added noise, however tempting as a debanding trick: gaussian grain defeats
 # PNG's filters completely and takes this file from 324 KB to 29 MB. At an 18%
 # blend the tonal range is narrow enough that there is nothing much to band.
-magick -size "$SIZE" xc:"$COOL_BG0" \
-  \( -size "$SIZE" xc: -sparse-color barycentric \
-       "0,0 $COOL_0  %[fx:w-1],%[fx:h-1] $COOL_4" \) \
-  -compose blend -define compose:args=18 -composite \
-  "$OUT"
+# Rendering is a multi-megapixel magick run, and autostart calls this on every
+# session. Skip it when the file is already there and no older than the palette
+# it came from -- edit theme/cool.env and the next run rebuilds it.
+if [ "$FORCE" = 0 ] && [ -z "${1:-}" ] && [ -s "$OUT" ] && [ "$OUT" -nt "$ERGON/theme/cool.env" ]; then
+  echo "  $OUT  (unchanged)"
+else
+  magick -size "$SIZE" xc:"$COOL_BG0" \
+    \( -size "$SIZE" xc: -sparse-color barycentric \
+         "0,0 $COOL_0  %[fx:w-1],%[fx:h-1] $COOL_4" \) \
+    -compose blend -define compose:args=18 -composite \
+    "$OUT"
+  echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
+fi
 
-echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
-command -v hyprctl >/dev/null && hyprctl hyprpaper reload ,"$OUT" >/dev/null 2>&1 || true
+# Apply it, by ABSOLUTE path over IPC.
+#
+# Two reasons this is not left to hyprpaper.conf. Its paths are written with a
+# leading ~, which nothing in this stack is guaranteed to expand; and the config
+# is only read when hyprpaper STARTS, so on a machine whose wallpaper did not
+# exist yet -- every machine, until install.sh learned to render one -- hyprpaper
+# came up with no background and never looked again.
+#
+# Retried, because autostart launches hyprpaper and this within moments of each
+# other and the IPC socket is not up instantly. A single best-effort shot here
+# is how this stayed broken while every individual piece looked correct.
+if command -v hyprctl >/dev/null 2>&1; then
+  for _ in 1 2 3 4 5 6; do
+    if hyprctl hyprpaper reload ,"$OUT" >/dev/null 2>&1; then
+      applied=1; break
+    fi
+    sleep 1
+  done
+  [ "${applied:-0}" = 1 ] || echo "  (hyprpaper did not answer; it will pick this up at the next session)" >&2
+fi

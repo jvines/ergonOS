@@ -24,6 +24,13 @@ hl.on("hyprland.start", function()
   hl.exec_cmd("waybar")
   hl.exec_cmd("mako")
   hl.exec_cmd("hyprpaper")
+  -- Renders the wallpaper if it is missing and applies it over hyprpaper's IPC
+  -- by absolute path. hyprpaper.conf alone was not enough: it reads its config
+  -- only at startup, so a machine whose wallpaper did not exist yet came up
+  -- with a flat background and never looked again -- which was every machine,
+  -- because nothing generated the file. Cheap on later boots: it skips the
+  -- render when the png is newer than theme/cool.env.
+  hl.exec_cmd("ergon-wallpaper")
   hl.exec_cmd("hypridle")
   hl.exec_cmd("swayosd-server")
 
