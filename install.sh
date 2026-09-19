@@ -125,6 +125,26 @@ if [ "$CHECK" != 1 ]; then
   if ! "$ERGON/bin/ergon-theme" --check >/dev/null 2>&1; then
     warn "themed configs are stale — run: ergon theme"
   fi
+
+  # The wallpaper is generated, not committed -- and until now NOTHING ever
+  # generated it. hyprpaper.conf points at ~/.local/share/ergon/wallpaper.png,
+  # hyprpaper logs that it is missing and exits, and the desktop falls back to
+  # the compositor's background_color. That degradation is deliberate and it
+  # works, which is exactly why nobody noticed that every Ergon machine ever
+  # built has had a flat colour instead of the wallpaper it ships.
+  #
+  # Only when missing: it is a multi-megapixel render, and install.sh runs on
+  # every boot under bin/hypr-vm.
+  WALL="${ERGON_WALLPAPER_OUT:-$HOME/.local/share/ergon/wallpaper.png}"
+  if [ -f "$WALL" ]; then
+    :
+  elif ! command -v magick >/dev/null 2>&1; then
+    warn "no imagemagick, so no wallpaper — the desktop falls back to a flat background"
+  elif "$ERGON/bin/ergon-wallpaper" >/dev/null 2>&1; then
+    ok "wallpaper generated ($(basename "$WALL"))"
+  else
+    warn "could not generate the wallpaper — run: ergon wallpaper"
+  fi
 fi
 
 printf '\n   %s on PATH?  ' "$ERGON/bin"

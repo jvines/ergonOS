@@ -877,6 +877,24 @@ fi
 systemctl enable greetd >/dev/null 2>&1 || true
 ok "greetd left enabled for interactive use"
 
+# --- the wallpaper --------------------------------------------------------
+# hyprpaper.conf points at a GENERATED png, and for the life of this project
+# nothing generated it: hyprpaper logged, exited, and the desktop fell back to
+# the compositor's background_color. The fallback is deliberate and it looks
+# fine, so every machine quietly had a flat colour instead of the wallpaper it
+# ships, and no assertion here noticed.
+W="$(getent passwd "$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)" | cut -d: -f6)/.local/share/ergon/wallpaper.png"
+[ -s "$W" ] && ok "wallpaper generated ($(du -h "$W" | cut -f1))" \
+            || bad "no wallpaper at $W — hyprpaper will exit and the desktop falls back to a flat colour"
+# The file existing is not the point; hyprpaper actually putting a surface on
+# the background layer is. A file that hyprpaper cannot read looks identical
+# from the outside to one that is not there.
+if hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b && /hyprpaper/{f=1} END{exit !f}'; then
+  ok "hyprpaper mapped a background layer"
+else
+  bad "background layer is empty — the wallpaper is not actually on screen"
+fi
+
 # --- what the OS hands its agents -----------------------------------------
 # Every one of these is installed by a step that WARNS rather than fails, so
 # provisioning stays green whatever happens here and nothing else in this suite
