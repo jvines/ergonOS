@@ -63,23 +63,42 @@ else
   echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
 fi
 
-# Apply it, by ABSOLUTE path over IPC.
+# A config with ABSOLUTE paths, written next to the image, and hyprpaper started
+# against it with -c.
 #
-# Two reasons this is not left to hyprpaper.conf. Its paths are written with a
-# leading ~, which nothing in this stack is guaranteed to expand; and the config
-# is only read when hyprpaper STARTS, so on a machine whose wallpaper did not
-# exist yet -- every machine, until install.sh learned to render one -- hyprpaper
-# came up with no background and never looked again.
+# The shipped hypr/hyprpaper.conf writes its paths with a leading ~, and that
+# file cannot be made per-machine: ~/.config/hypr is a symlink to the repo, so
+# anything written there is written to the repo. hyprpaper also reads its config
+# only at startup. Between those two, a desktop whose wallpaper was absent or
+# whose ~ went unexpanded came up flat and never recovered.
 #
-# Retried, because autostart launches hyprpaper and this within moments of each
-# other and the IPC socket is not up instantly. A single best-effort shot here
-# is how this stayed broken while every individual piece looked correct.
-if command -v hyprctl >/dev/null 2>&1; then
-  for _ in 1 2 3 4 5 6; do
-    if hyprctl hyprpaper reload ,"$OUT" >/dev/null 2>&1; then
-      applied=1; break
-    fi
-    sleep 1
-  done
-  [ "${applied:-0}" = 1 ] || echo "  (hyprpaper did not answer; it will pick this up at the next session)" >&2
+# Writing our own config removes both: the path is absolute, and it exists
+# before hyprpaper is started because this starts it.
+PAPER_CONF="$(dirname "$OUT")/hyprpaper.conf"
+cat > "$PAPER_CONF" <<CONF
+# Written by ergon-wallpaper. Absolute paths on purpose -- see that script.
+preload = $OUT
+wallpaper = , $OUT
+splash = false
+ipc = on
+CONF
+
+if ! pgrep -x hyprpaper >/dev/null 2>&1; then
+  # Not running: start it against the config we just wrote. This is the path
+  # taken at session start, where autostart calls this instead of hyprpaper.
+  hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
+  echo "  hyprpaper started with $PAPER_CONF"
+else
+  # Already running: ask it to swap, best-effort. The IPC spelling varies
+  # between versions -- `hyprctl hyprpaper preload` answered "invalid hyprpaper
+  # request" on this one -- so nothing is allowed to depend on it. The config
+  # written above is what makes the result correct either way, because it is
+  # read the next time hyprpaper starts.
+  #
+  # Restarting it is the reliable move, and costs nothing: it is a wallpaper
+  # daemon with no state worth keeping.
+  pkill -x hyprpaper 2>/dev/null || true
+  sleep 1
+  hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
+  echo "  hyprpaper restarted with $PAPER_CONF"
 fi

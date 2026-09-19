@@ -23,13 +23,16 @@ hl.on("hyprland.start", function()
   -- The desktop surfaces.
   hl.exec_cmd("waybar")
   hl.exec_cmd("mako")
-  hl.exec_cmd("hyprpaper")
-  -- Renders the wallpaper if it is missing and applies it over hyprpaper's IPC
-  -- by absolute path. hyprpaper.conf alone was not enough: it reads its config
-  -- only at startup, so a machine whose wallpaper did not exist yet came up
-  -- with a flat background and never looked again -- which was every machine,
-  -- because nothing generated the file. Cheap on later boots: it skips the
-  -- render when the png is newer than theme/cool.env.
+  -- ergon-wallpaper STARTS hyprpaper; there is deliberately no bare
+  -- `hyprpaper` line here any more. It renders the image if missing, writes a
+  -- config with absolute paths beside it, and launches hyprpaper against that
+  -- with -c.
+  --
+  -- The shipped hypr/hyprpaper.conf cannot do this: its paths carry a leading
+  -- ~, and ~/.config/hypr is a symlink to the repo so it cannot be rewritten
+  -- per machine. hyprpaper also reads its config only at startup. The result
+  -- was a flat desktop on every machine, which no assertion here noticed
+  -- because the fallback looks deliberate.
   hl.exec_cmd("ergon-wallpaper")
   hl.exec_cmd("hypridle")
   hl.exec_cmd("swayosd-server")
