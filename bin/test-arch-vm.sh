@@ -66,8 +66,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # so a SeaBIOS test would exercise a path that never runs on real hardware.
 # libarchive-tools gives bsdtar, which reads the ISO without needing a loop
 # mount (and therefore without needing root or a privileged container).
+# qemu-system-gui is a RECOMMENDS of qemu-system-x86, and --no-install-recommends
+# drops it. Without it this qemu has only the `none` and `curses` displays and no
+# virtio-*-gl device at all, so the guest gets no GL and no dmabuf -- which is
+# why hyprpaper could not composite a wallpaper and grim could not capture. Those
+# were written off as "the VM cannot do graphics"; they were one missing package.
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-      qemu-system-x86 qemu-utils ovmf expect libarchive-tools \
+      qemu-system-x86 qemu-system-gui qemu-utils ovmf expect libarchive-tools \
       curl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
