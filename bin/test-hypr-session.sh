@@ -54,6 +54,7 @@ source /w/lib.exp
 
 spawn qemu-system-x86_64 \
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
+  -global isa-fdc.driveA= \
   -global PIIX4_PM.disable_s3=1 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \

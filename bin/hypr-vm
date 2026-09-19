@@ -134,8 +134,13 @@ source /w/lib.exp
 # deltas derived from them and the guest pointer drifts away from the one you
 # are actually moving -- you click one thing and hit another. usb-tablet is an
 # absolute device, so the guest pointer is exactly where your cursor is.
+# No floppy. The i440fx default machine presents an empty floppy drive, udiskie
+# sees a removable device and asks polkit to mount it, and you answer an
+# authentication dialog about a floppy disk every single boot. It is emulated
+# hardware nobody asked for; -global isa-fdc.driveA= removes the drive.
 spawn qemu-system-x86_64 \
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
+  -global isa-fdc.driveA= \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
   -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
