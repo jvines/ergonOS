@@ -134,8 +134,15 @@ source /w/lib.exp
 # deltas derived from them and the guest pointer drifts away from the one you
 # are actually moving -- you click one thing and hit another. usb-tablet is an
 # absolute device, so the guest pointer is exactly where your cursor is.
+# -vga none is load-bearing. qemu adds a DEFAULT VGA adapter on top of whatever
+# -device you ask for, so the guest got TWO cards: bochs-drm on card0 with no
+# render node, and the virtio-gpu on card1 with one. aquamarine opens the first
+# it finds, landed on the framebuffer, and every dmabuf import failed -- a
+# desktop that draws perfectly and composites nothing, with no error naming a
+# cause. Removing the default leaves the real GPU as card0.
 spawn qemu-system-x86_64 \
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
+  -vga none \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
   -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \

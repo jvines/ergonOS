@@ -63,8 +63,15 @@ set timeout 1800
 log_user 1
 source /w/lib.exp
 
+# -vga none is load-bearing. qemu adds a DEFAULT VGA adapter on top of whatever
+# -device you ask for, so the guest got TWO cards: bochs-drm on card0 with no
+# render node, and the virtio-gpu on card1 with one. aquamarine opens the first
+# it finds, landed on the framebuffer, and every dmabuf import failed -- a
+# desktop that draws perfectly and composites nothing, with no error naming a
+# cause. Removing the default leaves the real GPU as card0.
 spawn qemu-system-x86_64 \
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
+  -vga none \
   -global PIIX4_PM.disable_s3=1 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
