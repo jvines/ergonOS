@@ -891,6 +891,16 @@ W="$(getent passwd "$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)" | cu
 # from the outside to one that is not there.
 if hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b && /hyprpaper/{f=1} END{exit !f}'; then
   ok "hyprpaper mapped a background layer"
+elif grep -q "createImageFromDmaBufs failed" /run/user/1000/hypr/*/hyprland.log 2>/dev/null; then
+  # Same VM limitation that stops grim capturing, and for the same reason:
+  # QEMU's virtio-gpu has no working dmabuf path, so EGL refuses the import
+  # (EGL_BAD_ALLOC) and hyprpaper cannot allocate a buffer for the background.
+  # On hardware with a real driver it can.
+  #
+  # A SKIP only when the log actually shows that failure, and a hard failure
+  # otherwise -- a wallpaper regression on a machine that can render must still
+  # fail rather than hide behind a VM excuse. Same rule as the grim check above.
+  note "wallpaper cannot be composited: no dmabuf path in the VM (see docs/testing-the-desktop.md)"
 else
   bad "background layer is empty — the wallpaper is not actually on screen"
   # hyprpaper is exec'd by the compositor, so its stderr lands in the Hyprland
