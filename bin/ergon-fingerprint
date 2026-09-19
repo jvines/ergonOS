@@ -3,9 +3,14 @@
 # ergon:group=hardware
 # ergon:args=[finger]   (default: right-index-finger)
 #
-# hypr/hyprlock.conf declares a fingerprint auth block. That block does NOT use
-# PAM -- hyprlock talks to fprintd over D-Bus directly -- so the reader works on
-# the lock screen as soon as a finger is enrolled here, with no PAM edits.
+# The shipped hyprlock.conf has NO fingerprint block: most machines have no
+# reader, and a lock screen that asks for a finger nobody can give is a lock
+# screen that looks broken. So enabling it is this command's job, at the one
+# moment a reader is known to exist and to have a print on it -- after enrolling
+# succeeds.
+#
+# That block does not use PAM. hyprlock talks to fprintd over D-Bus directly, so
+# the lock screen accepts the finger with no PAM edits.
 #
 # sudo is a separate question and deliberately NOT configured: a fingerprint on
 # the lock screen protects a laptop you already unlocked with a passphrase at
@@ -17,19 +22,43 @@ FINGER="${1:-right-index-finger}"
 
 command -v fprintd-enroll >/dev/null || { echo "fprintd not installed" >&2; exit 1; }
 
-if ! systemctl is-active --quiet fprintd.service; then
+# Say so plainly rather than letting fprintd fail with a D-Bus error. A machine
+# with no reader is the normal case, not a fault.
+if ! systemctl list-unit-files fprintd.service >/dev/null 2>&1 \
+   || ! systemctl is-active --quiet fprintd.service; then
   # fprintd is socket/dbus activated; this is a nudge, not a requirement.
   sudo systemctl start fprintd.service 2>/dev/null || true
 fi
+if ! fprintd-list "$USER" >/dev/null 2>&1; then
+  echo "no fingerprint reader this machine can talk to (fprintd found none)" >&2
+  exit 1
+fi
 
-if ! fprintd-list "$USER" 2>/dev/null | grep -q .; then
+if ! fprintd-list "$USER" 2>/dev/null | grep -q 'Fingerprints'; then
   echo "no fingerprints enrolled yet"
 fi
 
-echo "enrolling $FINGER — touch the power button repeatedly when prompted"
+# Where the reader physically is varies by machine -- the power button on a
+# Framework, a pad below the keyboard on a ThinkPad, the trackpad corner
+# elsewhere -- and nothing reports it. So say what to do, not where.
+echo "enrolling $FINGER — touch the reader repeatedly when prompted"
 fprintd-enroll -f "$FINGER"
 echo
 fprintd-list "$USER"
-echo
-echo "  verify with: fprintd-verify"
-echo "  lock screen will now accept it; sudo deliberately will not."
+
+cat <<'NEXT'
+
+  verify with: fprintd-verify
+  sudo deliberately will not accept it; the lock screen can, once you add:
+
+      auth {
+          fingerprint {
+              enabled = true
+              ready_message = scan your finger
+              present_message = reading
+          }
+      }
+
+  to ~/.config/hypr/hyprlock.conf — and set ready_message to wherever the
+  reader actually is on this machine, since only you can see it.
+NEXT
