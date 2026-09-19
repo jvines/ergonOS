@@ -71,8 +71,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # virtio-*-gl device at all, so the guest gets no GL and no dmabuf -- which is
 # why hyprpaper could not composite a wallpaper and grim could not capture. Those
 # were written off as "the VM cannot do graphics"; they were one missing package.
+# libegl1/libgbm1/libgl1-mesa-dri are the EGL runtime qemu dlopens for
+# -display egl-headless. qemu-system-gui provides the GL-capable binary but not
+# these, and without them qemu exits with "Couldn't open libEGL.so.1" -- which
+# reads like a qemu problem and is a missing dependency.
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
       qemu-system-x86 qemu-system-gui qemu-utils ovmf expect libarchive-tools \
+      libegl1 libgbm1 libgl1-mesa-dri \
       curl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
