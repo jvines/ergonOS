@@ -885,6 +885,14 @@ fi
 systemctl enable greetd >/dev/null 2>&1 || true
 ok "greetd left enabled for interactive use"
 
+# --- things that made the desktop useless and nothing asserted ------------
+systemctl is-active --quiet power-profiles-daemon \
+  && ok "power-profiles-daemon is running (the bar's profile button can switch)" \
+  || bad "power-profiles-daemon is not running — clicking the profile icon does nothing"
+[ -e /dev/fd0 ] \
+  && bad "/dev/fd0 exists — udiskie will ask polkit to mount a floppy on every boot" \
+  || ok "no floppy device, so nothing prompts to mount one"
+
 # --- the bar's commands actually resolve ----------------------------------
 # waybar and autostart exec ergon-* BY NAME. If PATH does not carry them the bar
 # still draws and every click silently does nothing -- reported three times from

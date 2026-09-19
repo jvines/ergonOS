@@ -124,8 +124,34 @@ ok "snapshot + cache timers"
 "$ERGON/bin/ergon-boot-guard" install || warn "boot guard not installed (see the message above)"
 
 # ---------------------------------------------------------------------------
+say "no floppy controller"
+# Nothing made since the 1990s has one, but the emulated i440fx machine presents
+# an empty drive, the kernel binds it, udiskie sees removable media and polkit
+# puts an authentication dialog about a FLOPPY DISK in front of you on every
+# single boot.
+#
+# Blacklisting the module is the fix that works everywhere. Doing it with a qemu
+# flag was tried first and is wrong twice over: -global isa-fdc.driveA= does not
+# exist in qemu 10 and broke the boot outright, and it would only ever have
+# helped inside this one harness -- a real machine with a stray fdc in firmware
+# would still prompt.
+sudo install -Dm644 /dev/stdin /etc/modprobe.d/ergon-no-floppy.conf <<'EOF'
+# Written by provision-arch.sh. No machine this OS targets has a floppy
+# controller; an emulated one only produces a polkit prompt about mounting it.
+blacklist floppy
+install floppy /bin/false
+EOF
+# Already bound on this boot? Take it away now so the prompt stops today rather
+# than after the next reboot.
+sudo rmmod floppy 2>/dev/null && ok "floppy module removed and blacklisted" \
+                              || ok "floppy blacklisted"
+
 say "services"
-for u in NetworkManager docker tailscaled bluetooth fwupd; do
+# power-profiles-daemon belongs here and was missing: it is installed by
+# packages/pacman and was never enabled, so waybar's power-profiles-daemon
+# module had no daemon to talk to and clicking it did nothing at all. TLP is
+# deliberately absent -- the two conflict.
+for u in NetworkManager docker tailscaled bluetooth fwupd power-profiles-daemon; do
   if systemctl list-unit-files "$u.service" >/dev/null 2>&1; then
     sudo systemctl enable --now "$u" >/dev/null 2>&1 && ok "$u" || skip "$u (not installed)"
   fi
