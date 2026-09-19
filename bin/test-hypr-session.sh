@@ -30,6 +30,17 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 [ -f "$WORK/disk.qcow2" ] || {
   echo "no disk at $WORK/disk.qcow2 — run ./bin/test-arch-vm.sh --keep first" >&2; exit 1; }
+# Same GPU auto-detection as bin/hypr-vm. With a render node the guest gets real
+# GL and a dmabuf path, which is what makes the wallpaper and grim assertions
+# mean anything; without one they are skips. Run this on a host with a GPU.
+RENDERNODE="${HYPR_VM_RENDERNODE:-/dev/dri/renderD128}"
+if [ -e "$RENDERNODE" ]; then
+  GPU_DEV="virtio-vga-gl"; GPU_DISPLAY="egl-headless,rendernode=$RENDERNODE"
+  GPU_DOCKER="--device $RENDERNODE"
+else
+  GPU_DEV="virtio-gpu-pci"; GPU_DISPLAY="none"; GPU_DOCKER=""
+fi
+
 cp "$ERGON/test/arch-vm/lib.exp" "$WORK/lib.exp"
 [ -c /dev/kvm ] || { echo "/dev/kvm missing" >&2; exit 1; }
 
@@ -59,7 +70,8 @@ spawn qemu-system-x86_64 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
   -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
-  -device virtio-gpu-pci \
+  -device $GPU_DEV \
+  -display $GPU_DISPLAY \
   -virtfs local,path=/ergon,mount_tag=ergon,security_model=none,readonly=on \
   -virtfs local,path=/w/out,mount_tag=out,security_model=none \
   -nic user,model=virtio-net-pci \
@@ -83,7 +95,7 @@ send "echo '$USERPASS' | sudo -S poweroff\r"
 expect eof
 EXPECT
 
-docker run --rm --device /dev/kvm \
+docker run --rm --device /dev/kvm $GPU_DOCKER \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/session.exp 2>&1 | tee "$WORK/session.log" \
   | grep -E '^(   ok|   FAIL|--- |!! )' || true
