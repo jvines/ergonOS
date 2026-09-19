@@ -388,6 +388,17 @@ fi
 # whole desktop phase on a VM that demonstrably had a working GPU.
 if ls /dev/dri/card* >/dev/null 2>&1; then
   ok "DRM device present ($(ls -m /dev/dri/card* 2>/dev/null))"
+  # WHICH card matters. A UEFI framebuffer shows up as simpledrm with no render
+  # node; the virtio-gpu is the one that can do GL and dmabuf. If the compositor
+  # lands on the first and the renderer is on the second, everything draws but
+  # nothing composites -- which is exactly the flat wallpaper and the dead grim.
+  for c in /dev/dri/card*; do
+    n=$(basename "$c")
+    drv=$(basename "$(readlink -f "/sys/class/drm/$n/device/driver" 2>/dev/null)" 2>/dev/null)
+    rnd=$(ls -d /sys/class/drm/"$n"/device/drm/render* 2>/dev/null | head -1)
+    note "$n: driver=${drv:-unknown} render_node=${rnd:+yes}${rnd:-no}"
+  done
+  note "aquamarine chose: $(grep -oE "/dev/dri/card[0-9]+" /run/user/1000/hypr/*/hyprland.log 2>/dev/null | sort -u | tr "\n" " ")"
 else
   bad "no DRM card at all — /dev/dri holds: $(ls -m /dev/dri 2>/dev/null || echo 'nothing')"
   finish
