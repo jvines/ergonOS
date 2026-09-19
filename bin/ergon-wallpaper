@@ -83,22 +83,28 @@ splash = false
 ipc = on
 CONF
 
-if ! pgrep -x hyprpaper >/dev/null 2>&1; then
-  # Not running: start it against the config we just wrote. This is the path
-  # taken at session start, where autostart calls this instead of hyprpaper.
+# Start it if it is not up, then SET the wallpaper over IPC.
+#
+# Starting it with -c is not enough on its own: hyprpaper comes up with nothing
+# loaded (listactive returns empty), so the background layer is never mapped and
+# the desktop shows the compositor's background_color. Proven in the VM, where
+# the wallpaper only appeared once an IPC request was made.
+#
+# The request is `wallpaper`, and that spelling matters. On this version
+# `preload` and `reload` both answer "invalid hyprpaper request"; `wallpaper`
+# is accepted and maps the layer immediately. ergon-wallpaper used `reload`,
+# which silently failed every time.
+pgrep -x hyprpaper >/dev/null 2>&1 || {
   hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
-  echo "  hyprpaper started with $PAPER_CONF"
-else
-  # Already running: ask it to swap, best-effort. The IPC spelling varies
-  # between versions -- `hyprctl hyprpaper preload` answered "invalid hyprpaper
-  # request" on this one -- so nothing is allowed to depend on it. The config
-  # written above is what makes the result correct either way, because it is
-  # read the next time hyprpaper starts.
-  #
-  # Restarting it is the reliable move, and costs nothing: it is a wallpaper
-  # daemon with no state worth keeping.
-  pkill -x hyprpaper 2>/dev/null || true
   sleep 1
-  hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
-  echo "  hyprpaper restarted with $PAPER_CONF"
+}
+if command -v hyprctl >/dev/null 2>&1; then
+  for _ in $(seq 15); do
+    if hyprctl hyprpaper wallpaper ",$OUT" >/dev/null 2>&1; then
+      applied=1; break
+    fi
+    sleep 1
+  done
+  [ "${applied:-0}" = 1 ] && echo "  wallpaper set on all outputs" \
+                          || echo "  hyprpaper did not accept the wallpaper; it is set at the next session" >&2
 fi
