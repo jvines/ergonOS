@@ -15,10 +15,15 @@
 # distinction never came up in the automated tests, which only ever asked
 # hyprctl questions and needed no pixel drawn.
 #
-# WHAT THIS IS NOT: a fair judge of how the desktop performs. There is no
-# working dmabuf path here (aquamarine throws EGL_BAD_ALLOC), so rendering falls
-# back to software. Layout, colours, fonts and behaviour are accurate;
-# smoothness is not.
+# GRAPHICS depend on the HOST, not on the VM being a VM. Given a render node
+# this uses virtio-vga-gl with egl-headless, and the guest gets real GL and a
+# dmabuf path -- wallpaper composites, grim captures, animations mean something.
+# Without one it falls back to software rendering and none of those work.
+#
+# That distinction was missed for a long time: the software-rendering symptoms
+# were written up as a permanent property of "the VM", when the causes were a
+# qemu image built without qemu-system-gui and a host whose GPU is deliberately
+# unbound. See the GPU block below.
 set -euo pipefail
 
 CACHE="${CACHE:-$HOME/.cache/fleet-artifacts}"
@@ -66,6 +71,30 @@ PORT="${HYPR_VM_PORT:-5900}"
 # tailnet binding above is. It exists so the prompt has an answer.
 VNCPASS="${HYPR_VM_VNC_PASS:-hyprvm}"
 
+# GPU, when the host has a render node.
+#
+# virtio-vga-gl + egl-headless gives the guest a real GL and dmabuf path, which
+# is what hyprpaper needs to composite a wallpaper and what grim needs to
+# capture. Without it the guest falls back to software rendering with no dmabuf
+# at all -- for a long time that was believed to be a hard limit of "the VM",
+# when it was really a missing qemu-system-gui in the image plus a host with no
+# usable GPU.
+#
+# checo has no render node on purpose (binding amdgpu panics it), so this stays
+# off there and the VM behaves as it always has. chiki and predator have one.
+RENDERNODE="${HYPR_VM_RENDERNODE:-/dev/dri/renderD128}"
+if [ -e "$RENDERNODE" ]; then
+  GPU_DEV="virtio-vga-gl"
+  GPU_DISPLAY="egl-headless,rendernode=$RENDERNODE"
+  GPU_DOCKER="--device $RENDERNODE"
+  GPU_NOTE="  GL: on ($RENDERNODE) -- wallpaper and screenshots work here"
+else
+  GPU_DEV="virtio-vga"
+  GPU_DISPLAY="none"
+  GPU_DOCKER=""
+  GPU_NOTE="  GL: off (no render node on this host) -- software rendering, no wallpaper"
+fi
+
 [ -f "$WORK/disk.qcow2" ] || { echo "no disk — run ./bin/test-arch-vm.sh --keep first" >&2; exit 1; }
 [ -c /dev/kvm ] || { echo "/dev/kvm missing" >&2; exit 1; }
 cp "$ERGON/test/arch-vm/lib.exp" "$WORK/lib.exp"
@@ -83,6 +112,8 @@ $(printf '%s\n' $BINDS | sed "s|^|      vnc://|; s|\$|:$PORT|")
 
   Log in at the greeter as $USERNAME / $USERPASS
   (the disk unlocks itself here; the greeter is the only thing to answer)
+
+$GPU_NOTE
 
   Boot takes ~30s. Ctrl-C detaches this terminal; the VM keeps running and is
   replaced by the next run. To stop it now:  docker rm -f hyprvm
@@ -108,7 +139,8 @@ spawn qemu-system-x86_64 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
   -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
-  -device virtio-vga \
+  -device $GPU_DEV \
+  -display $GPU_DISPLAY \
   -device qemu-xhci -device usb-tablet \
   -object secret,id=vncsec,data=$VNCPASS \
   -vnc 0.0.0.0:0,password-secret=vncsec \
@@ -162,7 +194,7 @@ EXPECT
 if [ "${HYPR_VM_DETACH:-0}" = 1 ]; then
   docker rm -f hyprvm >/dev/null 2>&1 || true
   # shellcheck disable=SC2086  # PUBLISH is a deliberate list of -p flags
-  docker run -d -it --name hyprvm --device /dev/kvm $PUBLISH \
+  docker run -d -it --name hyprvm --device /dev/kvm $GPU_DOCKER $PUBLISH \
     -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
     "$IMAGE" expect -f /w/vnc.exp >/dev/null
   echo "  running in the background as container 'hyprvm'"
@@ -182,6 +214,6 @@ fi
 # and that `docker rm -f hyprvm` works whether it was started detached or not.
 docker rm -f hyprvm >/dev/null 2>&1 || true
 # shellcheck disable=SC2086  # PUBLISH is a deliberate list of -p flags
-exec docker run --rm -it --name hyprvm --device /dev/kvm $PUBLISH \
+exec docker run --rm -it --name hyprvm --device /dev/kvm $GPU_DOCKER $PUBLISH \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/vnc.exp
