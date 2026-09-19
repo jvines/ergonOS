@@ -893,6 +893,25 @@ if hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b && /hyprpap
   ok "hyprpaper mapped a background layer"
 else
   bad "background layer is empty — the wallpaper is not actually on screen"
+  # hyprpaper is exec'd by the compositor, so its stderr lands in the Hyprland
+  # log and nothing here was saving it -- which is why this failure has been
+  # diagnosed by guesswork so far. Capture what it actually says, and what it
+  # actually accepts over IPC, in the run that fails.
+  echo "     --- hyprpaper diagnosis ---"
+  pgrep -x hyprpaper >/dev/null && echo "     running: yes (pid $(pgrep -x hyprpaper | head -1))" \
+                                || echo "     running: NO — it exited"
+  grep -iE 'hyprpaper|wallpaper' /run/user/1000/hypr/*/hyprland.log 2>/dev/null \
+    | grep -viE 'exec_cmd' | tail -8 | sed 's/^/     log: /'
+  for req in "listloaded" "listactive"; do
+    printf '     %s -> %s\n' "$req" "$(hq hyprpaper $req 2>&1 | head -2 | tr '\n' ' ')"
+  done
+  # The two candidate spellings, with the error text kept rather than discarded.
+  printf '     preload  -> %s\n' "$(hq hyprpaper preload "$W" 2>&1 | head -1)"
+  printf '     wallpaper-> %s\n' "$(hq hyprpaper wallpaper ",$W" 2>&1 | head -1)"
+  printf '     reload   -> %s\n' "$(hq hyprpaper reload ",$W" 2>&1 | head -1)"
+  sleep 1
+  hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b' | sed 's/^/     after: /'
+  echo "     --- end ---"
 fi
 
 # --- what the OS hands its agents -----------------------------------------
