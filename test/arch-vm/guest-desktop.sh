@@ -877,6 +877,22 @@ fi
 systemctl enable greetd >/dev/null 2>&1 || true
 ok "greetd left enabled for interactive use"
 
+# --- the bar's commands actually resolve ----------------------------------
+# waybar and autostart exec ergon-* BY NAME. If PATH does not carry them the bar
+# still draws and every click silently does nothing -- reported three times from
+# a real session before it was believed, and invisible to a test that only asks
+# whether a window opened in ITS OWN session, which has a correct PATH.
+#
+# So assert the thing a login actually depends on: that the commands resolve for
+# a plain login shell, the way the greeter's session will find them.
+for c in ergon-launch-tui ergon-wallpaper ergon-brightness; do
+  if su - "$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)" -c "command -v $c" >/dev/null 2>&1; then
+    ok "$c resolves on the login PATH"
+  else
+    bad "$c is not on the login PATH — the bar will draw and do nothing"
+  fi
+done
+
 # --- the wallpaper --------------------------------------------------------
 # hyprpaper.conf points at a GENERATED png, and for the life of this project
 # nothing generated it: hyprpaper logged, exited, and the desktop fell back to

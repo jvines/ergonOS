@@ -444,6 +444,33 @@ if command -v emacs >/dev/null && [ -f "$HOME/.emacs.d/init.el" ]; then
     >/dev/null 2>&1 && ok "tree-sitter grammars" || warn "grammar build failed — run M-x my/treesit-install-missing"
 fi
 
+say "commands on the system PATH"
+# waybar's click handlers and hypr/common/autostart.lua exec `ergon-*` BY NAME,
+# so they resolve through PATH. PATH reaches a graphical session only through
+# environment.d, which `systemd --user` reads when it starts and not again -- and
+# that manager outlives logouts. So on any machine whose user manager predates
+# the install, every ergon-* in the bar and in autostart resolves to nothing.
+#
+# The symptom is precise and was reported three times before it was believed: a
+# bar that draws perfectly, where clicking volume, network or the CPU does
+# nothing at all, while bluetooth works -- because bluetooth calls
+# blueman-manager, a system binary, and the rest call ergon-launch-tui. The
+# wallpaper is the same fault: autostart execs ergon-wallpaper and gets nothing.
+#
+# /usr/local/bin is on the default PATH for every user, shell and session, so
+# linking here removes the dependency on environment.d propagating at all.
+sudo install -d /usr/local/bin
+_linked=0
+for c in "$ERGON"/bin/ergon-* "$ERGON"/bin/erg-*; do
+  [ -x "$c" ] || continue
+  sudo ln -sfn "$c" "/usr/local/bin/$(basename "$c")" && _linked=$((_linked+1))
+done
+if [ "$_linked" -gt 0 ]; then
+  ok "$_linked commands linked into /usr/local/bin"
+else
+  warn "no commands linked into /usr/local/bin — the bar's click handlers will do nothing"
+fi
+
 say "system knowledge"
 # ergon-explain prefers /usr/share/ergon/knowledge over the checkout, and both
 # shipped skills tell an agent the body lives there -- but nothing ever put it
