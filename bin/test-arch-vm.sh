@@ -124,7 +124,6 @@ ok "disk ${DISK_GIB}G, OVMF vars writable, iso label $ISOLABEL"
 qemu_args() {
   cat <<ARGS
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
-  -global isa-fdc.driveA= \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
   -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
