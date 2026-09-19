@@ -383,7 +383,15 @@ else
   sed -n '/AUR packages/,$p' /tmp/prov.log 2>/dev/null | tail -20 | sed 's/^/       /'
 fi
 
-[ -e /dev/dri/card0 ] && ok "virtio-gpu DRM device present" || { bad "no /dev/dri/card0 — the VM has no GPU"; finish; }
+# Any DRM card, not card0 specifically: with virtio-vga-gl the guest can
+# enumerate the device under a different index, and gating on card0 aborted the
+# whole desktop phase on a VM that demonstrably had a working GPU.
+if ls /dev/dri/card* >/dev/null 2>&1; then
+  ok "DRM device present ($(ls -m /dev/dri/card* 2>/dev/null))"
+else
+  bad "no DRM card at all — /dev/dri holds: $(ls -m /dev/dri 2>/dev/null || echo 'nothing')"
+  finish
+fi
 
 # --- configs, placed BY install.sh -----------------------------------------
 # This used to `cp -r` the four config directories into place and symlink

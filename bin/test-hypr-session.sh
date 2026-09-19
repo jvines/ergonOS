@@ -35,7 +35,7 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 # mean anything; without one they are skips. Run this on a host with a GPU.
 RENDERNODE="${HYPR_VM_RENDERNODE:-/dev/dri/renderD128}"
 if [ -e "$RENDERNODE" ]; then
-  GPU_DEV="virtio-vga-gl"; GPU_DISPLAY="egl-headless,gl=on,rendernode=$RENDERNODE"
+  GPU_DEV="virtio-gpu-gl-pci"; GPU_DISPLAY="egl-headless,gl=on,rendernode=$RENDERNODE"
   GPU_DOCKER="--device $RENDERNODE"; GPU_CONSOLE="-serial mon:stdio"
 else
   GPU_DEV="virtio-gpu-pci"; GPU_DISPLAY="none"; GPU_DOCKER=""; GPU_CONSOLE="-nographic"
