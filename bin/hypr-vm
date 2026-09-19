@@ -84,7 +84,8 @@ $(printf '%s\n' $BINDS | sed "s|^|      vnc://|; s|\$|:$PORT|")
   Log in at the greeter as $USERNAME / $USERPASS
   (the disk unlocks itself here; the greeter is the only thing to answer)
 
-  Boot takes ~30s. Ctrl-C here stops the VM.
+  Boot takes ~30s. Ctrl-C detaches this terminal; the VM keeps running and is
+  replaced by the next run. To stop it now:  docker rm -f hyprvm
 
 BANNER
 
@@ -169,7 +170,18 @@ if [ "${HYPR_VM_DETACH:-0}" = 1 ]; then
   exit 0
 fi
 
+# Named and pre-cleaned, for the same reason the detached path is.
+#
+# --rm only fires on a clean exit, and Ctrl-C here does not give one: the docker
+# client goes away while qemu keeps running inside. The container then holds
+# :5900 indefinitely and the NEXT run dies with "port is already allocated",
+# pointing at docker rather than at the VM nobody knew was still up -- observed
+# at 41 minutes after the terminal was closed.
+#
+# Naming it means a leftover is found and removed here instead of accumulating,
+# and that `docker rm -f hyprvm` works whether it was started detached or not.
+docker rm -f hyprvm >/dev/null 2>&1 || true
 # shellcheck disable=SC2086  # PUBLISH is a deliberate list of -p flags
-exec docker run --rm -it --device /dev/kvm $PUBLISH \
+exec docker run --rm -it --name hyprvm --device /dev/kvm $PUBLISH \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/vnc.exp
