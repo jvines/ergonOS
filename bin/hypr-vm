@@ -186,6 +186,24 @@ expect {
   "SYNC_OK"   { puts "\n-- repo synced; the desktop matches this checkout" }
 }
 
+# A watcher for the greeter session, written to the writable /out share so it
+# can be read from the host without anyone typing in the guest.
+#
+# This exists because the automated suite starts Hyprland directly while a real
+# login goes greeter -> uwsm -> Hyprland, and the two behaved differently: the
+# suite composited a wallpaper and the greeter session did not. Nothing was
+# watching the path people actually use.
+send "sudo mkdir -p /out; sudo mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; sudo chmod 777 /out\r"
+send "( while :; do d=\$(ls -d /run/user/1000/hypr/*/ 2>/dev/null | head -1); \
+  if [ -n \"\$d\" ]; then export HYPRLAND_INSTANCE_SIGNATURE=\$(basename \$d) XDG_RUNTIME_DIR=/run/user/1000; \
+    { echo \"== \$(date +%T) session \$HYPRLAND_INSTANCE_SIGNATURE\"; \
+      echo '-- background layer:'; hyprctl layers 2>&1 | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b'; \
+      echo '-- hyprpaper procs:'; pgrep -a hyprpaper 2>&1; \
+      echo '-- PATH:'; tr '\\0' '\\n' < /proc/\$(pgrep -x Hyprland | head -1)/environ 2>/dev/null | grep -E '^PATH='; \
+      echo '-- ergon-wallpaper run:'; ergon-wallpaper 2>&1; \
+      echo '-- layer after:'; hyprctl layers 2>&1 | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b'; \
+    } > /out/wallpaper-debug.txt 2>&1; break; fi; sleep 5; done ) &\r"
+
 puts "\n-- booted. The greeter is on vt1; connect to vnc://$BIND:$PORT"
 puts "-- log in as $USERNAME / $USERPASS"
 puts "-- Ctrl-C here stops the VM\n"
