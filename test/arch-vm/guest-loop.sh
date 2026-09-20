@@ -80,6 +80,18 @@ while :; do
     sleep 2
   fi
 
+  # exec -- run /out/exec.sh inside the compositor's session and return its
+  # output. Diagnosing anything in here otherwise means adding a request, and
+  # every one of those costs a round trip through the whole harness; several
+  # have been added for a single question and never used again.
+  if [ "$req" = exec ]; then
+    if [ -f /out/exec.sh ]; then
+      run "sh /out/exec.sh" >> /out/reply 2>&1
+    else
+      echo "no /out/exec.sh" >> /out/reply
+    fi
+  fi
+
   if [ "$req" = wezterm ]; then
     # wezterm-git is a long Rust build, far past any request timeout, so it runs
     # DETACHED and reports into its own log. The VM normally skips it
@@ -223,31 +235,35 @@ PTEST
     sleep 2
   fi
 
-  # palette:<name> -- render a candidate palette staged on the writable share.
-  # Lets palettes be TRIED on the real desktop without committing them: the
-  # point of looking at six is that five get thrown away.
+  # palette:<name> -- switch the live desktop to a palette, so one can be judged
+  # on a real screen instead of in a screenshot. <name> is an installed palette,
+  # `next`/`prev` to step, or the name of a candidate .env staged on the
+  # writable share, which is how a palette gets tried BEFORE it is committed.
+  #
+  # This deliberately does no applying of its own. It used to regenerate the
+  # wallpaper, reload hyprland and restart waybar here, which meant the harness
+  # held a second copy of what `ergon theme` should do -- so `ergon theme` could
+  # be visibly broken on a real machine while the VM looked fine. Now the same
+  # command a user types is the thing under test.
   case "$req" in
     palette:*)
-      _pal="/out/${req#palette:}.env"
-      if [ -f "$_pal" ]; then
-        # Take the scripts from the share first. Only the `theme` request used
-        # to rsync, so a fix to ergon-theme or ergon-wallpaper did not reach the
-        # guest unless a full reinstall was asked for -- which presented as six
-        # palettes rendering byte-identical on screen while the .env files on
-        # the share were plainly different. bin/ alone is enough here and costs
-        # nothing; the full sync stays with `theme`.
-        rsync -a /mnt/bin/ "$H/ergonOS/bin/" 2>/dev/null || true
-        chown -R "$U:$U" "$H/ergonOS/bin"
-        run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme $_pal" >> /out/reply 2>&1
-        run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-wallpaper --force" >> /out/reply 2>&1
-        run "hyprctl reload" >/dev/null 2>&1
-        pkill -u "$U" -x waybar 2>/dev/null || true
-        sleep 1
-        run "hyprctl dispatch 'hl.dsp.exec_raw(\"waybar\")'" >/dev/null 2>&1
-        sleep 3
-      else
-        echo "no palette at $_pal" >> /out/reply
-      fi
+      _arg="${req#palette:}"
+      case "$_arg" in
+        next) _arg=--next ;;
+        prev) _arg=--prev ;;
+        *) [ -f "/out/$_arg.env" ] && _arg="/out/$_arg.env" ;;
+      esac
+      # Take the scripts from the share first. Only the `theme` request used to
+      # rsync, so a fix to ergon-theme or ergon-wallpaper did not reach the
+      # guest unless a full reinstall was asked for -- which presented as six
+      # palettes rendering byte-identical on screen while the .env files on the
+      # share were plainly different. bin/ and theme/ are enough here; the full
+      # sync stays with `theme`.
+      rsync -a /mnt/bin/ "$H/ergonOS/bin/" 2>/dev/null || true
+      rsync -a /mnt/theme/ "$H/ergonOS/theme/" 2>/dev/null || true
+      chown -R "$U:$U" "$H/ergonOS/bin" "$H/ergonOS/theme"
+      run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme $_arg" >> /out/reply 2>&1
+      sleep 3
       ;;
   esac
 

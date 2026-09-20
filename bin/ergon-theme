@@ -68,6 +68,33 @@ if [ "${1:-}" = "--list" ]; then
   exit 0
 fi
 
+# --next / --prev step through theme/*.env in name order, wrapping. This is how
+# a palette is CHOSEN: comparing six of them by editing a name in a command is
+# not comparing them, and the difference between two neighbouring palettes is
+# only visible if the desktop in front of you flips between them. Bound to a key
+# in hypr/, so the comparison is a keypress.
+#
+# An active palette from outside theme/ (a candidate on a scratch path) has no
+# position in that list, so stepping from it starts at the first entry rather
+# than failing.
+case "${1:-}" in
+  --next|--prev)
+    _dir="$1"; shift
+    _all=(); for _p in "$ERGON"/theme/*.env; do _all+=("$(basename "$_p" .env)"); done
+    [ "${#_all[@]}" -gt 1 ] || { echo "only one palette installed" >&2; exit 0; }
+    _cur=$( [ -f "$PALETTE_FILE" ] && cat "$PALETTE_FILE" || echo cool )
+    _i=-1; for _n in "${!_all[@]}"; do [ "${_all[$_n]}" = "$_cur" ] && { _i=$_n; break; }; done
+    if [ "$_i" -lt 0 ]; then
+      _j=0
+    elif [ "$_dir" = --next ]; then
+      _j=$(( (_i + 1) % ${#_all[@]} ))
+    else
+      _j=$(( (_i - 1 + ${#_all[@]}) % ${#_all[@]} ))
+    fi
+    set -- "${_all[$_j]}"
+    ;;
+esac
+
 if [ -n "${1:-}" ]; then
   _want="$1"
 elif [ -n "${ERGON_PALETTE:-}" ]; then
@@ -145,7 +172,28 @@ done < <(find -L "$ERGON" -name '*.in' -not -path '*/.git/*' | sort)
 
 if [ "$CHECK" = 1 ]; then
   [ "$changed" = 0 ] && echo "   $rendered rendered files are up to date"
-else
-  [ "$changed" = 0 ] && echo "   $rendered files already up to date"
+  exit $rc
+fi
+[ "$changed" = 0 ] && echo "   $rendered files already up to date"
+
+# Rendering a config is not applying it. Every running program already has the
+# old colours in memory: hyprland holds its border colours, waybar parses its
+# CSS once at startup, and the wallpaper is a PNG that has to be redrawn from
+# the new ramp. Leaving this to the caller meant `ergon theme winter` changed
+# nothing visible and looked broken -- and the VM harness grew its own private
+# copy of these four steps, which then drifted from the real thing.
+#
+# Only when there is a compositor to talk to: this also runs from install.sh on
+# a tty and from CI, where there is not.
+if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
+  echo "   applying"
+  "$ERGON/bin/ergon-wallpaper" --force >/dev/null 2>&1 || true
+  hyprctl reload >/dev/null 2>&1 || true
+  # waybar has no reload signal that re-reads the stylesheet; SIGUSR2 reloads
+  # the config but keeps the parsed CSS, which is the half that carries the
+  # palette. Restarting is the only thing that actually recolours the bar.
+  pkill -x waybar >/dev/null 2>&1 || true
+  sleep 0.5
+  hyprctl dispatch 'hl.dsp.exec_raw("waybar")' >/dev/null 2>&1 || true
 fi
 exit $rc
