@@ -3,3 +3,11 @@ hosts/*/
 !hosts/README.md
 __pycache__/
 *.pyc
+
+# Emacs writes these into user-emacs-directory, which is a real directory --
+# install.sh links the init FILES, not the directory, precisely so they land
+# outside the repo. Ignored anyway as a backstop, in case that ever changes.
+emacs/custom.el
+emacs/elpa/
+emacs/eln-cache/
+emacs/tree-sitter/

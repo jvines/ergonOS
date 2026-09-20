@@ -155,6 +155,20 @@ fi
 link zsh/zshrc  .zshrc
 link zsh/zshenv .zshenv
 
+# Emacs: the FILES, not the directory, and that distinction is the whole point.
+#
+# ~/.emacs.d must stay a real directory so elpa/, eln-cache/ and custom.el land
+# there rather than in the repo. Linking the directory instead would make
+# `M-x customize' write straight into git -- which has happened: two machines
+# independently grew a custom-set-variables block nobody typed, leaving both
+# working trees dirty and any sync that refuses a dirty tree silently stuck.
+#
+# provision-arch.sh already calls emacs --batch -l ~/.emacs.d/init.el to build
+# the tree-sitter grammars, so it expected this file to be here.
+if [ "$CHECK" != 1 ]; then mkdir -p "$HOME/.emacs.d"; fi
+link emacs/init.el       .emacs.d/init.el
+link emacs/early-init.el .emacs.d/early-init.el
+
 link matplotlib/matplotlibrc .config/matplotlib/matplotlibrc
 
 # Agent knowledge. This OS ships two coding agents, and one SKILL.md serves
