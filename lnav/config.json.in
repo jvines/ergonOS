@@ -1,0 +1,50 @@
+{
+  "$schema": "https://lnav.org/schemas/config-v1.schema.json",
+  "ui": {
+    "theme-defs": {
+      "cool": {
+        "vars": { "base0": "@COOL_BG0@", "base1": "@COOL_BG1@", "base2": "@COOL_BG2@" },
+        "styles": {
+          "identifier":     { "color": "@COOL_2@" },
+          "text":           { "color": "@COOL_FG0@", "background-color": "@COOL_BG0@" },
+          "alt-text":       { "background-color": "@COOL_BG1@" },
+          "ok":             { "color": "@COOL_GOOD@", "bold": true },
+          "error":          { "color": "@COOL_URGENT@", "bold": true },
+          "warning":        { "color": "@COOL_WARN@", "bold": true },
+          "hidden":         { "color": "@COOL_DIM@", "bold": true },
+          "cursor-line":    { "background-color": "@COOL_BG2@", "bold": true },
+          "adjusted-time":  { "color": "@COOL_3@" },
+          "skewed-time":    { "color": "@COOL_WARN@" },
+          "focused":        { "color": "@COOL_BG0@", "background-color": "@COOL_ACCENT@" },
+          "disabled-focused": { "color": "@COOL_FG0@", "background-color": "@COOL_BG2@" }
+        },
+        "syntax-styles": {
+          "comment":  { "color": "@COOL_DIM@" },
+          "keyword":  { "color": "@COOL_HOT_4@" },
+          "string":   { "color": "@COOL_MINT@" },
+          "number":   { "color": "@COOL_BLUSH@" },
+          "variable": { "color": "@COOL_1@" },
+          "symbol":   { "color": "@COOL_2@" },
+          "file":     { "color": "@COOL_0@" }
+        },
+        "status-styles": {
+          "title":    { "color": "@COOL_BG0@", "background-color": "@COOL_ACCENT@", "bold": true },
+          "subtitle": { "color": "@COOL_BG0@", "background-color": "@COOL_3@", "bold": true },
+          "text":     { "color": "@COOL_FG0@", "background-color": "@COOL_BG1@" },
+          "warn":     { "color": "@COOL_WARN@", "background-color": "@COOL_BG1@" },
+          "alert":    { "color": "@COOL_URGENT@", "background-color": "@COOL_BG1@" },
+          "active":   { "color": "@COOL_GOOD@", "background-color": "@COOL_BG1@" },
+          "inactive": { "color": "@COOL_DIM@", "background-color": "@COOL_BG1@" }
+        },
+        "log-level-styles": {
+          "debug":    { "color": "@COOL_DIM@" },
+          "info":     { "color": "@COOL_FG0@" },
+          "warning":  { "color": "@COOL_WARN@" },
+          "error":    { "color": "@COOL_URGENT@" },
+          "critical": { "color": "@COOL_HOT_4@", "bold": true },
+          "fatal":    { "color": "@COOL_HOT_4@", "bold": true }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,64 @@
+# GENERATED from foot/foot.ini.in — edit the .in, then run: ergon theme
+#
+# foot had no config at all, which mattered more than it looks. It is the
+# deliberate escape hatch when wezterm is missing, AND it is the only terminal
+# in the test VM (wezterm is an AUR git build and the VM skips AUR), so every
+# TUI screenshotted from that machine was running on foot's stock palette.
+#
+# It also sets the floor for the tools that CANNOT be themed individually --
+# jless, dust, gping and anything else that just emits ANSI. Those follow the
+# terminal or they follow nothing, so the sixteen slots below are what makes
+# them consistent rather than a per-app config that does not exist.
+#
+# The mapping mirrors wezterm/wezterm.lua.in exactly. Two terminals disagreeing
+# about what "red" means is worse than either choice on its own.
+
+font=JetBrainsMono Nerd Font:size=11
+pad=8x8
+dpi-aware=yes
+
+[cursor]
+style=beam
+blink=no
+color=@COOL_BG0:raw@ @COOL_ACTIVE:raw@
+
+[colors]
+alpha=1.0
+foreground=@COOL_FG0:raw@
+background=@COOL_BG0:raw@
+selection-foreground=@COOL_FG0:raw@
+selection-background=@COOL_BG2:raw@
+
+# The palette is a cyan->magenta ramp, so there is no honest red or green in it.
+# The ANSI slots are mapped by ROLE: whatever a program means by "error" gets
+# the urgent tint, "success" gets the mint, and the rest are steps along the
+# ramp. Same assignment as wezterm, waybar and mako.
+regular0=@COOL_BG1:raw@
+regular1=@COOL_URGENT:raw@
+regular2=@COOL_GOOD:raw@
+regular3=@COOL_WARN:raw@
+regular4=@COOL_1:raw@
+regular5=@COOL_4:raw@
+regular6=@COOL_0:raw@
+regular7=@COOL_FG1:raw@
+
+bright0=@COOL_BG2:raw@
+bright1=@COOL_HOT_4:raw@
+bright2=@COOL_MINT:raw@
+bright3=@COOL_3:raw@
+bright4=@COOL_2:raw@
+bright5=@COOL_BLUSH:raw@
+bright6=@COOL_HOT_0:raw@
+bright7=@COOL_FG0:raw@
+
+[main]
+# A terminal that scrolls back far enough to find the error you just scrolled
+# past. 10k lines is roughly a long build.
+scrollback-lines=10000
+
+[key-bindings]
+# Matches wezterm's, so muscle memory survives falling back to the escape hatch.
+search-start=Control+Shift+f
+
+[mouse]
+hide-when-typing=yes

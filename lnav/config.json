@@ -1,0 +1,50 @@
+{
+  "$schema": "https://lnav.org/schemas/config-v1.schema.json",
+  "ui": {
+    "theme-defs": {
+      "cool": {
+        "vars": { "base0": "#1A1A2E", "base1": "#2A2A3E", "base2": "#3A3A4E" },
+        "styles": {
+          "identifier":     { "color": "#D6D6FF" },
+          "text":           { "color": "#EDEDF8", "background-color": "#1A1A2E" },
+          "alt-text":       { "background-color": "#2A2A3E" },
+          "ok":             { "color": "#D0FFEA", "bold": true },
+          "error":          { "color": "#FF40FF", "bold": true },
+          "warning":        { "color": "#EBC2FF", "bold": true },
+          "hidden":         { "color": "#A6A6BC", "bold": true },
+          "cursor-line":    { "background-color": "#3A3A4E", "bold": true },
+          "adjusted-time":  { "color": "#EBC2FF" },
+          "skewed-time":    { "color": "#EBC2FF" },
+          "focused":        { "color": "#1A1A2E", "background-color": "#ADFFFF" },
+          "disabled-focused": { "color": "#EDEDF8", "background-color": "#3A3A4E" }
+        },
+        "syntax-styles": {
+          "comment":  { "color": "#A6A6BC" },
+          "keyword":  { "color": "#FF40FF" },
+          "string":   { "color": "#D0FFEA" },
+          "number":   { "color": "#FFE0FF" },
+          "variable": { "color": "#C2EBFF" },
+          "symbol":   { "color": "#D6D6FF" },
+          "file":     { "color": "#ADFFFF" }
+        },
+        "status-styles": {
+          "title":    { "color": "#1A1A2E", "background-color": "#ADFFFF", "bold": true },
+          "subtitle": { "color": "#1A1A2E", "background-color": "#EBC2FF", "bold": true },
+          "text":     { "color": "#EDEDF8", "background-color": "#2A2A3E" },
+          "warn":     { "color": "#EBC2FF", "background-color": "#2A2A3E" },
+          "alert":    { "color": "#FF40FF", "background-color": "#2A2A3E" },
+          "active":   { "color": "#D0FFEA", "background-color": "#2A2A3E" },
+          "inactive": { "color": "#A6A6BC", "background-color": "#2A2A3E" }
+        },
+        "log-level-styles": {
+          "debug":    { "color": "#A6A6BC" },
+          "info":     { "color": "#EDEDF8" },
+          "warning":  { "color": "#EBC2FF" },
+          "error":    { "color": "#FF40FF" },
+          "critical": { "color": "#FF40FF", "bold": true },
+          "fatal":    { "color": "#FF40FF", "bold": true }
+        }
+      }
+    }
+  }
+}

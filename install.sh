@@ -69,6 +69,14 @@ else
   # TUI apps that carry their own palette. Every one of these is a working
   # tool rather than a glance, and every one shipped with a scheme built for a
   # different desktop -- yazi blue-and-yellow, lazygit green-and-red.
+  # foot had no config at all. It is the escape hatch when wezterm is missing
+  # AND the only terminal in the test VM (wezterm is an AUR build the VM skips),
+  # so every TUI there ran on foot's stock palette. It also sets the floor for
+  # the tools that cannot be themed individually -- jless, dust, gping -- which
+  # follow the terminal's ANSI slots or follow nothing.
+  link foot       .config/foot
+  link lnav       .config/lnav
+  link newsboat   .config/newsboat
   link yazi       .config/yazi
   link lazygit    .config/lazygit
   link lazydocker .config/lazydocker
