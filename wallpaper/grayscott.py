@@ -20,7 +20,10 @@ implicit scheme would be more code for a picture.
 import numpy as np
 
 # (feed, kill), after Pearson's letters for the regimes.
-BLEND = 0.20
+TITLE = "Gray-Scott reaction-diffusion"
+SUBTITLE = "two chemicals, one feeding on the other"
+
+BLEND = 0.34
 
 PRESETS = {
     "coral":    (0.0545, 0.0620),

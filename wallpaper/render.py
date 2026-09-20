@@ -29,6 +29,9 @@ def main():
     # Default comes from the generator, which knows whether it fills the panel.
     ap.add_argument("--blend", type=float, default=None)
     ap.add_argument("--reverse", action="store_true")
+    ap.add_argument("--fit", default=None, help="cover or contain")
+    ap.add_argument("--zoom", type=float, default=None)
+    ap.add_argument("--no-title", action="store_true")
     args = ap.parse_args()
 
     w, h = (int(v) for v in args.size.lower().split("x"))
@@ -40,10 +43,17 @@ def main():
     mod = importlib.import_module(args.generator)
 
     blend = args.blend if args.blend is not None else getattr(mod, "BLEND", 0.45)
+    scale = getattr(mod, "SCALE", "linear")
 
     t0 = time.time()
-    field = mod.generate((w, h), seed=args.seed)
-    lib.render(field, palette, args.out, blend=blend, reverse=args.reverse)
+    kw = {}
+    if args.fit is not None: kw["fit"] = args.fit
+    if args.zoom is not None: kw["zoom"] = args.zoom
+    field = mod.generate((w, h), seed=args.seed, **kw)
+    lib.render(field, palette, args.out, blend=blend, reverse=args.reverse,
+               scale=scale,
+               title=None if args.no_title else getattr(mod, "TITLE", None),
+               subtitle=None if args.no_title else getattr(mod, "SUBTITLE", None))
     print(f"{args.out} ({w}x{h}, {time.time() - t0:.1f}s)")
 
 

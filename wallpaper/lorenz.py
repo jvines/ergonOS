@@ -20,12 +20,20 @@ invariant measure directly, where one path only approaches it.
 
 import numpy as np
 
-BLEND = 0.42
+TITLE = "Lorenz attractor"
+SUBTITLE = "sigma=10, rho=28, beta=8/3   (Lorenz 1963)"
+
+BLEND = 0.78
+
+# Log density: the lobes are orders of magnitude denser than the sheet between
+# them, so a linear scale renders the butterfly as one solid blob. See
+# lib.normalise.
+SCALE = "linear"
 
 VIEWS = ["xz", "yz", "xy"]
 
 
-def generate(size, seed=0, ensemble=12_000, steps=400, dt=0.006, burn=3000):
+def generate(size, seed=0, ensemble=400, steps=40_000, dt=0.0018, burn=2000):
     s, r, b = 10.0, 28.0, 8.0 / 3.0
 
     def deriv(p):
