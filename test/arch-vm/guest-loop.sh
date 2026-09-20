@@ -79,6 +79,18 @@ while :; do
     sleep 2
   fi
 
+  if [ "$req" = diag ]; then
+    # Read the state instead of judging it from a screenshot. Twice now a theme
+    # has looked unchanged in a capture when the real question was whether the
+    # config was even in place.
+    { echo "-- btop theme link:"; ls -l "$H/.config/btop/themes/" 2>&1
+      echo "-- btop color_theme:"; grep -E '^color_theme' "$H/.config/btop/btop.conf" 2>&1
+      echo "-- does the theme file resolve?"
+      head -3 "$H/.config/btop/themes/cool.theme" 2>&1
+      echo "-- themed configs present:"; ls "$H/.config/waybar/style.css" "$H/.config/mako/config" 2>&1
+    } >> /out/reply 2>&1
+  fi
+
   if [ "$req" = windows ]; then
     # The other half of the question: two windows, so focused and unfocused
     # border colours can be compared side by side.
