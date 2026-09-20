@@ -103,6 +103,26 @@ while :; do
     chmod 666 /out/wezterm-build.log 2>/dev/null || true
   fi
 
+  if [ "$req" = bar ]; then
+    was=$(pgrep -x waybar | head -1)
+    # uwsm puts waybar in a systemd scope; a bare pkill as root can lose the
+    # race with the compositor's own respawn, and the bar comes back with the
+    # config it already had. Kill, confirm it is gone, then start it.
+    pkill -u "$U" -x waybar 2>/dev/null || true
+    for _ in 1 2 3 4 5; do pgrep -x waybar >/dev/null || break; sleep 1; done
+    pkill -9 -u "$U" -x waybar 2>/dev/null || true
+    sleep 1
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"waybar\")'" >/dev/null 2>&1
+    sleep 3
+    now=$(pgrep -x waybar | head -1)
+    { echo "-- waybar pid: $was -> ${now:-NONE}"
+      [ -n "$now" ] && [ "$now" != "$was" ] && echo "   restarted" || echo "   NOT restarted"
+      echo "-- on-click in the live ppd module?"
+      awk '/"power-profiles-daemon": \{/{f=1} f{print} f&&/^  \},?$/{exit}' \
+        "$H/.config/waybar/config.jsonc" | grep -E 'on-click|format|^\s*\}' | head -6
+    } >> /out/reply 2>&1
+  fi
+
   if [ "$req" = diag ]; then
     # Read the state instead of judging it from a screenshot. Twice now a theme
     # has looked unchanged in a capture when the real question was whether the

@@ -24,7 +24,7 @@ OUT="$WORK/out"
 REQ="${1:-shot}"
 TIMEOUT="${HYPR_SHOT_TIMEOUT:-90}"
 
-case "$REQ" in shot|theme|demo|windows|diag|tui|wezterm) ;; *) echo "usage: hypr-shot [shot|theme|demo|windows|diag|tui|wezterm]" >&2; exit 2 ;; esac
+case "$REQ" in shot|theme|demo|windows|diag|tui|wezterm|bar) ;; *) echo "usage: hypr-shot [shot|theme|demo|windows|diag|tui|wezterm|bar]" >&2; exit 2 ;; esac
 [ -d "$OUT" ] || { echo "no $OUT — is the VM running? (bin/hypr-vm)" >&2; exit 1; }
 
 # The loop writes this once a session exists. Without it the request would sit
