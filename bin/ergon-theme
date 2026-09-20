@@ -89,7 +89,13 @@ esac
 }
 if [ "$CHECK" != 1 ]; then
   mkdir -p "$STATE"
-  basename "$PALETTE" .env > "$PALETTE_FILE"
+  # Record the full path for a palette outside theme/, so it can be found
+  # again; a bare basename would resolve to theme/<name>.env, which may not
+  # exist. ergon-wallpaper reads this same file.
+  case "$PALETTE" in
+    "$ERGON"/theme/*) basename "$PALETTE" .env > "$PALETTE_FILE" ;;
+    *)                printf '%s\n' "$PALETTE" > "$PALETTE_FILE" ;;
+  esac
 fi
 
 # Build the sed program from the palette. Keys are validated so a stray line in

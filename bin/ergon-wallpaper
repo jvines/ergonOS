@@ -31,8 +31,30 @@ FORCE=0
 # under `set -e` it exits the script -- which it did, killing the render.
 DITHER_PCT="${ERGON_WALLPAPER_DITHER:-2}"
 
+# The ACTIVE palette, not cool.env.
+#
+# This was hardcoded to theme/cool.env, so the wallpaper stayed cool whatever
+# `ergon theme` had rendered -- and since the wallpaper is most of the screen,
+# every palette looked identical. Six candidates were rendered side by side
+# before that was obvious.
+#
+# Resolution matches ergon-theme's: an explicit argument, then ERGON_PALETTE,
+# then the remembered choice, then cool.
+_state="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette"
+if [ -n "${ERGON_PALETTE:-}" ]; then
+  _want="$ERGON_PALETTE"
+elif [ -f "$_state" ]; then
+  _want=$(cat "$_state")
+else
+  _want=cool
+fi
+case "$_want" in
+  /*|./*|../*) PALETTE="$_want" ;;
+  *)           PALETTE="$ERGON/theme/$_want.env" ;;
+esac
+[ -f "$PALETTE" ] || PALETTE="$ERGON/theme/cool.env"
 # shellcheck source=/dev/null
-. "$ERGON/theme/cool.env"
+. "$PALETTE"
 
 command -v magick >/dev/null || { echo "imagemagick required" >&2; exit 1; }
 
