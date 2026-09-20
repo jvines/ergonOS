@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# ergon:summary=Compute wallpapers from simulations, in the active palette
+# ergon:group=theme
+# ergon:args=[--list | --all | GENERATOR [SEED]]
+#
+# Wallpapers this machine computes for itself, rather than photographs it is
+# not licensed to redistribute.
+#
+# That is not a workaround. A simulation renders at the panel's exact
+# resolution, is coloured from whichever palette is active, is reproducible
+# from a seed, and belongs to whoever ran it. A photograph is none of those:
+# fixed size, fixed palette, and a licence that is almost never the
+# repository's. Omarchy bundles 92 images with no attribution anywhere in its
+# tree; this is the alternative rather than the compromise.
+#
+# The generators live in wallpaper/ and are plain numpy. Output goes to
+#   $XDG_DATA_HOME/ergon/backgrounds/<palette>/<generator>-<seed>.png
+# which ergon-wallpaper searches, so a generated image joins the --next cycle
+# as soon as it exists.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+GENDIR="$ERGON/wallpaper"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+PY="$VENV/bin/python"
+
+# The base pyfleet venv already carries numpy and matplotlib (packages/python),
+# which is the whole reason the generators are restricted to those two: a
+# wallpaper that needs its own dependency tree is a wallpaper that breaks.
+[ -x "$PY" ] || { echo "no python at $PY — run: pyfleet ensure" >&2; exit 1; }
+
+_generators() {
+  find -L "$GENDIR" -maxdepth 1 -name '*.py' \
+    -not -name 'lib.py' -not -name 'render.py' -printf '%f\n' 2>/dev/null \
+    | sed 's/\.py$//' | sort
+}
+
+# The palette resolves exactly as it does in ergon-theme and ergon-wallpaper,
+# so a generated image is filed under the palette that coloured it.
+_state="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette"
+if [ -n "${ERGON_PALETTE:-}" ]; then _want="$ERGON_PALETTE"
+elif [ -f "$_state" ];          then _want=$(cat "$_state")
+else                                 _want=cool
+fi
+case "$_want" in
+  /*|./*|../*) PALETTE="$_want" ;;
+  *)           PALETTE="$ERGON/theme/$_want.env" ;;
+esac
+[ -f "$PALETTE" ] || PALETTE="$ERGON/theme/cool.env"
+PAL_NAME=$(basename "$PALETTE" .env)
+
+OUTDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/backgrounds/$PAL_NAME"
+
+# Match the panel, the way ergon-wallpaper does, so this is right on the laptop
+# and right again when it is docked to something bigger.
+if command -v hyprctl >/dev/null 2>&1 \
+   && SIZE=$(hyprctl monitors -j 2>/dev/null \
+             | jq -r 'max_by(.width * .height) | "\(.width)x\(.height)"' 2>/dev/null) \
+   && [ -n "$SIZE" ] && [ "$SIZE" != "null" ]; then
+  :
+else
+  SIZE=${ERGON_WALLPAPER_SIZE:-2880x1920}
+fi
+
+_render() {
+  local gen="$1" seed="${2:-0}"
+  mkdir -p "$OUTDIR"
+  "$PY" "$GENDIR/render.py" \
+    --generator "$gen" --palette "$PALETTE" \
+    --size "$SIZE" --seed "$seed" \
+    --out "$OUTDIR/$gen-$seed.png"
+}
+
+case "${1:---list}" in
+  --list)
+    echo "  generators (palette: $PAL_NAME, size: $SIZE)"
+    _generators | sed 's/^/     /'
+    echo "  output: $OUTDIR"
+    ;;
+  --all)
+    # One seed each. Rendering every seed of every generator is minutes of CPU
+    # for images nobody asked for; --next through them and generate more of
+    # whichever earns it.
+    while IFS= read -r g; do
+      [ -n "$g" ] && _render "$g" "${2:-0}"
+    done < <(_generators)
+    ;;
+  -h|--help|help)
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    _generators | grep -qx "$1" || {
+      echo "no generator '$1' (have: $(_generators | tr '\n' ' '))" >&2; exit 1
+    }
+    _render "$1" "${2:-0}"
+    ;;
+esac

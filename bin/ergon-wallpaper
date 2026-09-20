@@ -12,6 +12,7 @@
 #
 #   $XDG_CONFIG_HOME/ergon/backgrounds/<palette>/   user, for one palette
 #   $XDG_CONFIG_HOME/ergon/backgrounds/             user, any palette
+#   $XDG_DATA_HOME/ergon/backgrounds/<palette>/     generated (ergon-wallpaper-gen)
 #   $ERGON/theme/backgrounds/<palette>/             shipped, for one palette
 #   $ERGON/theme/backgrounds/                       shipped, any palette
 #
@@ -99,6 +100,7 @@ CANDIDATES=("$GENERATED")
 for _dir in \
   "${XDG_CONFIG_HOME:-$HOME/.config}/ergon/backgrounds/$_pal_name" \
   "${XDG_CONFIG_HOME:-$HOME/.config}/ergon/backgrounds" \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/ergon/backgrounds/$_pal_name" \
   "$ERGON/theme/backgrounds/$_pal_name" \
   "$ERGON/theme/backgrounds"
 do
