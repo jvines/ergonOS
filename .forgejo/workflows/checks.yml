@@ -66,16 +66,6 @@ jobs:
             "${{ github.sha }}:refs/heads/main"
           echo "mirrored $(git rev-parse --short HEAD) to github.com/jvines/ergonOS"
 
-      # Mail on failure. Last step, and it never fails the run itself -- a
-      # notifier that errors turns one red run into two, the second about the
-      # notifier. Silently does nothing when the secrets are unset.
-      - name: Mail on failure
-        if: failure()
-        env:
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
-        run: python3 "$CI_DIR/.forgejo/notify-failure.py" || true
 
       - name: Clean up
         if: always()
