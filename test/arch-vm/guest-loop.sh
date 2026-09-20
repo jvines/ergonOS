@@ -69,11 +69,12 @@ while :; do
     # the thing being judged.
     pkill -u "$U" -x btop 2>/dev/null || true
     pkill -u "$U" -x foot 2>/dev/null || true
+    pkill -u "$U" -x wezterm-gui 2>/dev/null || true
     sleep 1
 
     # btop alone, so it gets the full width. Two side-by-side terminals at
     # 1280px are about 78 columns each, which is just under what it needs.
-    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot -e btop\")'" >> /out/reply 2>&1
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"ergon-term btop\")'" >> /out/reply 2>&1
     sleep 4
     run "notify-send 'Ergon' 'A themed notification, so mako can be judged too.'" >> /out/reply 2>&1
     sleep 2
@@ -123,12 +124,13 @@ while :; do
     # what shows here is what every git diff and every lazygit hunk looks like.
     pkill -u "$U" -x btop 2>/dev/null || true
     pkill -u "$U" -x foot 2>/dev/null || true
+    pkill -u "$U" -x wezterm-gui 2>/dev/null || true
     sleep 1
     # ergon-term, not foot: it prefers wezterm when wezterm exists, so this
     # exercises the resolver AND shows whichever terminal the machine would
     # actually give you. wezterm is the daily one and the only themed surface
     # that had never been looked at.
-    run "hyprctl dispatch 'hl.dsp.exec_raw(\"ergon-term -e bash -c \\\"bat --paging=always /home/$U/ergonOS/bin/ergon-peek\\\"\")'" >> /out/reply 2>&1
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"ergon-term bash -c \\\"bat --paging=always /home/$U/ergonOS/bin/ergon-peek\\\"\")'" >> /out/reply 2>&1
     sleep 4
   fi
 
@@ -137,10 +139,11 @@ while :; do
     # border colours can be compared side by side.
     pkill -u "$U" -x btop 2>/dev/null || true
     pkill -u "$U" -x foot 2>/dev/null || true
+    pkill -u "$U" -x wezterm-gui 2>/dev/null || true
     sleep 1
-    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot\")'" >> /out/reply 2>&1
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"ergon-term\")'" >> /out/reply 2>&1
     sleep 2
-    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot\")'" >> /out/reply 2>&1
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"ergon-term\")'" >> /out/reply 2>&1
     sleep 2
   fi
 
