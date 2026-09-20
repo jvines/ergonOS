@@ -33,7 +33,14 @@ window#waybar.hidden { opacity: 0.0; }
   border-bottom: 2px solid transparent;
 }
 
-#workspaces button.empty { color: #3A3A4E; }
+/* Empty workspaces were #3A3A4E (#3A3A4E) on #1A1A2E (#1A1A2E) -- two
+ * near-identical darks, so 2-9 were invisible rather than quiet. Same hue as
+ * an occupied-but-inactive workspace, dropped in opacity instead: still
+ * obviously secondary, still readable. */
+#workspaces button.empty {
+  color: #9494B0;
+  opacity: 0.42;
+}
 
 #workspaces button:hover {
   color: #EDEDF8;
@@ -70,8 +77,21 @@ window#waybar.empty #window { background: transparent; }
 #cpu, #memory, #wireplumber, #backlight,
 #network, #bluetooth, #battery, #power-profiles-daemon,
 #clock, #tray {
-  padding: 0 9px;
+  padding: 0 8px;
   color: #EDEDF8;
+}
+
+/* Eight modules in a row with uniform padding read as one undifferentiated
+ * string -- "-- 0% 1G 100% 0% 10.0.2.15" takes a moment to parse into fields.
+ * A hairline before each GROUP (load, audio, radios, power, time) gives the eye
+ * somewhere to break, without the noise of a divider between every module. */
+#wireplumber,
+#network,
+#battery,
+#clock {
+  border-left: 1px solid #3A3A4E;
+  margin-left: 2px;
+  padding-left: 10px;
 }
 
 /* The load trio reads as one unit, tinted along the ramp so you can tell them
@@ -113,9 +133,13 @@ window#waybar.empty #window { background: transparent; }
   background: #FF40FF;
 }
 
+/* No background slab. Every other module is flat on the bar, so a filled panel
+ * behind the clock reads as an inconsistency rather than as emphasis. The time
+ * is already the rightmost thing and the only wide field; it does not need
+ * help being found. */
 #clock {
   color: #EDEDF8;
-  background: #2A2A3E;
+  padding-right: 12px;
 }
 
 #tray { padding-right: 10px; }
