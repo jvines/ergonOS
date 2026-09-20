@@ -51,15 +51,42 @@ PAL_NAME=$(basename "$PALETTE" .env)
 
 OUTDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/backgrounds/$PAL_NAME"
 
-# Match the panel, the way ergon-wallpaper does, so this is right on the laptop
-# and right again when it is docked to something bigger.
-if command -v hyprctl >/dev/null 2>&1 \
-   && SIZE=$(hyprctl monitors -j 2>/dev/null \
-             | jq -r 'max_by(.width * .height) | "\(.width)x\(.height)"' 2>/dev/null) \
-   && [ -n "$SIZE" ] && [ "$SIZE" != "null" ]; then
-  :
+# Rendered ABOVE the panel, on purpose, and capped at 4K.
+#
+# A wallpaper generated at exactly the panel's resolution has no headroom: it
+# is correct on that monitor and soft on any larger one, and it cannot survive
+# being downscaled with a decent filter because there is nothing to downscale.
+# Rendering with a 3840-pixel long edge and letting the compositor scale down
+# gives every panel a clean image -- downsampling is cheap and always improves
+# an image, upsampling never does.
+#
+# 4K rather than 8K: an 8K frame is four times the pixels, four times the
+# render time and about 70 MB on disk, and once it is downscaled to a laptop
+# panel the difference from 4K is not visible. The extra cost is real and the
+# gain is not.
+#
+# The ASPECT comes from the panel, not from a fixed 16:9, because a 16:10
+# laptop showing a 16:9 image either crops the structure or pillarboxes it.
+# Only the aspect is taken from the monitor; the size is ours.
+LONG_EDGE=${ERGON_WALLPAPER_LONG_EDGE:-3840}
+if [ -n "${ERGON_WALLPAPER_SIZE:-}" ]; then
+  SIZE="$ERGON_WALLPAPER_SIZE"
+elif command -v hyprctl >/dev/null 2>&1 \
+     && _panel=$(hyprctl monitors -j 2>/dev/null \
+                 | jq -r 'max_by(.width * .height) | "\(.width)x\(.height)"' 2>/dev/null) \
+     && [ -n "$_panel" ] && [ "$_panel" != "null" ]; then
+  _pw=${_panel%x*}; _ph=${_panel#*x}
+  # Never render SMALLER than the panel, which would be upscaled on display.
+  if [ "$_pw" -ge "$LONG_EDGE" ]; then
+    SIZE="$_panel"
+  else
+    SIZE="${LONG_EDGE}x$(( LONG_EDGE * _ph / _pw ))"
+  fi
+  echo "  panel ${_panel}, rendering at $SIZE for downsampling"
 else
-  SIZE=${ERGON_WALLPAPER_SIZE:-2880x1920}
+  # No compositor to ask -- provisioning over ssh, or a first run before the
+  # session exists. 16:10, because that is what this OS's reference machine is.
+  SIZE="${LONG_EDGE}x$(( LONG_EDGE * 10 / 16 ))"
 fi
 
 _render() {

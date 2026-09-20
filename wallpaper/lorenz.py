@@ -29,7 +29,14 @@ this affordable -- deposit_path subdivides each step to sub-pixel spacing, so
 import numpy as np
 
 TITLE = "Lorenz attractor"
-SUBTITLE = "sigma=10, rho=28, beta=8/3   (Lorenz 1963)"
+SUBTITLE = "3 orbits, t=120,  sigma=10, rho=28, beta=8/3   (Lorenz 1963)"
+
+# 3 orbits over t=120, roughly 420 loops. Chosen by looking, and the number
+# matters more than it sounds: at 4 orbits x t=624 the passes overlap into a
+# hatch and the attractor reads as a smear, while one orbit over t=60 is too
+# sparse to show the sheet. GAMMA 0.4 with it -- at 1.0 the median lit pixel
+# sits at 0.18 of the ramp, which is its dark end, so the palette's upper half
+# never appears and the whole image comes out one colour.
 
 # zscale, the IRAF/DS9 stretch. These density fields have the same shape as an
 # astronomical frame -- a core orders of magnitude brighter than the structure
@@ -39,7 +46,7 @@ SUBTITLE = "sigma=10, rho=28, beta=8/3   (Lorenz 1963)"
 # filaments. A percentile clip cannot do that, and log flattens the density
 # ridges that ARE the filaments.
 SCALE = "zscale"
-GAMMA = 1.0
+GAMMA = 0.4
 
 BLEND = 0.78
 
@@ -51,7 +58,7 @@ BLEND = 0.78
 VIEWS = ["xz", "yz", "xy"]
 
 
-def generate(size, seed=0, ensemble=4, steps=240_000, dt=0.0026, burn=3000):
+def generate(size, seed=0, ensemble=3, steps=48_000, dt=0.0025, burn=3000):
     s, r, b = 10.0, 28.0, 8.0 / 3.0
 
     def deriv(p):
