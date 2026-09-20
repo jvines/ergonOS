@@ -115,6 +115,13 @@ while :; do
       ls -d "$H/.config/waybar/style.css" "$H/.config/mako/config" \
             "$H/.config/yazi/theme.toml" "$H/.config/lazygit/config.yml" \
             "$H/.config/lazydocker/config.yml" "$H/.config/bat/config" 2>&1
+      echo "-- does ergon-power actually cycle?"
+      _b=$(su - "$U" -c "powerprofilesctl get" 2>/dev/null)
+      _a=$(su - "$U" -c "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-power cycle" 2>&1 | tail -1)
+      echo "   $_b -> $_a"
+      su - "$U" -c "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-power $_b" >/dev/null 2>&1 || true
+      echo "-- is ergon-power on the SESSION's path?"
+      su - "$U" -c 'command -v ergon-power' 2>&1 | head -1
       echo "-- power profiles available:"
       su - "$U" -c "powerprofilesctl list" 2>&1 | grep -E '^[ *]*[a-z-]+:' | head -5
       echo "-- current profile:"; su - "$U" -c "powerprofilesctl get" 2>&1 | head -1
@@ -185,6 +192,13 @@ while :; do
       run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme"
       run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-wallpaper --force"
       run "hyprctl reload"
+      # waybar does NOT reload with Hyprland. hyprctl reload re-reads the
+      # compositor's config and nothing else, so a change to waybar's
+      # config.jsonc or style.css sits unused in a running bar -- which is
+      # exactly how an added on-click looked like it had no effect.
+      pkill -u "$U" -x waybar 2>/dev/null || true
+      sleep 1
+      run "hyprctl dispatch 'hl.dsp.exec_raw(\"waybar\")'"
     } >> /out/reply 2>&1
     sleep 2
   fi
