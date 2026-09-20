@@ -46,7 +46,27 @@ HIBERNATE="${HIBERNATE:-1}"
 HOSTNAME="${HOSTNAME_NEW:-}"          # prompted if empty
 TIMEZONE="${TIMEZONE:-America/Santiago}"
 LOCALE="${LOCALE:-en_US.UTF-8}"
-KEYMAP="${KEYMAP:-us}"
+# Detected, not assumed. Anyone whose keyboard is not American has already run
+# `loadkeys` on the ISO -- they had to, to type a password containing anything
+# but letters -- so the live environment already knows the answer and defaulting
+# to "us" throws it away and asks them to type it again. Worse, it is the one
+# prompt where accepting the default is silently wrong later rather than
+# immediately: the install completes, and the keyboard is American at the LUKS
+# prompt on first boot, which is where the password gets typed wrong.
+#
+# localectl first, /etc/vconsole.conf second, "us" only if neither answers.
+_detect_keymap() {
+  local k
+  # localectl says "(unset)" for a keymap it does not know and "n/a" on some
+  # versions. Both are answers meaning "no answer" and neither is a keymap.
+  k=$(localectl status 2>/dev/null | sed -n 's/.*VC Keymap: *\([^ ]*\).*/\1/p' | head -1)
+  case "$k" in ''|n/a|'(unset)') k= ;; esac
+  [ -n "$k" ] && { printf '%s\n' "$k"; return; }
+  k=$(awk -F= '/^KEYMAP=/ { gsub(/"/, "", $2); print $2 }' /etc/vconsole.conf 2>/dev/null | tail -1)
+  [ -n "$k" ] && { printf '%s\n' "$k"; return; }
+  printf 'us\n'
+}
+KEYMAP="${KEYMAP:-$(_detect_keymap)}"
 USERNAME="${USERNAME:-jayvains}"
 
 # The wifi regulatory domain. Not a preference: transmit power and which
