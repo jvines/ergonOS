@@ -24,6 +24,10 @@ OUT="${ERGON_WALLPAPER_OUT:-$HOME/.local/share/ergon/wallpaper.png}"
 FORCE=0
 [ "${1:-}" = --force ] && { FORCE=1; shift; }
 
+# Unquoted on purpose below: it is a list of magick arguments, not one string.
+DITHER="-attenuate ${ERGON_WALLPAPER_DITHER:-0.03} +noise Gaussian"
+[ "${ERGON_WALLPAPER_DITHER:-}" = 0 ] && DITHER=""
+
 # shellcheck source=/dev/null
 . "$ERGON/theme/cool.env"
 
@@ -60,10 +64,21 @@ mkdir -p "$(dirname "$OUT")"
 if [ "$FORCE" = 0 ] && [ -z "${1:-}" ] && [ -s "$OUT" ] && [ "$OUT" -nt "$ERGON/theme/cool.env" ]; then
   echo "  $OUT  (unchanged)"
 else
+  # DITHER is the last step and it is not optional: an 18% blend spans only a
+  # few dozen 8-bit values across the whole panel, so the ramp quantises into
+  # visible bands. A tiny amount of noise breaks the steps into a texture the
+  # eye reads as smooth.
+  #
+  # attenuate 0.03 keeps it to roughly +/-1 level. The earlier note here said
+  # noise takes this from 324 KB to 29 MB -- that is true of noise at full
+  # amplitude, which is uncorrelated at every bit and defeats PNG's filters
+  # entirely. At one level it perturbs only the bottom bit and compresses fine.
+  # ERGON_WALLPAPER_DITHER=0 turns it off if a panel ever looks worse with it.
   magick -size "$SIZE" xc:"$COOL_BG0" \
     \( -size "$SIZE" xc: -sparse-color barycentric \
          "0,0 $COOL_0  %[fx:w-1],%[fx:h-1] $COOL_4" \) \
     -compose blend -define compose:args=18 -composite \
+    $DITHER \
     "$OUT"
   echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
 fi
