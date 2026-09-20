@@ -124,7 +124,11 @@ while :; do
     pkill -u "$U" -x btop 2>/dev/null || true
     pkill -u "$U" -x foot 2>/dev/null || true
     sleep 1
-    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot -e bash -c \\\"bat --paging=always /home/$U/ergonOS/bin/ergon-peek\\\"\")'" >> /out/reply 2>&1
+    # ergon-term, not foot: it prefers wezterm when wezterm exists, so this
+    # exercises the resolver AND shows whichever terminal the machine would
+    # actually give you. wezterm is the daily one and the only themed surface
+    # that had never been looked at.
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"ergon-term -e bash -c \\\"bat --paging=always /home/$U/ergonOS/bin/ergon-peek\\\"\")'" >> /out/reply 2>&1
     sleep 4
   fi
 
