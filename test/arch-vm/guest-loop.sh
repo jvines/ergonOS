@@ -115,6 +115,11 @@ while :; do
       ls -d "$H/.config/waybar/style.css" "$H/.config/mako/config" \
             "$H/.config/yazi/theme.toml" "$H/.config/lazygit/config.yml" \
             "$H/.config/lazydocker/config.yml" "$H/.config/bat/config" 2>&1
+      echo "-- power profiles available:"
+      su - "$U" -c "powerprofilesctl list" 2>&1 | grep -E '^[ *]*[a-z-]+:' | head -5
+      echo "-- current profile:"; su - "$U" -c "powerprofilesctl get" 2>&1 | head -1
+      echo "-- ppd service:"; systemctl is-active power-profiles-daemon 2>&1
+      echo "-- platform_profile driver present?"; ls /sys/firmware/acpi/platform_profile 2>&1 | head -1
       echo "-- does an interactive zsh start CLEAN?"
       zout=$(su - "$U" -c 'zsh -i -c "exit" 2>&1' 2>&1 | head -3)
       [ -z "$zout" ] && echo "   clean (no output)" || echo "   OUTPUT: $zout"
