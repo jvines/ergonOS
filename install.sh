@@ -55,10 +55,31 @@ else
   link mako   .config/mako
   link fuzzel .config/fuzzel
   link wezterm .config/wezterm
-  # btop carries its own palette and is the most visible TUI here -- the cpu,
-  # memory and temperature modules in the bar all open it -- so it was rendering
-  # red and orange meters on a cyan desktop.
-  link btop   .config/btop
+  # btop, which cannot be linked like the others for two reasons:
+  #
+  #   * it REWRITES btop.conf on exit, so a symlinked config would have btop
+  #     editing the repo every time someone quits it;
+  #   * it creates ~/.config/btop itself the first time it runs, so by the time
+  #     install.sh gets there the directory is real and link() rightly refuses
+  #     to replace it. That is exactly what happened -- btop was themed,
+  #     rendered and linked, and still drew its own red meters.
+  #
+  # So: the theme is a symlink (btop only reads it) and the setting is edited
+  # into whatever btop.conf is already there.
+  if [ "$CHECK" != 1 ]; then
+    mkdir -p "$HOME/.config/btop/themes"
+    ln -sfn "$ERGON/btop/themes/cool.theme" "$HOME/.config/btop/themes/cool.theme"
+    if [ -f "$HOME/.config/btop/btop.conf" ]; then
+      if grep -q '^color_theme' "$HOME/.config/btop/btop.conf"; then
+        sed -i 's|^color_theme.*|color_theme = "cool"|' "$HOME/.config/btop/btop.conf"
+      else
+        printf 'color_theme = "cool"\n' >> "$HOME/.config/btop/btop.conf"
+      fi
+    else
+      cp "$ERGON/btop/btop.conf" "$HOME/.config/btop/btop.conf"
+    fi
+    ok "btop themed (cool)"
+  fi
   link gtk/settings.ini .config/gtk-3.0/settings.ini
   link gtk/settings.ini .config/gtk-4.0/settings.ini
   [ -f "$ERGON/hosts/$HOST/hyprland.lua" ] && link "hosts/$HOST/hyprland.lua" ".config/hypr/hosts/$HOST.lua"
