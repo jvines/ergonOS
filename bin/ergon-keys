@@ -32,8 +32,24 @@ render() {
 }
 
 # In a session with a launcher, make it searchable; otherwise just print.
-if [ -t 1 ] || ! command -v fuzzel >/dev/null; then
+#
+# The fuzzel branch must not be the only way out. Pressed from a keybind stdout
+# is not a tty, so this took that branch unconditionally -- and if fuzzel could
+# not start (no Wayland session, or it simply failed) `set -e` ended the script
+# with nothing drawn. A cheatsheet that silently does nothing is worse than no
+# cheatsheet: it is indistinguishable from the keybind itself being broken,
+# which is exactly the situation someone reaching for it is already in.
+#
+# So: print when there is a terminal to print to, offer the picker when there
+# is a compositor to draw it on, and fall back to opening a terminal with the
+# list when the picker does not come up.
+if [ -t 1 ]; then
   render
+elif command -v fuzzel >/dev/null && [ -n "${WAYLAND_DISPLAY:-}" ] \
+     && render | fuzzel --dmenu --prompt 'keys  ' --width 70 >/dev/null; then
+  :
+elif command -v ergon-term >/dev/null; then
+  ergon-term sh -c 'ergon-keys; echo; echo "-- any key to close --"; read -r _' &
 else
-  render | fuzzel --dmenu --prompt 'keys  ' --width 70 >/dev/null
+  render
 fi

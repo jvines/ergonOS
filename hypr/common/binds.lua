@@ -45,7 +45,49 @@ bind("SUPER + SHIFT + ALT + RETURN", "Terminal (fallback)", "foot")
 bind("SUPER + SPACE",        "Launcher",            "fuzzel")
 bind("SUPER + ESCAPE",       "Lock",                "loginctl lock-session")
 bind("SUPER + SHIFT + E",    "Exit Hyprland",       hl.dsp.exit())
-bind("SUPER + SLASH",        "Keybindings",         "ergon-keys")
+-- The help binding ADAPTS to the keyboard, because a fixed one is wrong for
+-- half the world. '/' is its own key on a US layout and SHIFT+7 on the Latin
+-- American, Spanish, German and French ones -- and a bind on SLASH cannot be
+-- pressed at all there, since the SHIFT the layout requires is a modifier the
+-- bind does not match. Binding it anyway meant the one thing a lost user
+-- reaches for was the one thing they could not press, silently.
+--
+-- F1 is the fallback because function keys sit at the same scancode on every
+-- Latin-script layout. See hypr/common/layout.lua and hypr/keymap-to-xkb.
+local layout = require("common.layout")
+local help_key, help_alt
+if layout.slash_unshifted then
+  help_key, help_alt = "SUPER + SLASH", "SUPER + F1"
+else
+  help_key, help_alt = "SUPER + F1", "SUPER + SHIFT + SLASH"
+end
+bind(help_key,               "Keybindings",         "ergon-keys")
+bind(help_alt,               "Keybindings (alternate)", "ergon-keys")
+
+-- ESCAPE HATCH. Everything above is behind SUPER, which is the right default
+-- and a total lockout when SUPER never arrives: no terminal, no launcher, no
+-- help, no way to close a window, and nothing on screen saying why. That is not
+-- hypothetical. A VNC or RDP client grabs SUPER before the guest sees it, which
+-- is how most remote sessions behave and which several clients offer no way to
+-- turn off; a Mac keyboard puts it where Command lives; some compact and KVM
+-- keyboards do not have the key at all.
+--
+-- CTRL+ALT because it is the one chord that reliably traverses a remote session
+-- and is not claimed by a TUI, so it does not violate the rule at the top of
+-- this file. These are aliases, not a second way of working: a terminal and the
+-- keybind list are enough to reach everything else.
+-- RETURN, not a letter. A remote client is the main reason SUPER goes missing,
+-- and the same clients mangle the alternative: on macOS, Option+<letter> is
+-- composed into a dead-key character before it is ever sent, so CTRL+ALT+K
+-- delivers CTRL and ALT and no K at all. Measured off /dev/input in the VM:
+-- ENTER survives that path, letters do not. One hatch that reliably opens a
+-- terminal is worth more than three that might not, because everything else is
+-- reachable from a shell.
+bind("CTRL + ALT + RETURN",  "Terminal (no-Super)", term)
+bind("CTRL + ALT + K",       "Keybindings (no-Super)", "ergon-keys")
+
+-- CTRL+ALT+F1 is deliberately NOT bound as a third hatch: on Linux that chord
+-- is a VT switch and logind takes it before the compositor sees it.
 
 -- Palette. Stepping is bound rather than only named because choosing between
 -- palettes means flipping the desktop in front of you between them; comparing

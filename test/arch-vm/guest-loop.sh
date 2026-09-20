@@ -92,6 +92,18 @@ while :; do
     fi
   fi
 
+  # execroot -- /out/exec.sh as root, OUTSIDE the session. Needed for anything
+  # reading raw devices: libinput debug-events on /dev/input/event* is the only
+  # way to see what a key actually delivers, and guessing at that from the
+  # symptom has now cost three wrong hypotheses in a row.
+  if [ "$req" = execroot ]; then
+    if [ -f /out/exec.sh ]; then
+      sh /out/exec.sh >> /out/reply 2>&1
+    else
+      echo "no /out/exec.sh" >> /out/reply
+    fi
+  fi
+
   if [ "$req" = wezterm ]; then
     # wezterm-git is a long Rust build, far past any request timeout, so it runs
     # DETACHED and reports into its own log. The VM normally skips it

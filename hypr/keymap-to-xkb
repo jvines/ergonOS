@@ -1,0 +1,51 @@
+# Console keymap -> xkb layout, and whether that layout can type '/' without
+# SHIFT.
+#
+# THREE different vocabularies name the same keyboard and they do not agree:
+# the console keymap (loadkeys, /etc/vconsole.conf), the xkb layout Wayland
+# wants, and the locale. The installer asks once, in console-keymap terms,
+# because that is what is available before there is a graphical session. This
+# file is how that one answer reaches everything else.
+#
+# ONE table, read by bin/provision-arch.sh and by hypr/common/layout.lua. The
+# mapping used to live only in the provisioner, so the compositor had no way to
+# know the layout and every keybind was chosen as if the keyboard were American.
+#
+# Columns: <console keymap>  <xkb layout>  <slash-unshifted: yes|no>
+#
+# slash-unshifted is not decoration. On a US keyboard '/' is its own key; on
+# the Latin American, Spanish, German and French layouts it is SHIFT+7 or
+# similar, which means a keybind on SLASH cannot be pressed at all there -- the
+# SHIFT the layout requires is a modifier the bind does not match. That is why
+# the help keybind is chosen from this column rather than hardcoded.
+#
+# Only entries whose console and xkb names DIFFER, or whose slash answer is
+# not the default, need a row. Anything absent maps to itself with
+# slash-unshifted=no, which is the safe default: it picks a function key for
+# help rather than one the user cannot press.
+
+# console      xkb        slash-unshifted
+us             us         yes
+us-acentos     us         yes
+gb             gb         yes
+uk             gb         yes
+dvorak         us         no
+colemak        us         no
+
+la-latin1      latam      no
+latam          latam      no
+es             es         no
+br-abnt2       br         no
+br-abnt        br         no
+pt-latin1      pt         no
+de-latin1      de         no
+de             de         no
+fr-latin9      fr         no
+fr             fr         no
+it             it         no
+dk-latin1      dk         no
+no-latin1      no         no
+se-lat6        se         no
+fi             fi         no
+pl             pl         no
+ru             ru         no

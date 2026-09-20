@@ -190,3 +190,51 @@ action regardless of session, which includes over ssh.
 
 **Do not** chase the authentication agent, the policy file, or the session's
 Active state. All three are already correct.
+
+## A keybinding does nothing, and you cannot tell why
+
+Three different causes present identically — the key does nothing, no error, no
+window — and they need opposite fixes. Establish which one you have **before**
+changing any config. All three were hit in sequence on one afternoon, and two
+wrong fixes were shipped on the way.
+
+**1. The key never reaches the machine.** Remote sessions eat modifiers. Over
+VNC or RDP the client's own desktop claims SUPER before the guest sees it, and
+on macOS `Option`+letter is composed into a dead-key character client-side, so
+the letter is never transmitted at all — `CTRL+ALT+K` arrives as CTRL and ALT
+and nothing else. `RETURN` and plain letters survive that path; SUPER and
+ALT+letter do not.
+
+**2. The key cannot be pressed on this keyboard.** `/` is its own key on a US
+layout and `SHIFT+7` on the Latin American, Spanish, German and French ones. A
+bind on `SLASH` cannot be matched there: the SHIFT the layout requires is a
+modifier the bind does not carry. This is why the help binding is chosen from
+`hypr/keymap-to-xkb` rather than hardcoded — see `hypr/common/layout.lua`.
+
+**3. The bind fires and the command fails silently.** Anything launched from a
+bind has no terminal attached, so a script that writes to stdout produces
+nothing visible, and one that dies under `set -e` produces nothing at all.
+
+**Tell them apart by measuring, not by reasoning.** Read the keyboard device
+directly — this needs root and no extra packages:
+
+    cat /dev/input/by-path/platform-i8042-serio-0-event-kbd > /tmp/keys.raw
+    # press the combination, then:
+    od -An -tu2 -w24 -v /tmp/keys.raw | awk '$9==1 { print $10, $11 }'
+
+Each line is `keycode value` (1 = press, 0 = release). Useful codes: LEFTCTRL
+29, LEFTALT 56, LEFTSHIFT 42, LEFTMETA 125, ENTER 28, SLASH 53, K 37.
+
+- Modifiers appear but the letter does not → cause 1, the client. Nothing in
+  the OS fixes it; use a client with a keyboard grab, or accept the
+  `CTRL+ALT+RETURN` hatch and work from a shell.
+- Everything appears → the compositor has it. `hyprctl binds -j` shows whether
+  the bind is registered, and running the command with stdout redirected to a
+  file reproduces cause 3.
+
+**Do not use `od` to capture.** It buffers stdout when it is a file, so a short
+burst of keypresses never reaches disk and the capture reads as "no keys
+pressed" — which looks exactly like cause 1 and is not.
+
+**`hyprctl keyword` does not work on a Lua config.** It answers "keyword can't
+work with non-legacy parsers"; use `hyprctl eval 'hl.config({ ... })'`.

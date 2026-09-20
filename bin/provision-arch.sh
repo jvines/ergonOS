@@ -406,6 +406,19 @@ else
   # so this reads the answer rather than asking again.
   KB=$(awk -F= '/^KEYMAP=/ { gsub(/"/, "", $2); print $2 }' /etc/vconsole.conf 2>/dev/null)
   KB=${KB:-us}
+  # Console keymap names and xkb layout names are different vocabularies: the
+  # console calls it la-latin1 and xkb calls it latam, and passing the console
+  # name straight through gives Hyprland a layout it does not know -- which it
+  # answers by falling back to US, silently, so the user who answered the
+  # keymap question correctly still gets an American keyboard.
+  #
+  # hypr/keymap-to-xkb is the mapping, shared with hypr/common/layout.lua so
+  # the compositor and the provisioner cannot disagree about the keyboard.
+  _xkb=$(awk -v k="$KB" '$1 !~ /^#/ && $1 == k { print $2; exit }' \
+           "$ERGON/hypr/keymap-to-xkb" 2>/dev/null)
+  # An unlisted keymap maps to itself, which is right far more often than not:
+  # the two vocabularies agree for most single-word names (es, it, pl).
+  KB=${_xkb:-$KB}
   cat > "$ERGON/hosts/$HOST/hyprland.lua" <<HYPRHOST
 -- Machine-specific Hyprland config. Loaded by hypr/hyprland.lua via
 --   pcall(require, "hosts." .. hostname)
