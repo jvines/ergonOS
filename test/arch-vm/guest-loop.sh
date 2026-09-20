@@ -117,6 +117,9 @@ while :; do
 {
   echo "session: $XDG_SESSION_ID"
   loginctl show-session "$XDG_SESSION_ID" -p Active -p Seat -p State 2>&1
+  echo "cgroup: $(cat /proc/self/cgroup 2>/dev/null | head -1)"
+  echo "logind sees this pid as session: $(loginctl --property=Id show-session "$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}' | head -1)" 2>/dev/null)"
+  echo "pkcheck: $(pkcheck --action-id org.freedesktop.UPower.PowerProfiles.switch-profile --process $$ 2>&1; echo "rc=$?")"
   echo "before: $(powerprofilesctl get 2>&1)"
   echo "cycle:  $(ergon-power cycle 2>&1)"
   echo "after:  $(powerprofilesctl get 2>&1)"
