@@ -55,6 +55,10 @@ else
   link mako   .config/mako
   link fuzzel .config/fuzzel
   link wezterm .config/wezterm
+  # btop carries its own palette and is the most visible TUI here -- the cpu,
+  # memory and temperature modules in the bar all open it -- so it was rendering
+  # red and orange meters on a cyan desktop.
+  link btop   .config/btop
   link gtk/settings.ini .config/gtk-3.0/settings.ini
   link gtk/settings.ini .config/gtk-4.0/settings.ini
   [ -f "$ERGON/hosts/$HOST/hyprland.lua" ] && link "hosts/$HOST/hyprland.lua" ".config/hypr/hosts/$HOST.lua"

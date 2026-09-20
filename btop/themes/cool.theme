@@ -1,0 +1,71 @@
+# GENERATED from btop/themes/cool.theme.in — edit the .in, then run: ergon theme
+#
+# btop ships with its own palette, and on this desktop that meant red and orange
+# meters on a cyan-and-violet machine. It is also the most visible TUI here: the
+# cpu, memory and temperature modules in the bar all open it.
+#
+# The gradients run along the SAME cool ramp as every plot this machine makes,
+# so a hot CPU and a hot line in a figure are the same colour. That is the point
+# of having one palette rather than a preference.
+
+# --- surfaces -------------------------------------------------------------
+theme[main_bg]="#1A1A2E"
+theme[main_fg]="#EDEDF8"
+theme[title]="#EDEDF8"
+theme[hi_fg]="#ADFFFF"
+theme[selected_bg]="#3A3A4E"
+theme[selected_fg]="#EDEDF8"
+theme[inactive_fg]="#A6A6BC"
+theme[graph_text]="#9494B0"
+theme[meter_bg]="#2A2A3E"
+theme[proc_misc]="#D6D6FF"
+
+# Boxes and rules sit back; the data is what should be read.
+theme[cpu_box]="#3A3A4E"
+theme[mem_box]="#3A3A4E"
+theme[net_box]="#3A3A4E"
+theme[proc_box]="#3A3A4E"
+theme[div_line]="#3A3A4E"
+
+# --- temperature ----------------------------------------------------------
+# Cool to hot along the ramp, ending at the urgent magenta so a thermal problem
+# is the same colour as every other urgent thing on this machine.
+theme[temp_start]="#ADFFFF"
+theme[temp_mid]="#D6D6FF"
+theme[temp_end]="#FF40FF"
+
+# --- cpu ------------------------------------------------------------------
+theme[cpu_start]="#ADFFFF"
+theme[cpu_mid]="#C2EBFF"
+theme[cpu_end]="#FFADFF"
+
+# --- memory ---------------------------------------------------------------
+# free and available read as "fine" (mint), cached as neutral, used climbs the
+# ramp. The distinction matters at a glance and is otherwise four similar bars.
+theme[free_start]="#D0FFEA"
+theme[free_mid]="#D0FFEA"
+theme[free_end]="#ADFFFF"
+theme[cached_start]="#C2EBFF"
+theme[cached_mid]="#D6D6FF"
+theme[cached_end]="#EBC2FF"
+theme[available_start]="#D0FFEA"
+theme[available_mid]="#ADFFFF"
+theme[available_end]="#C2EBFF"
+theme[used_start]="#D6D6FF"
+theme[used_mid]="#EBC2FF"
+theme[used_end]="#FFADFF"
+
+# --- network --------------------------------------------------------------
+# Down and up deliberately differ in hue, not just in position: on a busy link
+# the two graphs are adjacent and identical gradients are unreadable.
+theme[download_start]="#ADFFFF"
+theme[download_mid]="#C2EBFF"
+theme[download_end]="#D6D6FF"
+theme[upload_start]="#D6D6FF"
+theme[upload_mid]="#EBC2FF"
+theme[upload_end]="#FFADFF"
+
+# --- process list ---------------------------------------------------------
+theme[process_start]="#ADFFFF"
+theme[process_mid]="#D6D6FF"
+theme[process_end]="#FFADFF"
