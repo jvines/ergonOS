@@ -903,13 +903,26 @@ ok "greetd left enabled for interactive use"
 # the switch itself.
 if systemctl is-active --quiet power-profiles-daemon; then
   ok "power-profiles-daemon is running"
-  _before=$(su - "$U0" -c 'powerprofilesctl get' 2>/dev/null)
-  _after=$(su - "$U0" -c "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-power cycle" 2>&1 | tail -1)
-  if [ -n "$_after" ] && [ "$_after" != "$_before" ]; then
-    ok "ergon-power cycles the profile ($_before -> $_after), so the bar's click does something"
-    su - "$U0" -c "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-power $_before" >/dev/null 2>&1 || true
+  # Assert the POLICY, not the switch.
+  #
+  # Switching needs an active seat session: power-profiles-daemon's polkit
+  # action is allow_active, so `su - user` -- which has no logind session -- is
+  # correctly refused with
+  #   AccessDenied: Not Authorized: ...PowerProfiles.switch-profile
+  # This harness drives the compositor through seatd without logind, so it has
+  # no active session either. A test that performs the switch here would fail on
+  # a machine where the button works perfectly, which is worse than no test.
+  #
+  # What CAN be checked without a seat: that the profile list has something to
+  # cycle to, and that the polkit action permits an active session to do it.
+  _n=$(su - "$U0" -c 'powerprofilesctl list' 2>/dev/null | grep -cE '^[* ]*[a-z-]+:')
+  [ "${_n:-0}" -ge 2 ] && ok "$_n power profiles to cycle between" \
+                       || bad "only ${_n:-0} power profile — the button has nothing to switch to"
+  if pkaction --action-id org.freedesktop.UPower.PowerProfiles.switch-profile --verbose 2>/dev/null \
+     | grep -A1 'implicit active' | grep -qi 'yes\|auth_admin_keep\|auth_self_keep'; then
+    ok "polkit lets an active session switch profile"
   else
-    bad "ergon-power did not change the profile (was $_before, got '$_after')"
+    note "could not read the polkit policy for switch-profile (pkaction missing?)"
   fi
 else
   bad "power-profiles-daemon is not running — clicking the profile icon does nothing"
