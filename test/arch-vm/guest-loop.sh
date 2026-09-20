@@ -59,9 +59,11 @@ while :; do
     sleep 2
   fi
 
-  mon=$(run "hyprctl monitors -j" | grep -oE '"name": *"[^"]+"' | head -1 | cut -d'"' -f4)
+  # No -o. With one output grim captures it by default, and an EMPTY -o value
+  # makes grim swallow the output path as its argument -- which is exactly how
+  # this failed the first time it was used in anger.
   rm -f /out/desktop.png
-  if run "grim -o ${mon:-} /out/desktop.png" >> /out/reply 2>&1 && [ -s /out/desktop.png ]; then
+  if run "grim /out/desktop.png" >> /out/reply 2>&1 && [ -s /out/desktop.png ]; then
     chmod 666 /out/desktop.png 2>/dev/null
     echo "OK $(date +%T)" >> /out/reply
   else
