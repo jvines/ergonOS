@@ -223,6 +223,26 @@ PTEST
     sleep 2
   fi
 
+  # palette:<name> -- render a candidate palette staged on the writable share.
+  # Lets palettes be TRIED on the real desktop without committing them: the
+  # point of looking at six is that five get thrown away.
+  case "$req" in
+    palette:*)
+      _pal="/out/${req#palette:}.env"
+      if [ -f "$_pal" ]; then
+        run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme $_pal" >> /out/reply 2>&1
+        run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-wallpaper --force" >> /out/reply 2>&1
+        run "hyprctl reload" >/dev/null 2>&1
+        pkill -u "$U" -x waybar 2>/dev/null || true
+        sleep 1
+        run "hyprctl dispatch 'hl.dsp.exec_raw(\"waybar\")'" >/dev/null 2>&1
+        sleep 3
+      else
+        echo "no palette at $_pal" >> /out/reply
+      fi
+      ;;
+  esac
+
   if [ "$req" = theme ]; then
     # The repo is handed over 9p read-only and copied in at boot, so a config
     # edited on the host is not visible until it is copied again.
