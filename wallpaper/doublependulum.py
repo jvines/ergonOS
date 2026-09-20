@@ -61,6 +61,16 @@ import numpy as np
 TITLE = "Double pendulum"
 SUBTITLE = "ensemble caustic, m1=m2, l1=l2"
 
+# zscale, the IRAF/DS9 stretch. These density fields have the same shape as an
+# astronomical frame -- a core orders of magnitude brighter than the structure
+# worth seeing -- and zscale is the algorithm built for exactly that. Measured
+# on this attractor it chose z2 = 422 against a field maximum of 10914: it
+# saturates the core by a factor of 25 and gives the whole display range to the
+# filaments. A percentile clip cannot do that, and log flattens the density
+# ridges that ARE the filaments.
+SCALE = "zscale"
+GAMMA = 1.0
+
 BLEND = 0.62
 
 G = 9.81  # g/l with l = 1 m; the only physical constant that matters here.

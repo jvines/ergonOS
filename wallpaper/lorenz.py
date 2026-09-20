@@ -10,12 +10,20 @@ nobody is going to quote this result, and a fixed step keeps the sample density
 uniform in time, which is what makes the density meaningful rather than an
 artefact of where the stepper chose to slow down.
 
-An ENSEMBLE is integrated, not one long trajectory. Stepping a single
-trajectory four million times means four million Python-level iterations and
-takes minutes; stepping ten thousand trajectories four hundred times each is
-the same number of points, vectorises in numpy, and finishes in seconds. It is
-also the better object: the union of many trajectories samples the attractor's
-invariant measure directly, where one path only approaches it.
+THREE trajectories, integrated a long way -- not a large ensemble.
+
+A big ensemble was tried first and is wrong for this picture. It samples the
+invariant measure beautifully and renders as a filled smear: with twelve
+thousand orbits every part of the attractor is visited by something at every
+moment, so the sheet fills in solid and the structure that makes a Lorenz plot
+worth looking at -- the individual loops, the spiral bands winding out from
+each fixed point, the thin ribbon where the trajectory crosses between lobes --
+is averaged away. Statistically better, visually mush.
+
+Few orbits followed a long way give the opposite: you see the winding, because
+you are looking at a CURVE rather than at a density. The drawing is what makes
+this affordable -- deposit_path subdivides each step to sub-pixel spacing, so
+160k steps draw as continuous line rather than 160k dots.
 """
 
 import numpy as np
@@ -23,17 +31,27 @@ import numpy as np
 TITLE = "Lorenz attractor"
 SUBTITLE = "sigma=10, rho=28, beta=8/3   (Lorenz 1963)"
 
+# zscale, the IRAF/DS9 stretch. These density fields have the same shape as an
+# astronomical frame -- a core orders of magnitude brighter than the structure
+# worth seeing -- and zscale is the algorithm built for exactly that. Measured
+# on this attractor it chose z2 = 422 against a field maximum of 10914: it
+# saturates the core by a factor of 25 and gives the whole display range to the
+# filaments. A percentile clip cannot do that, and log flattens the density
+# ridges that ARE the filaments.
+SCALE = "zscale"
+GAMMA = 1.0
+
 BLEND = 0.78
 
 # Log density: the lobes are orders of magnitude denser than the sheet between
 # them, so a linear scale renders the butterfly as one solid blob. See
 # lib.normalise.
-SCALE = "linear"
+
 
 VIEWS = ["xz", "yz", "xy"]
 
 
-def generate(size, seed=0, ensemble=400, steps=40_000, dt=0.0018, burn=2000):
+def generate(size, seed=0, ensemble=3, steps=160_000, dt=0.0022, burn=3000):
     s, r, b = 10.0, 28.0, 8.0 / 3.0
 
     def deriv(p):
@@ -68,8 +86,12 @@ def generate(size, seed=0, ensemble=400, steps=40_000, dt=0.0018, burn=2000):
 
     view = VIEWS[seed % len(VIEWS)]
     idx = {"x": 0, "y": 1, "z": 2}
-    xs = pts[:, idx[view[0]], :].ravel()
-    ys = pts[:, idx[view[1]], :].ravel()
+    # NOT ravelled: kept as (steps, ensemble) so each column is one continuous
+    # trajectory and the drawing joins consecutive states of the SAME orbit.
+    xs = pts[:, idx[view[0]], :]
+    ys = pts[:, idx[view[1]], :]
 
     from lib import histogram2d
-    return histogram2d(xs, ys, size)
+    # zoom 1.0: the butterfly IS the picture, and cropping past its bounding
+    # box cuts the tops off both lobes.
+    return histogram2d(xs, ys, size, path=True, zoom=1.0)

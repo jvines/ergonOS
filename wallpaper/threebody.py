@@ -67,7 +67,7 @@ import numpy as np
 # band of initial conditions arrives in one place at once, and it outweighs the
 # region it sweeps by a large factor; linear-with-clip renders the folds and
 # loses everything between them.
-SCALE = "log"
+
 
 # Between Lorenz and Gray-Scott. Neither a sparse attractor nor a full field:
 # the arcs are broad and cover a good half of the panel, but what they do not
@@ -76,6 +76,16 @@ SCALE = "log"
 # than a field without ever being the brightest thing on the screen.
 TITLE = "Restricted three-body problem"
 SUBTITLE = "Sun-Jupiter rotating frame, mu = 9.5388e-4"
+
+# zscale, the IRAF/DS9 stretch. These density fields have the same shape as an
+# astronomical frame -- a core orders of magnitude brighter than the structure
+# worth seeing -- and zscale is the algorithm built for exactly that. Measured
+# on this attractor it chose z2 = 422 against a field maximum of 10914: it
+# saturates the core by a factor of 25 and gives the whole display range to the
+# filaments. A percentile clip cannot do that, and log flattens the density
+# ridges that ARE the filaments.
+SCALE = "zscale"
+GAMMA = 1.0
 
 BLEND = 0.59
 

@@ -75,6 +75,66 @@ def ramp_cmap(palette, reverse=False):
     return LinearSegmentedColormap.from_list("ergon", np.clip(out, 0, 1), N=n)
 
 
+def zscale_limits(field, nsamples=20000, contrast=0.25, max_reject=0.5,
+                  min_npixels=5, krej=2.5, max_iterations=5):
+    """IRAF zscale: the display limits, from a fit to the sorted samples.
+
+    The algorithm DS9 and IRAF use on astronomical frames, and it is here for
+    the same reason it exists there: these fields have the same shape as a
+    star field. A few cells hold the core and carry orders of magnitude more
+    signal than anything else, and the structure worth seeing is in the faint
+    tail. A percentile clip throws away the top and still stretches across the
+    whole remaining range; zscale instead fits a line through the sorted pixel
+    values, iteratively rejecting the points that deviate, and takes the slope
+    of the SURVIVING bulk as the range to display. The core saturates, which
+    is correct -- it is one cell in a thousand -- and the faint structure gets
+    the contrast.
+
+    contrast=0.25 is the IRAF default: the fitted slope is divided by it, so
+    the displayed range is four times the bulk's spread. Lower shows more.
+    """
+    v = np.asarray(field, dtype=float).ravel()
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return 0.0, 1.0
+
+    # Sample on a stride rather than randomly: reproducible, and no shuffling
+    # of a large array.
+    stride = max(1, v.size // nsamples)
+    samples = np.sort(v[::stride])
+    npx = samples.size
+    if npx < min_npixels:
+        return float(samples[0]), float(samples[-1])
+
+    midpoint = (npx - 1) // 2
+    med = samples[midpoint]
+
+    x = np.arange(npx, dtype=float) - midpoint
+    y = samples.astype(float)
+    good = np.ones(npx, dtype=bool)
+    slope = 0.0
+    for _ in range(max_iterations):
+        n = int(good.sum())
+        if n < min_npixels or n < npx * (1 - max_reject):
+            break
+        slope, intercept = np.polyfit(x[good], y[good], 1)
+        resid = y - (slope * x + intercept)
+        sigma = resid[good].std()
+        if sigma == 0:
+            break
+        new = good & (np.abs(resid) < krej * sigma)
+        if new.sum() == good.sum():
+            break
+        good = new
+
+    if slope == 0:
+        return float(samples[0]), float(samples[-1])
+
+    z1 = med + (slope / contrast) * (0 - midpoint)
+    z2 = med + (slope / contrast) * ((npx - 1) - midpoint)
+    return float(max(z1, samples[0])), float(min(z2, samples[-1]))
+
+
 def normalise(field, gamma=0.45, clip=99.5, scale="linear"):
     """Field -> 0..1, with the long tail of a density compressed.
 
@@ -92,6 +152,16 @@ def normalise(field, gamma=0.45, clip=99.5, scale="linear"):
     unstable fixed points at the lobe centres are all visible at once.
     """
     field = np.asarray(field, dtype=float)
+    if scale == "zscale":
+        # Empty cells must stay at exactly 0 so they land on the desktop
+        # background; zscale's z1 is usually above zero, which would lift the
+        # whole panel off the ground colour and put a visible rectangle on the
+        # desktop. So the floor is forced to 0 and only z2 is taken from the
+        # fit.
+        _, z2 = zscale_limits(field)
+        if z2 <= 0:
+            z2 = float(field.max()) or 1.0
+        return np.clip(field / z2, 0.0, 1.0) ** gamma
     if scale == "log":
         # +1 so empty cells stay exactly 0 and land on the background.
         field = np.log1p(field)
@@ -152,15 +222,24 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
 
     # DIM, not FG0: this is a label on a wallpaper, not a heading. It should be
     # legible when looked for and invisible when not.
-    col = palette.get("COOL_DIM", "#888888")
-    pad = max(18, int(w_px * 0.018))
-    size = max(9.0, w_px / 145.0)
+    # FG1, not DIM, and at high alpha. The first version used DIM at 0.62 and
+    # was unreadable on a busy background -- a label you have to hunt for is
+    # not a label. It is still small and still bottom-left, which is enough to
+    # keep it out of the way.
+    col = palette.get("COOL_FG1", palette.get("COOL_FG0", "#DDDDDD"))
+    pad = max(22, int(w_px * 0.022))
+    size = max(11.0, w_px / 110.0)
 
-    ax.text(pad, h_px - pad, title, color=col, alpha=0.62,
-            family="monospace", fontsize=size, va="bottom", ha="left")
+    # Title on top, subtitle beneath it. Written the other way round first,
+    # which put the equation above the name and read as two unrelated labels.
     if subtitle:
-        ax.text(pad, h_px - pad - size * 1.9, subtitle, color=col, alpha=0.40,
-                family="monospace", fontsize=size * 0.78, va="bottom", ha="left")
+        ax.text(pad, h_px - pad, subtitle, color=col, alpha=0.70,
+                family="monospace", fontsize=size * 0.80, va="bottom", ha="left")
+        ax.text(pad, h_px - pad - size * 1.35, title, color=col, alpha=0.92,
+                family="monospace", fontsize=size, va="bottom", ha="left")
+    else:
+        ax.text(pad, h_px - pad, title, color=col, alpha=0.92,
+                family="monospace", fontsize=size, va="bottom", ha="left")
 
     fig.savefig(out, dpi=dpi, pad_inches=0)
     plt.close(fig)
@@ -201,6 +280,102 @@ def frame(xs, ys, size, extent=None, pad=0.0, fit="cover", zoom=1.18):
         x0, x1, y0, y1 = cx - hx, cx + hx, cy - hy, cy + hy
 
     return x0, x1, y0, y1
+
+
+def deposit(xs, ys, size, extent, out=None):
+    """Accumulate points with BILINEAR weights. Antialiased by construction.
+
+    Each point contributes to the four cells around it in proportion to how
+    close it is to each -- a point halfway between two pixels lights both at
+    half strength. Nothing lands wholly in one cell, so there is no aliasing
+    to remove afterwards.
+
+    This replaces np.histogram2d, which deposits into the NEAREST cell only.
+    That is the correct thing for a histogram and the wrong thing for drawing:
+    it quantises every sample to a pixel centre, which is exactly what made
+    sparse regions render as a scatter of hard dots. The fix for that was
+    supersampling plus a Gaussian blur -- three times the memory and a
+    convolution, to undo damage caused by the accumulator. Depositing properly
+    in the first place is cheaper AND better, and it is what every renderer
+    that draws these systems smoothly actually does.
+
+    Implemented with np.bincount rather than np.add.at: add.at is a scatter
+    with correct duplicate handling and is roughly an order of magnitude
+    slower, and bincount does the same job for a flattened index array.
+    """
+    w, h = size
+    x0, x1, y0, y1 = extent
+    field = np.zeros(h * w, dtype=np.float64) if out is None else out
+
+    # -0.5 puts sample coordinates on pixel CENTRES, so a point at the centre
+    # of a pixel deposits entirely into it rather than splitting across two.
+    fx = (np.asarray(xs) - x0) / (x1 - x0) * w - 0.5
+    fy = (np.asarray(ys) - y0) / (y1 - y0) * h - 0.5
+
+    ix = np.floor(fx).astype(np.int64)
+    iy = np.floor(fy).astype(np.int64)
+    tx = fx - ix
+    ty = fy - iy
+
+    for dx, dy, wt in (
+        (0, 0, (1 - tx) * (1 - ty)),
+        (1, 0, tx * (1 - ty)),
+        (0, 1, (1 - tx) * ty),
+        (1, 1, tx * ty),
+    ):
+        cx, cy = ix + dx, iy + dy
+        m = (cx >= 0) & (cx < w) & (cy >= 0) & (cy < h)
+        if not m.any():
+            continue
+        field += np.bincount(cy[m] * w + cx[m], weights=wt[m],
+                             minlength=h * w)
+    return field.reshape(h, w) if out is None else field
+
+
+def deposit_path(xs, ys, size, extent, out=None, max_step=0.7):
+    """Deposit a CONTINUOUS trajectory, subdividing so it never gaps.
+
+    A solution of an ODE is a curve, not a cloud. Sampling it at the
+    integrator's steps and depositing those samples draws a dotted line
+    wherever the state is moving fast -- and the state is moving fastest
+    exactly where the picture is most interesting. Lorenz shows this plainly:
+    the outer sweep of each lobe is where the trajectory covers the most
+    distance per step, so it is where the dots are most visible.
+
+    Consecutive samples are joined and the segment subdivided until no piece
+    is longer than max_step pixels, so the drawn curve is continuous whatever
+    the timestep. That is the honest fix for "the steps are too coarse": the
+    integrator's step is chosen for the dynamics, and the drawing step should
+    be chosen for the raster.
+    """
+    w, h = size
+    x0, x1, y0, y1 = extent
+    xs = np.asarray(xs); ys = np.asarray(ys)
+
+    # Segment lengths in PIXELS, so the subdivision is set by the raster.
+    px = (xs - x0) / (x1 - x0) * w
+    py = (ys - y0) / (y1 - y0) * h
+    # axis=0, so a 2-D (steps, n_trajectories) array is treated as one path
+    # PER COLUMN. Ravelling an ensemble first would join the end of one
+    # trajectory to the start of the next and draw a line across the picture
+    # between two unrelated orbits.
+    d = np.hypot(np.diff(px, axis=0), np.diff(py, axis=0))
+    n = int(np.ceil(max(1.0, np.nanpercentile(d, 99.5) / max_step)))
+
+    if n <= 1:
+        return deposit(xs, ys, size, extent, out=out)
+
+    # One interpolated pass per sub-step, vectorised over every segment at
+    # once. n is set from the 99.5th percentile rather than the maximum so a
+    # single huge jump -- a map's discontinuity, or a close encounter -- does
+    # not force thousands of subdivisions for the whole trajectory.
+    field = np.zeros(h * w, dtype=np.float64) if out is None else out
+    for i in range(n):
+        t = i / n
+        deposit(xs[:-1] + (xs[1:] - xs[:-1]) * t,
+                ys[:-1] + (ys[1:] - ys[:-1]) * t,
+                size, extent, out=field)
+    return field.reshape(h, w) if out is None else field
 
 
 def _gauss1d(sigma):
@@ -249,7 +424,7 @@ def downsample(field, ss):
 
 
 def histogram2d(xs, ys, size, extent=None, pad=0.0, fit="cover", zoom=1.18,
-                ss=2, sigma=1.5):
+                ss=1, sigma=0.0, path=False):
     """Bin a trajectory into a (h, w) density, filling the panel.
 
     A trajectory is a list of points; the wallpaper is a raster. Binning rather
@@ -314,10 +489,14 @@ def histogram2d(xs, ys, size, extent=None, pad=0.0, fit="cover", zoom=1.18,
     # hundreds of MB for a wallpaper and 2 is the sensible ceiling.
     if ss == 2 and w * h <= 2_500_000:
         ss = 3
+    # Bilinear deposit, NOT np.histogram2d. See deposit() -- binning to the
+    # nearest cell is what produced the dots that supersampling and blurring
+    # were then added to hide. Depositing properly needs neither, so ss and
+    # sigma default to 1 and 0: they remain only for a generator that wants
+    # extra softening for its own reasons.
     hh, ww = h * ss, w * ss
-    field, _, _ = np.histogram2d(
-        ys, xs, bins=(hh, ww), range=[[y0, y1], [x0, x1]]
-    )
+    fn = deposit_path if path else deposit
+    field = fn(xs, ys, (ww, hh), (x0, x1, y0, y1))
 
     # ANTIALIAS before downsampling. This is the whole difference between a
     # continuous-looking curve and a trail of dots.

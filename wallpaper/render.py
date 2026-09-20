@@ -44,6 +44,7 @@ def main():
 
     blend = args.blend if args.blend is not None else getattr(mod, "BLEND", 0.45)
     scale = getattr(mod, "SCALE", "linear")
+    gamma = getattr(mod, "GAMMA", 0.45)
 
     t0 = time.time()
     kw = {}
@@ -51,7 +52,7 @@ def main():
     if args.zoom is not None: kw["zoom"] = args.zoom
     field = mod.generate((w, h), seed=args.seed, **kw)
     lib.render(field, palette, args.out, blend=blend, reverse=args.reverse,
-               scale=scale,
+               scale=scale, gamma=gamma,
                title=None if args.no_title else getattr(mod, "TITLE", None),
                subtitle=None if args.no_title else getattr(mod, "SUBTITLE", None))
     print(f"{args.out} ({w}x{h}, {time.time() - t0:.1f}s)")
