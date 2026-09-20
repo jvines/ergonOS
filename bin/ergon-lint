@@ -195,4 +195,35 @@ elif [ "$skills_seen" = 0 ]; then
   echo "  !!   no skills found under $ERGON/skills" >&2
 fi
 
+# Every shipped background must have a provenance row.
+#
+# A wallpaper is redistributed to everyone who installs this OS, and an image's
+# licence is almost never the repository's. Omarchy ships 92 of them with no
+# attribution anywhere in its tree, having renamed the files that once carried
+# the photographers' names -- that is the failure this check exists to prevent,
+# and a rule enforced only by a paragraph in a markdown file is not enforced.
+bg_dir="$ERGON/theme/backgrounds"
+bg_prov="$bg_dir/PROVENANCE.md"
+if [ -d "$bg_dir" ]; then
+  bg_seen=0; bg_bad=0
+  while IFS= read -r img; do
+    [ -n "$img" ] || continue
+    bg_seen=$((bg_seen+1))
+    base=$(basename "$img")
+    # Substring match, deliberately: the row may write the name as a path or
+    # wrap it in backticks.
+    if ! grep -qF "$base" "$bg_prov" 2>/dev/null; then
+      report "${img#"$ERGON"/}" 1 "no row in theme/backgrounds/PROVENANCE.md — where did this image come from, and under what licence?"
+      bg_bad=$((bg_bad+1))
+    fi
+  done < <(find -L "$bg_dir" -type f \
+             \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \
+                -o -iname '*.webp' -o -iname '*.avif' \) 2>/dev/null | sort)
+  if [ "$bg_seen" = 0 ]; then
+    echo "  ok   no shipped backgrounds"
+  elif [ "$bg_bad" = 0 ]; then
+    echo "  ok   $bg_seen shipped background(s), each with recorded provenance"
+  fi
+fi
+
 exit $rc
