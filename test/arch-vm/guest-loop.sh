@@ -115,6 +115,13 @@ while :; do
       ls -d "$H/.config/waybar/style.css" "$H/.config/mako/config" \
             "$H/.config/yazi/theme.toml" "$H/.config/lazygit/config.yml" \
             "$H/.config/lazydocker/config.yml" "$H/.config/bat/config" 2>&1
+      echo "-- does an interactive zsh start CLEAN?"
+      zout=$(su - "$U" -c 'zsh -i -c "exit" 2>&1' 2>&1 | head -3)
+      [ -z "$zout" ] && echo "   clean (no output)" || echo "   OUTPUT: $zout"
+      echo "-- does zsh find the ergon commands?"
+      su - "$U" -c 'zsh -c "command -v ergon-wallpaper"' 2>&1 | head -1
+      echo "-- oh-my-zsh / zplug present? (provisioning clones these)"
+      ls -d "$H/.oh-my-zsh" "$H/.zplug" 2>&1 | head -2
       echo "-- what is in ~/.zshrc?"; wc -l "$H/.zshrc" 2>&1; head -4 "$H/.zshrc" 2>&1
       echo "-- bat sees the theme?"; su - "$U" -c "bat --list-themes 2>/dev/null | grep -c '^cool$'" 2>&1
     } >> /out/reply 2>&1
