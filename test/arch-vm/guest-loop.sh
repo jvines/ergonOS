@@ -44,7 +44,19 @@ run() { su - "$U" -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE
 
 echo "ready $sig $wld" > /out/loop-status
 
+# Self-updating. /mnt is the host's checkout over 9p, so when this script
+# changes there the running copy is stale -- and every change to it so far has
+# cost a VM restart and another login. Re-exec instead.
+SELF=/mnt/test/arch-vm/guest-loop.sh
+SELF_SUM=$(md5sum "$SELF" 2>/dev/null | cut -d" " -f1)
+
 while :; do
+  now=$(md5sum "$SELF" 2>/dev/null | cut -d" " -f1)
+  if [ -n "$now" ] && [ -n "$SELF_SUM" ] && [ "$now" != "$SELF_SUM" ]; then
+    echo "reloading $now" >> /out/loop-status
+    exec bash "$SELF"
+  fi
+
   [ -f /out/request ] || { sleep 1; continue; }
   req=$(tr -d '[:space:]' < /out/request 2>/dev/null)
   rm -f /out/request
