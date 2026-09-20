@@ -192,6 +192,30 @@ if [ "$CHECK" != 1 ]; then
   ok "$n agent skills linked, for Claude Code and Codex (see: ergon explain --list)"
 fi
 
+# Every ergon-* on the system PATH.
+#
+# Provisioning does this too, but provisioning runs rarely and install.sh runs
+# whenever the repo changes -- so a command added since the last provision was
+# invisible to waybar and to autostart, which exec ergon-* BY NAME. That is not
+# hypothetical: ergon-power was added, linked into the bar, and reported as
+# "the button does nothing" because the session could not resolve it.
+#
+# sudo -n: no password prompt from a script that may be running unattended at
+# session start. When it is unavailable this says what to run rather than
+# failing, since everything else install.sh does still applies.
+if [ "$CHECK" != 1 ]; then
+  if sudo -n true 2>/dev/null; then
+    n=0
+    for c in "$ERGON"/bin/ergon-* "$ERGON"/bin/erg-*; do
+      [ -x "$c" ] || continue
+      sudo -n ln -sfn "$c" "/usr/local/bin/$(basename "$c")" 2>/dev/null && n=$((n+1))
+    done
+    [ "$n" -gt 0 ] && ok "$n commands on /usr/local/bin"
+  elif [ -n "$(find -L "$ERGON/bin" -maxdepth 1 -name 'ergon-*' -newer /usr/local/bin/ergon 2>/dev/null | head -1)" ]; then
+    warn "new ergon-* commands are not on the system PATH yet — run: sudo true && ./install.sh"
+  fi
+fi
+
 # The machine's own AGENTS.md. Every current coding agent reads AGENTS.md, so
 # one file describes Ergon to all of them instead of one per vendor format --
 # but each looks in a different global location, and none of them may have
