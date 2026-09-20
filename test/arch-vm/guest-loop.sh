@@ -254,6 +254,19 @@ PTEST
       for _c in "$H/ergonOS"/bin/ergon-* "$H/ergonOS"/bin/erg-*; do
         [ -x "$_c" ] && ln -sfn "$_c" "/usr/local/bin/$(basename "$_c")" 2>/dev/null
       done
+      # Provisioning's polkit rule, applied here too. The theme request runs
+      # install.sh only, and this rule is what makes any polkit-guarded desktop
+      # action work at all under uwsm -- without it the iteration loop tests a
+      # desktop that cannot switch a power profile no matter what the bar says.
+      install -Dm644 /dev/stdin /etc/polkit-1/rules.d/49-ergon-desktop.rules <<'PKRULE'
+polkit.addRule(function(action, subject) {
+    if (subject.isInGroup("wheel") &&
+        action.id == "org.freedesktop.UPower.PowerProfiles.switch-profile") {
+        return polkit.Result.YES;
+    }
+});
+PKRULE
+      systemctl reload polkit 2>/dev/null || systemctl restart polkit 2>/dev/null || true
       run "hyprctl reload"
       # waybar does NOT reload with Hyprland. hyprctl reload re-reads the
       # compositor's config and nothing else, so a change to waybar's
