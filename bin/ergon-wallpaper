@@ -156,10 +156,21 @@ CONF
 # `preload` and `reload` both answer "invalid hyprpaper request"; `wallpaper`
 # is accepted and maps the layer immediately. ergon-wallpaper used `reload`,
 # which silently failed every time.
-pgrep -x hyprpaper >/dev/null 2>&1 || {
-  hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
-  sleep 1
-}
+#
+# hyprpaper is RESTARTED, not merely poked, and that is the whole point. It
+# caches decoded images by path, and this script always writes the same path.
+# Asking it to set a path it already holds is a no-op: the file on disk changes
+# and the screen does not. That is exactly what happened when switching
+# palettes -- every one of them rendered correctly and every one of them looked
+# identical on screen, because the first image stayed mapped.
+#
+# There is no IPC request that drops the cache on this version (`preload` and
+# `reload` both answer "invalid hyprpaper request"), so the cache is dropped by
+# ending the process that holds it. Restarting is cheap; it draws one image.
+pkill -x hyprpaper >/dev/null 2>&1 || true
+sleep 0.3
+hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
+sleep 1
 if command -v hyprctl >/dev/null 2>&1; then
   for _ in $(seq 15); do
     if hyprctl hyprpaper wallpaper ",$OUT" >/dev/null 2>&1; then

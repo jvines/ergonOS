@@ -230,6 +230,14 @@ PTEST
     palette:*)
       _pal="/out/${req#palette:}.env"
       if [ -f "$_pal" ]; then
+        # Take the scripts from the share first. Only the `theme` request used
+        # to rsync, so a fix to ergon-theme or ergon-wallpaper did not reach the
+        # guest unless a full reinstall was asked for -- which presented as six
+        # palettes rendering byte-identical on screen while the .env files on
+        # the share were plainly different. bin/ alone is enough here and costs
+        # nothing; the full sync stays with `theme`.
+        rsync -a /mnt/bin/ "$H/ergonOS/bin/" 2>/dev/null || true
+        chown -R "$U:$U" "$H/ergonOS/bin"
         run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme $_pal" >> /out/reply 2>&1
         run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-wallpaper --force" >> /out/reply 2>&1
         run "hyprctl reload" >/dev/null 2>&1
