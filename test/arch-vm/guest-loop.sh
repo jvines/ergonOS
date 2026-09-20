@@ -103,6 +103,18 @@ while :; do
     chmod 666 /out/wezterm-build.log 2>/dev/null || true
   fi
 
+  if [ "$req" = power ]; then
+    # Run it INSIDE the compositor's session, which is the whole point.
+    # `su - user` has no logind seat, so polkit refuses allow_active actions
+    # there and every test so far has been measuring the harness rather than
+    # the product. hyprctl dispatch execs as a child of the running session, so
+    # this is exactly what the bar's on-click does.
+    rm -f /out/power.log
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"sh -c \\\"{ echo before=\\\$(powerprofilesctl get); ergon-power cycle; echo after=\\\$(powerprofilesctl get); loginctl show-session \\\$XDG_SESSION_ID -p Active -p Seat; } > /out/power.log 2>&1\\\"\")'" >/dev/null 2>&1
+    sleep 3
+    { echo "-- ergon-power run inside the session:"; cat /out/power.log 2>&1; } >> /out/reply 2>&1
+  fi
+
   if [ "$req" = bar ]; then
     was=$(pgrep -x waybar | head -1)
     # uwsm puts waybar in a systemd scope; a bare pkill as root can lose the
