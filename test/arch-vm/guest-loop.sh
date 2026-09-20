@@ -87,7 +87,16 @@ while :; do
     if command -v wezterm >/dev/null 2>&1; then
       echo "wezterm already installed: $(wezterm --version 2>&1)" >> /out/reply
     else
-      su - "$U" -c "nohup \$HOME/ergonOS/bin/ergon-aur wezterm-git > /out/wezterm-build.log 2>&1 &" >/dev/null 2>&1
+      # makepkg needs sudo to install build dependencies, and provisioning
+      # removes its passwordless sudo afterwards -- correctly. So grant it for
+      # the build and take it away when the build ends, in the same command, so
+      # an interrupted build cannot leave the VM with NOPASSWD sudo.
+      #
+      # HARNESS ONLY. This is a throwaway VM with a published password; it is
+      # not a pattern for a real machine.
+      printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$U" > /etc/sudoers.d/99-wezterm
+      chmod 440 /etc/sudoers.d/99-wezterm
+      su - "$U" -c "nohup sh -c '\$HOME/ergonOS/bin/ergon-aur wezterm-git; sudo rm -f /etc/sudoers.d/99-wezterm' > /out/wezterm-build.log 2>&1 &" >/dev/null 2>&1
       echo "wezterm-git build started; watch /out/wezterm-build.log" >> /out/reply
     fi
     chmod 666 /out/wezterm-build.log 2>/dev/null || true
