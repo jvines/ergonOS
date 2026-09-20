@@ -19,7 +19,12 @@
 # `update` is the one command that goes back to the source.
 set -euo pipefail
 
-ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+# readlink -f: this is reached through /usr/local/bin/<name>, which is a symlink
+# into the repo. Without resolving it, BASH_SOURCE is the symlink's own path and
+# the root comes out as /usr/local -- so every repo-relative file is looked for
+# somewhere it cannot be. ergon-wallpaper died exactly that way, under set -e,
+# before it could start hyprpaper, and the desktop had no wallpaper.
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 BUNDLEDIR="$ERGON/packages/bundles"
 HOST="$(hostname -s)"
 HOSTENV="$ERGON/hosts/$HOST/host.env"

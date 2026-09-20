@@ -24,7 +24,12 @@ set -euo pipefail
 # `find` does not descend into a symlinked starting directory without -L. With
 # the logical path this script finds zero templates and cheerfully reports
 # "up to date" forever, on every machine, having rendered nothing.
-ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+# readlink -f: this is reached through /usr/local/bin/<name>, which is a symlink
+# into the repo. Without resolving it, BASH_SOURCE is the symlink's own path and
+# the root comes out as /usr/local -- so every repo-relative file is looked for
+# somewhere it cannot be. ergon-wallpaper died exactly that way, under set -e,
+# before it could start hyprpaper, and the desktop had no wallpaper.
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 PALETTE="$ERGON/theme/cool.env"
 CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
 
