@@ -113,6 +113,13 @@ while :; do
     # btop stayed unthemed through three rounds of "fixing" it.
     rsync -a --delete --exclude '.git' --exclude 'hosts/' /mnt/ "$H/ergonOS/" 2>/dev/null \
       || { echo "rsync failed" >> /out/reply; }
+    # Scaffold host.env, exactly as guest-sync.sh does at boot. Excluding
+    # hosts/ from the rsync preserves it going forward but cannot bring back one
+    # an earlier --delete already removed, and without GRAPHICAL=1 install.sh
+    # skips every desktop link there is.
+    hn=$(hostname -s)
+    install -d "$H/ergonOS/hosts/$hn"
+    printf 'GRAPHICAL=1\nPROFILE=laptop\n' > "$H/ergonOS/hosts/$hn/host.env"
     chown -R "$U:$U" "$H/ergonOS"
     # install.sh too, not just the renderer: a NEW themed app needs its config
     # linked into $HOME before any amount of re-rendering reaches it. btop was
