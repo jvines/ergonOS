@@ -3,6 +3,8 @@
 #
 #   ./bin/hypr-shot            capture the desktop as it is
 #   ./bin/hypr-shot theme      re-render theme + wallpaper, reload, then capture
+#   ./bin/hypr-shot demo       open windows and a notification first, so the
+#                              things a theme styles are actually on screen
 #
 # The 15-minute session suite produces assertions. Design work needs pixels, and
 # it needs them in seconds -- otherwise the loop is "change a colour, wait a
@@ -20,7 +22,7 @@ OUT="$WORK/out"
 REQ="${1:-shot}"
 TIMEOUT="${HYPR_SHOT_TIMEOUT:-90}"
 
-case "$REQ" in shot|theme) ;; *) echo "usage: hypr-shot [shot|theme]" >&2; exit 2 ;; esac
+case "$REQ" in shot|theme|demo) ;; *) echo "usage: hypr-shot [shot|theme|demo]" >&2; exit 2 ;; esac
 [ -d "$OUT" ] || { echo "no $OUT — is the VM running? (bin/hypr-vm)" >&2; exit 1; }
 
 # The loop writes this once a session exists. Without it the request would sit

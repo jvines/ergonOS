@@ -14,6 +14,10 @@
 #   shot    capture the desktop as it is
 #   theme   re-sync the repo, re-render the theme and wallpaper, reload the
 #           compositor, then capture
+#   demo    open windows and fire a notification first, so the things a theme
+#           actually styles -- borders, gaps, rounding, the focused/unfocused
+#           distinction, notification colours -- are on screen to be judged.
+#           An empty desktop shows a bar and a wallpaper and nothing else.
 #
 # Runs until the VM stops.
 set -uo pipefail
@@ -45,6 +49,17 @@ while :; do
   req=$(tr -d '[:space:]' < /out/request 2>/dev/null)
   rm -f /out/request
   : > /out/reply
+
+  if [ "$req" = demo ]; then
+    # Two terminals so the focused/unfocused border colours can be compared,
+    # and a notification because mako is themed and otherwise never visible.
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot\")'" >> /out/reply 2>&1
+    sleep 2
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot -e btop\")'" >> /out/reply 2>&1
+    sleep 3
+    run "notify-send 'Ergon' 'A themed notification, so mako can be judged too.'" >> /out/reply 2>&1
+    sleep 2
+  fi
 
   if [ "$req" = theme ]; then
     # The repo is handed over 9p read-only and copied in at boot, so a config
