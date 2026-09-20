@@ -153,6 +153,36 @@ while IFS='=' read -r k v; do
   printf 's|@%s@|%s|g\ns|@%s:raw@|%s|g\n' "$k" "$v" "$k" "${v#\#}" >> "$SEDPROG"
 done < "$PALETTE"
 
+# Derived, non-colour substitutions.
+#
+# These cannot live in the palette file: every value there is validated as a
+# 6-digit hex, deliberately, so that a typo cannot become a sed program. They
+# are computed here instead -- and computing them is better than declaring them
+# anyway, because a palette that SAYS it is dark while shipping a light
+# background is a contradiction nobody notices until the desktop is unreadable.
+#
+# Light or dark is decided by the relative luminance of the background, by the
+# usual Rec. 709 weights. Integer arithmetic: this is /bin/sh maths, and the
+# threshold is 50% of 255.
+# Read from the file rather than a shell variable: this script never sources
+# the palette (sourcing would execute it), so COOL_BG0 is not in scope here.
+_bg0=$(sed -n 's/^COOL_BG0=\(#[0-9A-Fa-f]\{6\}\).*/\1/p' "$PALETTE" | head -1)
+[ -n "$_bg0" ] || { echo "palette has no COOL_BG0: $PALETTE" >&2; exit 1; }
+_hex=${_bg0#\#}
+_r=$((16#${_hex:0:2})); _g=$((16#${_hex:2:2})); _b=$((16#${_hex:4:2}))
+_lum=$(( (2126 * _r + 7152 * _g + 722 * _b) / 10000 ))
+if [ "$_lum" -gt 127 ]; then
+  MODE=light; PREFER_DARK=0; GTK_THEME=Adwaita;      ICON_THEME=Papirus-Light
+else
+  MODE=dark;  PREFER_DARK=1; GTK_THEME=Adwaita-dark; ICON_THEME=Papirus-Dark
+fi
+{
+  printf 's|@COOL_MODE@|%s|g\n'        "$MODE"
+  printf 's|@COOL_PREFER_DARK@|%s|g\n' "$PREFER_DARK"
+  printf 's|@COOL_GTK_THEME@|%s|g\n'   "$GTK_THEME"
+  printf 's|@COOL_ICON_THEME@|%s|g\n'  "$ICON_THEME"
+} >> "$SEDPROG"
+
 rc=0; rendered=0; changed=0
 while IFS= read -r tpl; do
   out="${tpl%.in}"
@@ -196,6 +226,16 @@ fi
 # a tty and from CI, where there is not.
 if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
   echo "   applying"
+  # GTK4 and libadwaita read the theme from gsettings, NOT from settings.ini,
+  # so a light palette that only rewrote the ini would leave every GTK4 app
+  # dark. Needs a session bus, which is why this is here and not in the
+  # provisioner -- provisioning over ssh has none.
+  if command -v gsettings >/dev/null 2>&1; then
+    _cs=$( [ "$MODE" = light ] && echo prefer-light || echo prefer-dark )
+    gsettings set org.gnome.desktop.interface color-scheme "$_cs"       2>/dev/null || true
+    gsettings set org.gnome.desktop.interface gtk-theme   "$GTK_THEME"  2>/dev/null || true
+    gsettings set org.gnome.desktop.interface icon-theme  "$ICON_THEME" 2>/dev/null || true
+  fi
   "$ERGON/bin/ergon-wallpaper" --force >/dev/null 2>&1 || true
   hyprctl reload >/dev/null 2>&1 || true
   # waybar has no reload signal that re-reads the stylesheet; SIGUSR2 reloads

@@ -8,9 +8,9 @@
 # installed machine come up dark instead of blinding you on first login.
 
 [Settings]
-gtk-application-prefer-dark-theme=1
-gtk-theme-name=Adwaita-dark
-gtk-icon-theme-name=Papirus-Dark
+gtk-application-prefer-dark-theme=@COOL_PREFER_DARK@
+gtk-theme-name=@COOL_GTK_THEME@
+gtk-icon-theme-name=@COOL_ICON_THEME@
 gtk-font-name=Noto Sans 11
 gtk-cursor-theme-name=Adwaita
 gtk-cursor-theme-size=24
