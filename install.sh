@@ -204,11 +204,21 @@ fi
 # session start. When it is unavailable this says what to run rather than
 # failing, since everything else install.sh does still applies.
 if [ "$CHECK" != 1 ]; then
-  if sudo -n true 2>/dev/null; then
+  # Prompt when there is a terminal to prompt at; never prompt when there is
+  # not. Run by hand this asks for a password once; run from a session start it
+  # uses a cached credential or skips.
+  if [ -t 0 ] && sudo true 2>/dev/null; then
+    _sudo="sudo"
+  elif sudo -n true 2>/dev/null; then
+    _sudo="sudo -n"
+  else
+    _sudo=""
+  fi
+  if [ -n "$_sudo" ]; then
     n=0
     for c in "$ERGON"/bin/ergon-* "$ERGON"/bin/erg-*; do
       [ -x "$c" ] || continue
-      sudo -n ln -sfn "$c" "/usr/local/bin/$(basename "$c")" 2>/dev/null && n=$((n+1))
+      $_sudo ln -sfn "$c" "/usr/local/bin/$(basename "$c")" 2>/dev/null && n=$((n+1))
     done
     [ "$n" -gt 0 ] && ok "$n commands on /usr/local/bin"
   elif [ -n "$(find -L "$ERGON/bin" -maxdepth 1 -name 'ergon-*' -newer /usr/local/bin/ergon 2>/dev/null | head -1)" ]; then

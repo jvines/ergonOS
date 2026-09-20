@@ -241,6 +241,13 @@ PTEST
     { run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/install.sh"
       run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme"
       run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-wallpaper --force"
+      # The loop is root, and the harness removes passwordless sudo after
+      # provisioning -- so install.sh's own linking step cannot run here. Do it
+      # directly, or a newly added ergon-* stays invisible to the bar and every
+      # theme iteration tests a desktop missing the command under test.
+      for _c in "$H/ergonOS"/bin/ergon-* "$H/ergonOS"/bin/erg-*; do
+        [ -x "$_c" ] && ln -sfn "$_c" "/usr/local/bin/$(basename "$_c")" 2>/dev/null
+      done
       run "hyprctl reload"
       # waybar does NOT reload with Hyprland. hyprctl reload re-reads the
       # compositor's config and nothing else, so a change to waybar's
