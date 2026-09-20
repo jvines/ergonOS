@@ -34,12 +34,15 @@ rm -f "$OUT/reply" "$OUT/desktop.png"
 printf '%s\n' "$REQ" > "$OUT/request"
 chmod 666 "$OUT/request" 2>/dev/null || true
 
+# Wait for the TERMINATOR, not for the file to be non-empty. A `theme` request
+# appends its output before the capture happens, so "non-empty" went true early
+# and this returned before the screenshot existed.
 for _ in $(seq "$TIMEOUT"); do
-  [ -s "$OUT/reply" ] && break
+  grep -qE '^(OK |CAPTURE_FAILED)' "$OUT/reply" 2>/dev/null && break
   sleep 1
 done
 
-if [ ! -s "$OUT/reply" ]; then
+if ! grep -qE '^(OK |CAPTURE_FAILED)' "$OUT/reply" 2>/dev/null; then
   echo "no reply from the guest in ${TIMEOUT}s" >&2
   exit 1
 fi

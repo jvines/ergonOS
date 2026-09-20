@@ -25,14 +25,11 @@ FORCE=0
 [ "${1:-}" = --force ] && { FORCE=1; shift; }
 
 # Unquoted on purpose below: it is a list of magick arguments, not one string.
+# Dither amount, as a percentage blend of a TILED noise pattern. 0 disables it.
+#
 # if/fi, NOT `[ ... ] && DITHER=""`: that returns 1 when the test is false and
-# under `set -e` it exits the script -- which it did, killing the render before
-# it started.
-if [ "${ERGON_WALLPAPER_DITHER:-}" = 0 ]; then
-  DITHER=""
-else
-  DITHER="-attenuate ${ERGON_WALLPAPER_DITHER:-0.03} +noise Gaussian"
-fi
+# under `set -e` it exits the script -- which it did, killing the render.
+DITHER_PCT="${ERGON_WALLPAPER_DITHER:-2}"
 
 # shellcheck source=/dev/null
 . "$ERGON/theme/cool.env"
@@ -80,12 +77,29 @@ else
   # amplitude, which is uncorrelated at every bit and defeats PNG's filters
   # entirely. At one level it perturbs only the bottom bit and compresses fine.
   # ERGON_WALLPAPER_DITHER=0 turns it off if a panel ever looks worse with it.
-  magick -size "$SIZE" xc:"$COOL_BG0" \
-    \( -size "$SIZE" xc: -sparse-color barycentric \
-         "0,0 $COOL_0  %[fx:w-1],%[fx:h-1] $COOL_4" \) \
-    -compose blend -define compose:args=18 -composite \
-    $DITHER \
-    "$OUT"
+  # The dither is a TILED 8x8 noise cell, not full-frame noise.
+  #
+  # Full-frame gaussian is uncorrelated at every pixel, so PNG's filters have
+  # nothing to predict: measured at 1280x800 it took this file from 48 KB to
+  # 4.4 MB, which is the blowup the original note warned about. An 8x8 cell
+  # repeated across the image carries the same per-pixel jitter and is perfectly
+  # periodic, so it compresses to almost nothing.
+  if [ "$DITHER_PCT" = 0 ]; then
+    magick -size "$SIZE" xc:"$COOL_BG0" \
+      \( -size "$SIZE" xc: -sparse-color barycentric \
+           "0,0 $COOL_0  %[fx:w-1],%[fx:h-1] $COOL_4" \) \
+      -compose blend -define compose:args=18 -composite \
+      "$OUT"
+  else
+    magick -size "$SIZE" xc:"$COOL_BG0" \
+      \( -size "$SIZE" xc: -sparse-color barycentric \
+           "0,0 $COOL_0  %[fx:w-1],%[fx:h-1] $COOL_4" \) \
+      -compose blend -define compose:args=18 -composite \
+      \( -size 8x8 xc:gray50 +noise Random -write mpr:cell +delete \
+         -size "$SIZE" tile:mpr:cell \) \
+      -compose blend -define compose:args="$DITHER_PCT" -composite \
+      "$OUT"
+  fi
   echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
 fi
 
