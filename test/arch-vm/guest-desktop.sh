@@ -915,7 +915,7 @@ if systemctl is-active --quiet power-profiles-daemon; then
   #
   # What CAN be checked without a seat: that the profile list has something to
   # cycle to, and that the polkit action permits an active session to do it.
-  _n=$(su - "$U0" -c 'powerprofilesctl list' 2>/dev/null | grep -cE '^[* ]*[a-z-]+:')
+  _n=$(su - "$U" -c 'powerprofilesctl list' 2>/dev/null | grep -cE '^[* ]*[a-z-]+:')
   [ "${_n:-0}" -ge 2 ] && ok "$_n power profiles to cycle between" \
                        || bad "only ${_n:-0} power profile — the button has nothing to switch to"
   if pkaction --action-id org.freedesktop.UPower.PowerProfiles.switch-profile --verbose 2>/dev/null \
@@ -945,13 +945,12 @@ grep -q 'modprobe.blacklist=floppy' /proc/cmdline 2>/dev/null \
 # one is not cosmetic: it is every terminal, every ssh command and the greeter's
 # own environment. A config that errors on startup still "works" interactively,
 # which is why this asserts a CLEAN start rather than a start.
-U0=$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)
-[ "$(getent passwd "$U0" | cut -d: -f7)" = /bin/zsh ] \
+[ "$(getent passwd "$U" | cut -d: -f7)" = /bin/zsh ] \
   && ok "zsh is the login shell" || bad "login shell is not zsh"
-zerr=$(su - "$U0" -c 'zsh -i -c "exit" 2>&1' 2>&1 | grep -vE '^\s*$' | head -3)
+zerr=$(su - "$U" -c 'zsh -i -c "exit" 2>&1' 2>&1 | grep -vE '^\s*$' | head -3)
 [ -z "$zerr" ] && ok "an interactive zsh starts with no output" \
                || bad "zsh prints on startup: $zerr"
-su - "$U0" -c 'zsh -c "command -v ergon-wallpaper"' >/dev/null 2>&1 \
+su - "$U" -c 'zsh -c "command -v ergon-wallpaper"' >/dev/null 2>&1 \
   && ok "zsh resolves the ergon commands" || bad "ergon-* not on zsh's PATH"
 
 # --- the bar's commands actually resolve ----------------------------------
