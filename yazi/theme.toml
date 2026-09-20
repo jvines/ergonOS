@@ -1,0 +1,108 @@
+# GENERATED from yazi/theme.toml.in — edit the .in, then run: ergon theme
+#
+# yazi is the file manager behind SUPER+E and the bar's storage module, so it is
+# on screen often. Its default palette is blue-and-yellow, which is the one
+# combination this desktop has none of.
+
+[manager]
+cwd = { fg = "#ADFFFF" }
+
+# The cursor line carries the selection, so it is the accent rather than a wash:
+# a filled bar across a file list is louder than the list itself.
+hovered         = { fg = "#1A1A2E", bg = "#ADFFFF" }
+preview_hovered = { underline = true }
+
+# find/filter results. #40FFFF is the saturated end of the ramp, used only
+# where something must be found in a crowded view.
+find_keyword  = { fg = "#40FFFF", bold = true }
+find_position = { fg = "#FF40FF", bg = "reset", bold = true }
+
+marker_copied   = { fg = "#D0FFEA",   bg = "#D0FFEA" }
+marker_cut      = { fg = "#FF40FF", bg = "#FF40FF" }
+marker_marked   = { fg = "#ADFFFF", bg = "#ADFFFF" }
+marker_selected = { fg = "#EBC2FF",      bg = "#EBC2FF" }
+
+tab_active   = { fg = "#1A1A2E", bg = "#ADFFFF" }
+tab_inactive = { fg = "#A6A6BC", bg = "#2A2A3E" }
+tab_width    = 1
+
+border_symbol = "│"
+border_style  = { fg = "#3A3A4E" }
+
+[status]
+separator_open  = ""
+separator_close = ""
+separator_style = { fg = "#2A2A3E", bg = "#2A2A3E" }
+
+mode_normal = { fg = "#1A1A2E", bg = "#ADFFFF", bold = true }
+mode_select = { fg = "#1A1A2E", bg = "#D0FFEA",   bold = true }
+mode_unset  = { fg = "#1A1A2E", bg = "#FF40FF", bold = true }
+
+progress_label  = { fg = "#EDEDF8", bold = true }
+progress_normal = { fg = "#ADFFFF", bg = "#2A2A3E" }
+progress_error  = { fg = "#FF40FF", bg = "#2A2A3E" }
+
+permissions_t = { fg = "#ADFFFF" }
+permissions_r = { fg = "#EBC2FF" }
+permissions_w = { fg = "#FF40FF" }
+permissions_x = { fg = "#D0FFEA" }
+permissions_s = { fg = "#A6A6BC" }
+
+[input]
+border   = { fg = "#ADFFFF" }
+title    = {}
+value    = {}
+selected = { reversed = true }
+
+[pick]
+border   = { fg = "#ADFFFF" }
+active   = { fg = "#EBC2FF", bold = true }
+inactive = {}
+
+[confirm]
+border     = { fg = "#ADFFFF" }
+title      = { fg = "#ADFFFF" }
+content    = {}
+list       = {}
+btn_yes    = { reversed = true }
+btn_no     = {}
+
+[completion]
+border = { fg = "#ADFFFF" }
+
+[tasks]
+border  = { fg = "#ADFFFF" }
+title   = {}
+hovered = { fg = "#EBC2FF", underline = true }
+
+[which]
+mask            = { bg = "#2A2A3E" }
+cand            = { fg = "#ADFFFF" }
+rest            = { fg = "#A6A6BC" }
+desc            = { fg = "#EBC2FF" }
+separator       = "  "
+separator_style = { fg = "#3A3A4E" }
+
+[help]
+on      = { fg = "#ADFFFF" }
+run     = { fg = "#EBC2FF" }
+hovered = { reversed = true, bold = true }
+footer  = { fg = "#2A2A3E", bg = "#EDEDF8" }
+
+# Filetype colours. Deliberately few: a file list where every extension has its
+# own hue is a christmas tree, and the thing being looked for is usually the
+# name. Directories and executables are what actually change navigation.
+[filetype]
+rules = [
+  { is = "dir",   fg = "#ADFFFF", bold = true },
+  { is = "exec",  fg = "#D0FFEA" },
+  { is = "link",  fg = "#EBC2FF" },
+  { is = "orphan", fg = "#FF40FF" },
+  { mime = "image/*", fg = "#FFE0FF" },
+  { mime = "video/*", fg = "#FFE0FF" },
+  { mime = "audio/*", fg = "#FFE0FF" },
+  { mime = "application/zip", fg = "#EBC2FF" },
+  { mime = "application/gzip", fg = "#EBC2FF" },
+  { mime = "application/x-tar", fg = "#EBC2FF" },
+  { name = "*", fg = "#EDEDF8" },
+]

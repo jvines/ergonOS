@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GENERATED from bat/themes/cool.tmTheme.in — edit the .in, then: ergon theme
+     Then `bat cache --build`, which install.sh does.
+
+     bat is the pager for `bat`, for `git` through delta, and for anything that
+     pipes to it, so this is the syntax highlighting seen most often on the
+     machine. .tmTheme is Sublime's format; bat reads it because its highlighter
+     is syntect.
+
+     The assignment is deliberate and not decorative:
+       strings   mint    — the thing you are usually scanning for in a config
+       numbers   blush   — distinct from strings at a glance, which matters in
+                           data files where both are dense
+       keywords  hot_4   — the saturated end, used sparingly
+       comments  dim     — present, never competing
+     Types and functions sit on the ramp between them. -->
+<plist version="1.0">
+<dict>
+  <key>name</key><string>cool</string>
+  <key>semanticClass</key><string>theme.dark.cool</string>
+  <key>uuid</key><string>b7c1a6e2-1f3d-4a58-9c21-5d0e7f3a2b94</string>
+  <key>colorSpaceName</key><string>sRGB</string>
+  <key>settings</key>
+  <array>
+    <dict>
+      <key>settings</key>
+      <dict>
+        <key>background</key><string>@COOL_BG0@</string>
+        <key>foreground</key><string>@COOL_FG0@</string>
+        <key>caret</key><string>@COOL_ACCENT@</string>
+        <key>lineHighlight</key><string>@COOL_BG1@</string>
+        <key>selection</key><string>@COOL_BG2@</string>
+        <key>invisibles</key><string>@COOL_BG2@</string>
+      </dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Comment</string>
+      <key>scope</key><string>comment, punctuation.definition.comment</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_DIM@</string>
+        <key>fontStyle</key><string>italic</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>String</string>
+      <key>scope</key><string>string, punctuation.definition.string</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_MINT@</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Number, Constant</string>
+      <key>scope</key><string>constant.numeric, constant.language, constant.character</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_BLUSH@</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Keyword, Storage</string>
+      <key>scope</key><string>keyword, storage.type, storage.modifier</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_HOT_4@</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Operator</string>
+      <key>scope</key><string>keyword.operator, punctuation.separator</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_3@</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Function</string>
+      <key>scope</key><string>entity.name.function, support.function, meta.function-call</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_0@</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Type, Class</string>
+      <key>scope</key><string>entity.name.type, entity.name.class, support.type, support.class</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_1@</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Variable</string>
+      <key>scope</key><string>variable, variable.other, variable.parameter</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_FG0@</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Tag, Key</string>
+      <key>scope</key><string>entity.name.tag, support.type.property-name, meta.mapping.key</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_2@</string></dict>
+    </dict>
+
+    <dict>
+      <key>name</key><string>Invalid</string>
+      <key>scope</key><string>invalid, invalid.illegal</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_BG0@</string>
+        <key>background</key><string>@COOL_URGENT@</string></dict>
+    </dict>
+
+    <!-- Diffs. delta renders through this, so these are the colours on every
+         `git diff` and every lazygit hunk. Mint and magenta rather than green
+         and red: the distinction has to survive on a machine that otherwise
+         has no traffic-light colours at all. -->
+    <dict>
+      <key>name</key><string>diff.inserted</string>
+      <key>scope</key><string>markup.inserted</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_GOOD@</string></dict>
+    </dict>
+    <dict>
+      <key>name</key><string>diff.deleted</string>
+      <key>scope</key><string>markup.deleted</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_URGENT@</string></dict>
+    </dict>
+    <dict>
+      <key>name</key><string>diff.changed</string>
+      <key>scope</key><string>markup.changed</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_WARN@</string></dict>
+    </dict>
+    <dict>
+      <key>name</key><string>Markup heading</string>
+      <key>scope</key><string>markup.heading</string>
+      <key>settings</key><dict><key>foreground</key><string>@COOL_0@</string>
+        <key>fontStyle</key><string>bold</string></dict>
+    </dict>
+  </array>
+</dict>
+</plist>

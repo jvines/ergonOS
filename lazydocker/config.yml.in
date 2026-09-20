@@ -1,0 +1,17 @@
+# GENERATED from lazydocker/config.yml.in — edit the .in, then run: ergon theme
+#
+# lazydocker is how the dev stacks on this machine get looked at, so it earns a
+# palette for the same reason lazygit does: it is a working tool, not a glance.
+gui:
+  theme:
+    activeBorderColor:
+      - "@COOL_ACCENT@"
+      - bold
+    inactiveBorderColor:
+      - "@COOL_BG2@"
+    optionsTextColor:
+      - "@COOL_DIM@"
+    selectedLineBgColor:
+      - "@COOL_BG1@"
+  returnImmediately: true
+  nerdFontsVersion: "3"

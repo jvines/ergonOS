@@ -1,0 +1,62 @@
+# GENERATED from lazygit/config.yml.in — edit the .in, then run: ergon theme
+#
+# lazygit is where commits get written on this machine, so it is on screen for
+# real work rather than in passing. Its default green-and-red diff is the one
+# place a cool palette has to be careful: additions and deletions must stay
+# instantly distinguishable, and mint-versus-magenta does that without reaching
+# for the traffic-light colours the rest of the desktop avoids.
+
+gui:
+  theme:
+    activeBorderColor:
+      - "#ADFFFF"
+      - bold
+    inactiveBorderColor:
+      - "#3A3A4E"
+    searchingActiveBorderColor:
+      - "#40FFFF"
+      - bold
+    optionsTextColor:
+      - "#A6A6BC"
+    selectedLineBgColor:
+      - "#2A2A3E"
+    inactiveViewSelectedLineBgColor:
+      - "#2A2A3E"
+    cherryPickedCommitFgColor:
+      - "#1A1A2E"
+    cherryPickedCommitBgColor:
+      - "#EBC2FF"
+    markedBaseCommitFgColor:
+      - "#1A1A2E"
+    markedBaseCommitBgColor:
+      - "#FF40FF"
+    unstagedChangesColor:
+      - "#FF40FF"
+    defaultFgColor:
+      - "#EDEDF8"
+
+  # Author initials in the commit list get a colour each. Left to lazygit's
+  # defaults they are arbitrary ANSI; pinned to the ramp they stay inside the
+  # palette and remain distinguishable from one another.
+  authorColors:
+    "*": "#D6D6FF"
+
+  # Branch colours by type. The point is that a long-lived branch and a throwaway
+  # one do not look the same in a list of thirty.
+  branchColors:
+    main: "#ADFFFF"
+    master: "#ADFFFF"
+    develop: "#C2EBFF"
+    feature: "#EBC2FF"
+    fix: "#FFADFF"
+
+  nerdFontsVersion: "3"
+  showCommandLog: false
+  showBottomLine: false
+
+git:
+  paging:
+    # delta, so diffs are the same renderer git uses at the terminal. The theme
+    # name must match the bat theme this repo installs -- see bat/.
+    colorArg: always
+    pager: delta --dark --paging=never --syntax-theme=cool

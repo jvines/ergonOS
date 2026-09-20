@@ -66,6 +66,26 @@ else
   #
   # So: the theme is a symlink (btop only reads it) and the setting is edited
   # into whatever btop.conf is already there.
+  # TUI apps that carry their own palette. Every one of these is a working
+  # tool rather than a glance, and every one shipped with a scheme built for a
+  # different desktop -- yazi blue-and-yellow, lazygit green-and-red.
+  link yazi       .config/yazi
+  link lazygit    .config/lazygit
+  link lazydocker .config/lazydocker
+
+  # bat's theme has to be COMPILED into its cache before it is selectable, so
+  # the directory is linked and the cache rebuilt below. delta reads the same
+  # theme, which is why every git diff and every lazygit hunk follows from this
+  # one file.
+  link bat .config/bat
+  if [ "$CHECK" != 1 ] && command -v bat >/dev/null 2>&1; then
+    if bat cache --build >/dev/null 2>&1; then
+      ok "bat cache rebuilt (theme: cool)"
+    else
+      warn "bat cache --build failed; bat and delta keep their default theme"
+    fi
+  fi
+
   if [ "$CHECK" != 1 ]; then
     mkdir -p "$HOME/.config/btop/themes"
     ln -sfn "$ERGON/btop/themes/cool.theme" "$HOME/.config/btop/themes/cool.theme"

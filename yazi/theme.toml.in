@@ -1,0 +1,108 @@
+# GENERATED from yazi/theme.toml.in — edit the .in, then run: ergon theme
+#
+# yazi is the file manager behind SUPER+E and the bar's storage module, so it is
+# on screen often. Its default palette is blue-and-yellow, which is the one
+# combination this desktop has none of.
+
+[manager]
+cwd = { fg = "@COOL_0@" }
+
+# The cursor line carries the selection, so it is the accent rather than a wash:
+# a filled bar across a file list is louder than the list itself.
+hovered         = { fg = "@COOL_BG0@", bg = "@COOL_ACCENT@" }
+preview_hovered = { underline = true }
+
+# find/filter results. @COOL_HOT_0@ is the saturated end of the ramp, used only
+# where something must be found in a crowded view.
+find_keyword  = { fg = "@COOL_HOT_0@", bold = true }
+find_position = { fg = "@COOL_HOT_4@", bg = "reset", bold = true }
+
+marker_copied   = { fg = "@COOL_GOOD@",   bg = "@COOL_GOOD@" }
+marker_cut      = { fg = "@COOL_URGENT@", bg = "@COOL_URGENT@" }
+marker_marked   = { fg = "@COOL_ACCENT@", bg = "@COOL_ACCENT@" }
+marker_selected = { fg = "@COOL_3@",      bg = "@COOL_3@" }
+
+tab_active   = { fg = "@COOL_BG0@", bg = "@COOL_ACCENT@" }
+tab_inactive = { fg = "@COOL_DIM@", bg = "@COOL_BG1@" }
+tab_width    = 1
+
+border_symbol = "│"
+border_style  = { fg = "@COOL_BG2@" }
+
+[status]
+separator_open  = ""
+separator_close = ""
+separator_style = { fg = "@COOL_BG1@", bg = "@COOL_BG1@" }
+
+mode_normal = { fg = "@COOL_BG0@", bg = "@COOL_ACCENT@", bold = true }
+mode_select = { fg = "@COOL_BG0@", bg = "@COOL_GOOD@",   bold = true }
+mode_unset  = { fg = "@COOL_BG0@", bg = "@COOL_URGENT@", bold = true }
+
+progress_label  = { fg = "@COOL_FG0@", bold = true }
+progress_normal = { fg = "@COOL_ACCENT@", bg = "@COOL_BG1@" }
+progress_error  = { fg = "@COOL_URGENT@", bg = "@COOL_BG1@" }
+
+permissions_t = { fg = "@COOL_ACCENT@" }
+permissions_r = { fg = "@COOL_3@" }
+permissions_w = { fg = "@COOL_URGENT@" }
+permissions_x = { fg = "@COOL_GOOD@" }
+permissions_s = { fg = "@COOL_DIM@" }
+
+[input]
+border   = { fg = "@COOL_ACCENT@" }
+title    = {}
+value    = {}
+selected = { reversed = true }
+
+[pick]
+border   = { fg = "@COOL_ACCENT@" }
+active   = { fg = "@COOL_3@", bold = true }
+inactive = {}
+
+[confirm]
+border     = { fg = "@COOL_ACCENT@" }
+title      = { fg = "@COOL_ACCENT@" }
+content    = {}
+list       = {}
+btn_yes    = { reversed = true }
+btn_no     = {}
+
+[completion]
+border = { fg = "@COOL_ACCENT@" }
+
+[tasks]
+border  = { fg = "@COOL_ACCENT@" }
+title   = {}
+hovered = { fg = "@COOL_3@", underline = true }
+
+[which]
+mask            = { bg = "@COOL_BG1@" }
+cand            = { fg = "@COOL_0@" }
+rest            = { fg = "@COOL_DIM@" }
+desc            = { fg = "@COOL_3@" }
+separator       = "  "
+separator_style = { fg = "@COOL_BG2@" }
+
+[help]
+on      = { fg = "@COOL_0@" }
+run     = { fg = "@COOL_3@" }
+hovered = { reversed = true, bold = true }
+footer  = { fg = "@COOL_BG1@", bg = "@COOL_FG0@" }
+
+# Filetype colours. Deliberately few: a file list where every extension has its
+# own hue is a christmas tree, and the thing being looked for is usually the
+# name. Directories and executables are what actually change navigation.
+[filetype]
+rules = [
+  { is = "dir",   fg = "@COOL_0@", bold = true },
+  { is = "exec",  fg = "@COOL_GOOD@" },
+  { is = "link",  fg = "@COOL_3@" },
+  { is = "orphan", fg = "@COOL_URGENT@" },
+  { mime = "image/*", fg = "@COOL_BLUSH@" },
+  { mime = "video/*", fg = "@COOL_BLUSH@" },
+  { mime = "audio/*", fg = "@COOL_BLUSH@" },
+  { mime = "application/zip", fg = "@COOL_WARN@" },
+  { mime = "application/gzip", fg = "@COOL_WARN@" },
+  { mime = "application/x-tar", fg = "@COOL_WARN@" },
+  { name = "*", fg = "@COOL_FG0@" },
+]
