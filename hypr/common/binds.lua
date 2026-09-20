@@ -95,6 +95,12 @@ bind("CTRL + ALT + K",       "Keybindings (no-Super)", "ergon-keys")
 bind("SUPER + T",            "Next palette",        "ergon-theme --next")
 bind("SUPER + ALT + T",      "Previous palette",    "ergon-theme --prev")
 
+-- Background, separately from palette. They are two different choices: a
+-- palette recolours every application, a background changes one image. Binding
+-- them together would mean you could not keep a palette and try another photo.
+bind("SUPER + SHIFT + B",    "Next background",     "ergon-wallpaper --next")
+bind("SUPER + CTRL + B",     "Previous background", "ergon-wallpaper --prev")
+
 -- ---------------------------------------------------------------------------
 -- Windows
 bind("SUPER + Q",            "Close window",        hl.dsp.window.close())

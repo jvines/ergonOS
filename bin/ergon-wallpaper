@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
-# ergon:summary=Regenerate the wallpaper from the cool palette
+# ergon:summary=Set, cycle or regenerate the desktop background
 # ergon:group=theme
-# ergon:args=[WIDTHxHEIGHT]
+# ergon:args=[--next|--prev|--list|--generated|--set FILE|WIDTHxHEIGHT]
 #
-# The wallpaper is generated, never downloaded: it is the `cool` colormap
-# blended over the dark ground from theme/cool.env — the same ramp as every plot
-# this machine makes.
+# A background is EITHER an image file or a generated gradient, and both are
+# first-class. The generated one is derived from the active palette -- the same
+# ramp as every plot this machine makes -- and is what a fresh install shows,
+# because it needs no image and is correct at any resolution.
 #
-# It is NOT committed, unlike the rendered configs. It is derived data, it is
-# binary, and its correct size is a property of the panel it will be shown on,
-# so a repo copy would be a 300 KB blob that is wrong for every machine but one.
-# provision-arch.sh runs this; re-run it after editing theme/cool.env.
+# Images are looked for in, first match wins per directory, all of them merged:
+#
+#   $XDG_CONFIG_HOME/ergon/backgrounds/<palette>/   user, for one palette
+#   $XDG_CONFIG_HOME/ergon/backgrounds/             user, any palette
+#   $ERGON/theme/backgrounds/<palette>/             shipped, for one palette
+#   $ERGON/theme/backgrounds/                       shipped, any palette
+#
+# The user directories come first so a shipped image can be overridden without
+# touching the repo, and nothing here ever writes to them.
+#
+# The generated image is NOT committed, unlike the rendered configs: it is
+# derived, it is binary, and its correct size is a property of the panel it will
+# be shown on, so a repo copy would be a 300 KB blob wrong for every machine but
+# one. Shipped images under theme/backgrounds/ are a different thing and do
+# belong in the repo -- with their provenance recorded next to them.
 set -euo pipefail
 
 # readlink -f: this is reached through /usr/local/bin/<name>, which is a symlink
@@ -22,7 +34,20 @@ ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pw
 OUT="${ERGON_WALLPAPER_OUT:-$HOME/.local/share/ergon/wallpaper.png}"
 
 FORCE=0
-[ "${1:-}" = --force ] && { FORCE=1; shift; }
+ACTION=show          # show | next | prev | list | generated | set
+SETFILE=
+while :; do
+  case "${1:-}" in
+    --force)     FORCE=1; shift ;;
+    --next)      ACTION=next; shift ;;
+    --prev)      ACTION=prev; shift ;;
+    --list)      ACTION=list; shift ;;
+    --generated) ACTION=generated; shift ;;
+    --set)       ACTION=set; SETFILE="${2:-}"; shift 2 || shift
+                 [ -n "$SETFILE" ] || { echo "--set needs a file" >&2; exit 2; } ;;
+    *)           break ;;
+  esac
+done
 
 # Unquoted on purpose below: it is a list of magick arguments, not one string.
 # Dither amount, as a percentage blend of a TILED noise pattern. 0 disables it.
@@ -58,6 +83,89 @@ esac
 
 command -v magick >/dev/null || { echo "imagemagick required" >&2; exit 1; }
 
+# ---------------------------------------------------------------------------
+# Which background
+#
+# The candidate list is the generated gradient FIRST, then every image found,
+# in directory order. The gradient is a member of the cycle rather than a
+# special case outside it, so --next walks off the last image back to it and a
+# machine with no images at all still has a one-item cycle that behaves.
+_pal_name=$(basename "$PALETTE" .env)
+BG_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/background"
+
+GENERATED=':generated:'        # not a path, and cannot collide with one
+CANDIDATES=("$GENERATED")
+
+for _dir in \
+  "${XDG_CONFIG_HOME:-$HOME/.config}/ergon/backgrounds/$_pal_name" \
+  "${XDG_CONFIG_HOME:-$HOME/.config}/ergon/backgrounds" \
+  "$ERGON/theme/backgrounds/$_pal_name" \
+  "$ERGON/theme/backgrounds"
+do
+  [ -d "$_dir" ] || continue
+  # -maxdepth 1 so a palette subdirectory is not also walked as part of its
+  # parent, which would list every image twice. Sorted, so the cycle order is
+  # the same on every machine instead of whatever readdir returns.
+  while IFS= read -r _f; do
+    [ -n "$_f" ] && CANDIDATES+=("$_f")
+  done < <(find -L "$_dir" -maxdepth 1 -type f \
+             \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \
+                -o -iname '*.webp' -o -iname '*.avif' \) 2>/dev/null | sort)
+done
+
+if [ "$ACTION" = list ]; then
+  _cur=$( [ -f "$BG_STATE" ] && cat "$BG_STATE" || echo "$GENERATED" )
+  for _c in "${CANDIDATES[@]}"; do
+    _label=$( [ "$_c" = "$GENERATED" ] && echo "generated (from $_pal_name)" || echo "$_c" )
+    [ "$_c" = "$_cur" ] && printf '   * %s\n' "$_label" || printf '     %s\n' "$_label"
+  done
+  exit 0
+fi
+
+# What is wanted, before it is checked for existence.
+_cur=$( [ -f "$BG_STATE" ] && cat "$BG_STATE" || echo "$GENERATED" )
+case "$ACTION" in
+  set)       WANT="$SETFILE"
+             [ -f "$WANT" ] || { echo "no such file: $WANT" >&2; exit 1; } ;;
+  generated) WANT="$GENERATED" ;;
+  next|prev)
+    _n=${#CANDIDATES[@]}
+    if [ "$_n" -le 1 ]; then
+      echo "  only the generated background is available" >&2
+      echo "  put images in ${XDG_CONFIG_HOME:-$HOME/.config}/ergon/backgrounds/" >&2
+      WANT="$GENERATED"
+    else
+      _i=0
+      for _k in "${!CANDIDATES[@]}"; do
+        [ "${CANDIDATES[$_k]}" = "$_cur" ] && { _i=$_k; break; }
+      done
+      if [ "$ACTION" = next ]; then
+        WANT="${CANDIDATES[$(( (_i + 1) % _n ))]}"
+      else
+        WANT="${CANDIDATES[$(( (_i - 1 + _n) % _n ))]}"
+      fi
+    fi ;;
+  *)
+    # A remembered image that has since been deleted must not leave the desktop
+    # with no wallpaper at all; fall back to the one thing that always exists.
+    if [ "$_cur" != "$GENERATED" ] && [ ! -f "$_cur" ]; then
+      WANT="$GENERATED"
+    else
+      WANT="$_cur"
+    fi ;;
+esac
+
+mkdir -p "$(dirname "$BG_STATE")"
+printf '%s\n' "$WANT" > "$BG_STATE"
+
+# An image is used AS IT IS. No re-encode to the panel size: it costs a
+# multi-megapixel magick run on every switch, throws away quality, and hyprpaper
+# already scales to fit. Only the generated background is rendered here.
+if [ "$WANT" != "$GENERATED" ]; then
+  ACTIVE="$WANT"
+  echo "  $ACTIVE"
+fi
+
 # Default to the largest connected output, so this is right on the laptop panel
 # and right again once it is docked to something bigger.
 if [ -n "${1:-}" ]; then
@@ -86,7 +194,12 @@ mkdir -p "$(dirname "$OUT")"
 # Rendering is a multi-megapixel magick run, and autostart calls this on every
 # session. Skip it when the file is already there and no older than the palette
 # it came from -- edit theme/cool.env and the next run rebuilds it.
-if [ "$FORCE" = 0 ] && [ -z "${1:-}" ] && [ -s "$OUT" ] && [ "$OUT" -nt "$ERGON/theme/cool.env" ]; then
+if [ "$WANT" = "$GENERATED" ]; then
+ACTIVE="$OUT"
+# Compared against $PALETTE, not theme/cool.env. Hardcoding cool.env meant
+# switching palettes did not make the rendered gradient stale, so it was only
+# ever rebuilt because ergon-theme passes --force.
+if [ "$FORCE" = 0 ] && [ -z "${1:-}" ] && [ -s "$OUT" ] && [ "$OUT" -nt "$PALETTE" ]; then
   echo "  $OUT  (unchanged)"
 else
   # DITHER is the last step and it is not optional: an 18% blend spans only a
@@ -124,6 +237,7 @@ else
   fi
   echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
 fi
+fi
 
 # A config with ABSOLUTE paths, written next to the image, and hyprpaper started
 # against it with -c.
@@ -139,8 +253,8 @@ fi
 PAPER_CONF="$(dirname "$OUT")/hyprpaper.conf"
 cat > "$PAPER_CONF" <<CONF
 # Written by ergon-wallpaper. Absolute paths on purpose -- see that script.
-preload = $OUT
-wallpaper = , $OUT
+preload = $ACTIVE
+wallpaper = , $ACTIVE
 splash = false
 ipc = on
 CONF
@@ -173,7 +287,7 @@ hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
 sleep 1
 if command -v hyprctl >/dev/null 2>&1; then
   for _ in $(seq 15); do
-    if hyprctl hyprpaper wallpaper ",$OUT" >/dev/null 2>&1; then
+    if hyprctl hyprpaper wallpaper ",$ACTIVE" >/dev/null 2>&1; then
       applied=1; break
     fi
     sleep 1
