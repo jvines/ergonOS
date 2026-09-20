@@ -583,9 +583,17 @@ say "commands on the system PATH"
 #
 # /usr/local/bin is on the default PATH for every user, shell and session, so
 # linking here removes the dependency on environment.d propagating at all.
+#
+# `$ERGON/bin/ergon` IS IN THIS LIST, and it is not covered by the ergon-*
+# glob -- there is no hyphen after it. It was left out for exactly that reason,
+# so the dispatcher was the one command missing from every non-login
+# environment: present when you type it in a terminal, absent to waybar and to
+# every keybind. `ergon theme --next` on SUPER+T therefore did nothing at all,
+# while `ergon-theme --next` worked, and the difference is invisible by
+# inspection. Verified by asking the compositor to print its own PATH.
 sudo install -d /usr/local/bin
 _linked=0
-for c in "$ERGON"/bin/ergon-* "$ERGON"/bin/erg-*; do
+for c in "$ERGON"/bin/ergon "$ERGON"/bin/ergon-* "$ERGON"/bin/erg-*; do
   [ -x "$c" ] || continue
   sudo ln -sfn "$c" "/usr/local/bin/$(basename "$c")" && _linked=$((_linked+1))
 done

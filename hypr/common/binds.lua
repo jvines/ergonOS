@@ -92,8 +92,8 @@ bind("CTRL + ALT + K",       "Keybindings (no-Super)", "ergon-keys")
 -- Palette. Stepping is bound rather than only named because choosing between
 -- palettes means flipping the desktop in front of you between them; comparing
 -- screenshots, or retyping a name, is not comparing them.
-bind("SUPER + T",            "Next palette",        "ergon theme --next")
-bind("SUPER + ALT + T",      "Previous palette",    "ergon theme --prev")
+bind("SUPER + T",            "Next palette",        "ergon-theme --next")
+bind("SUPER + ALT + T",      "Previous palette",    "ergon-theme --prev")
 
 -- ---------------------------------------------------------------------------
 -- Windows

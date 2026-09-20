@@ -17,6 +17,7 @@
   "modules-left":   ["hyprland/workspaces", "hyprland/submap"],
   "modules-center": ["hyprland/window"],
   "modules-right":  [
+    "custom/palette",
     "custom/temperature", "cpu", "memory",
     "wireplumber", "backlight",
     "network", "bluetooth", "battery", "power-profiles-daemon",
@@ -45,6 +46,27 @@
       "(.*) - Discord": "󰙯  $1",
       "^(.*)\\s*$": "$1"
     }
+  },
+
+  // The active palette, and a click cycles to the next one.
+  //
+  // Clickable and not only a keybind, because a keybind is not reachable from
+  // every seat. A remote client that drops SUPER leaves the whole desktop
+  // unreachable from the keyboard, and the pointer still works -- which was
+  // discovered the hard way, over VNC, with no way to change anything. It is
+  // also simply how you compare palettes: click, look, click again.
+  "custom/palette": {
+    // ergon-theme, not `ergon theme`. Every module here calls the hyphenated
+    // binary directly, and for a reason: the `ergon` dispatcher resolves only
+    // through the login shell's PATH, which waybar and Hyprland's exec do not
+    // have. Called as `ergon theme --current` this printed "cool" forever,
+    // because the fallback fired on every poll.
+    "exec": "ergon-theme --current 2>/dev/null || echo cool",
+    "interval": 5,
+    "format": "󰏘 {}",
+    "on-click": "ergon-theme --next",
+    "on-click-right": "ergon-theme --prev",
+    "tooltip": true
   },
 
   // k10temp's hwmon number is not stable across boots, so this is a script that

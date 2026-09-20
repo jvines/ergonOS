@@ -59,6 +59,15 @@ CHECK=0; [ "${1:-}" = "--check" ] && { CHECK=1; shift; }
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"
 PALETTE_FILE="$STATE/palette"
 
+# --current prints just the active palette's name, for a status bar or a prompt
+# to read. Separate from --list because a caller that wants one word should not
+# have to parse a decorated list to find the line with the asterisk on it.
+if [ "${1:-}" = "--current" ]; then
+  _active=$( [ -f "$PALETTE_FILE" ] && cat "$PALETTE_FILE" || echo cool )
+  basename "$_active" .env
+  exit 0
+fi
+
 if [ "${1:-}" = "--list" ]; then
   _active=$( [ -f "$PALETTE_FILE" ] && cat "$PALETTE_FILE" || echo cool )
   for _p in "$ERGON"/theme/*.env; do

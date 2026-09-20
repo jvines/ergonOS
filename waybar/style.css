@@ -28,7 +28,7 @@ window#waybar.hidden { opacity: 0.0; }
 
 #workspaces button {
   padding: 0 9px;
-  color: #9494B0;
+  color: #A6A6BC;
   background: transparent;
   border-bottom: 2px solid transparent;
 }
@@ -36,10 +36,17 @@ window#waybar.hidden { opacity: 0.0; }
 /* Empty workspaces were #3A3A4E (#3A3A4E) on #1A1A2E (#1A1A2E) -- two
  * near-identical darks, so 2-9 were invisible rather than quiet. Same hue as
  * an occupied-but-inactive workspace, dropped in opacity instead: still
- * obviously secondary, still readable. */
+ * obviously secondary, still readable.
+ *
+ * 0.42 was still not readable. "Quiet" and "illegible" are not the same
+ * setting, and the workspace numbers are the one part of the bar you navigate
+ * by -- a number you have to lean in to read is a broken indicator, not a
+ * subtle one. 0.78 over the darkest palette ground keeps them clearly
+ * secondary to the active workspace, which carries both a brighter colour and
+ * an underline, while staying legible at a glance. */
 #workspaces button.empty {
-  color: #9494B0;
-  opacity: 0.42;
+  color: #A6A6BC;
+  opacity: 0.78;
 }
 
 #workspaces button:hover {
@@ -73,6 +80,7 @@ window#waybar.hidden { opacity: 0.0; }
 window#waybar.empty #window { background: transparent; }
 
 /* -- right-hand group ---------------------------------------------------- */
+#custom-palette,
 #custom-temperature,
 #cpu, #memory, #wireplumber, #backlight,
 #network, #bluetooth, #battery, #power-profiles-daemon,
@@ -93,6 +101,11 @@ window#waybar.empty #window { background: transparent; }
   margin-left: 2px;
   padding-left: 10px;
 }
+
+/* The palette name, in the palette's own accent -- so the module demonstrates
+ * the thing it names. Its own group: it is a setting, not a reading, and it
+ * does not belong in the load trio. */
+#custom-palette { color: #40FFFF; }
 
 /* The load trio reads as one unit, tinted along the ramp so you can tell them
  * apart at a glance without labels. */

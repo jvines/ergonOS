@@ -216,7 +216,10 @@ if [ "$CHECK" != 1 ]; then
   fi
   if [ -n "$_sudo" ]; then
     n=0
-    for c in "$ERGON"/bin/ergon-* "$ERGON"/bin/erg-*; do
+    # `ergon` itself first: the ergon-* glob does not match it, which left the
+    # dispatcher off the system PATH and made every `ergon <sub>` invocation
+    # from waybar or a keybind a silent no-op.
+    for c in "$ERGON"/bin/ergon "$ERGON"/bin/ergon-* "$ERGON"/bin/erg-*; do
       [ -x "$c" ] || continue
       $_sudo ln -sfn "$c" "/usr/local/bin/$(basename "$c")" 2>/dev/null && n=$((n+1))
     done
