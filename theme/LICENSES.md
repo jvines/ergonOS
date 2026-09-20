@@ -1,6 +1,6 @@
 # Third-party colour schemes
 
-Six of the palettes in this directory are not ours. They reproduce the published
+Twelve of the palettes in this directory are not ours. They reproduce the published
 colour values of established schemes, each under its own licence, and each of
 those licences is MIT — which permits redistribution and **requires that the
 copyright and permission notice travel with the values**. That is what this file
@@ -14,11 +14,17 @@ says so rather than inventing one.
 | palette | scheme | upstream | licence |
 |---|---|---|---|
 | `catppuccin.env` | Catppuccin Mocha | <https://github.com/catppuccin/palette> | MIT, © 2021 Catppuccin |
+| `catppuccin-latte.env` | Catppuccin Latte *(light)* | <https://github.com/catppuccin/palette> | MIT, © 2021 Catppuccin |
 | `gruvbox.env` | Gruvbox dark, medium | <https://github.com/morhetz/gruvbox> | MIT/X11 (see note) |
+| `gruvbox-light.env` | Gruvbox light, medium *(light)* | <https://github.com/morhetz/gruvbox> | MIT/X11 (see note) |
 | `nord.env` | Nord | <https://github.com/nordtheme/nord> | MIT |
 | `everforest.env` | Everforest dark, medium | <https://github.com/sainnhe/everforest> | MIT |
+| `everforest-light.env` | Everforest light, medium *(light)* | <https://github.com/sainnhe/everforest> | MIT |
 | `rose-pine.env` | Rosé Pine (main) | <https://github.com/rose-pine/rose-pine-theme> | MIT, © 2023 Rosé Pine |
 | `tokyo-night.env` | Tokyo Night (Storm) | <https://github.com/enkia/tokyo-night-vscode-theme> | MIT, © 2018-present Enkia |
+| `solarized-dark.env` | Solarized dark | <https://github.com/altercation/solarized> | MIT, © 2011 Ethan Schoonover |
+| `solarized-light.env` | Solarized light *(light)* | <https://github.com/altercation/solarized> | MIT, © 2011 Ethan Schoonover |
+| `kanagawa.env` | Kanagawa (wave) | <https://github.com/rebelot/kanagawa.nvim> | MIT, © 2021 Tommaso Laurenzi |
 
 The remaining palettes — `cool`, `winter`, `spring`, `summer`, `autumn`,
 `plasma` — are generated from matplotlib colormaps and are ours; see the header
@@ -39,9 +45,9 @@ honest and the low-friction reading of it.
 
 ## MIT License
 
-The following notice applies to the Catppuccin, Nord, Everforest, Rosé Pine and
-Tokyo Night colour values reproduced in this directory, each with its own
-copyright line as listed in the table above.
+The following notice applies to the Catppuccin, Nord, Everforest, Rosé Pine,
+Tokyo Night, Solarized and Kanagawa colour values reproduced in this directory,
+each with its own copyright line as listed in the table above.
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy
