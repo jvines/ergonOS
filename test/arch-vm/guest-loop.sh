@@ -160,6 +160,9 @@ PTEST
       ls -d "$H/.config/waybar/style.css" "$H/.config/mako/config" \
             "$H/.config/yazi/theme.toml" "$H/.config/lazygit/config.yml" \
             "$H/.config/lazydocker/config.yml" "$H/.config/bat/config" 2>&1
+      echo "-- polkit policy for switch-profile:"
+      pkaction --action-id org.freedesktop.UPower.PowerProfiles.switch-profile --verbose 2>&1 | head -12
+      echo "-- polkit agent running?"; pgrep -a polkit-agent-helper -a 2>/dev/null | head -1; pgrep -af 'polkitagent|polkit-kde|polkit-gnome' | head -1
       echo "-- waybar: pid / started / version"
       pgrep -a waybar | head -1; ps -o lstart= -p "$(pgrep -x waybar | head -1)" 2>/dev/null
       su - "$U" -c "waybar --version" 2>&1 | head -1
