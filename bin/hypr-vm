@@ -192,6 +192,12 @@ expect {
 # variable, and the VM died before booting.
 send "echo '$USERPASS' | sudo -S nohup bash /mnt/test/arch-vm/guest-wallpaper-watch.sh >/dev/null 2>&1 &\r"
 
+# The visual iteration loop. Waits for a session, then serves screenshot and
+# re-theme requests dropped on the writable share -- see bin/hypr-shot. This is
+# what makes design work possible at all: before it, looking at a change meant
+# a fifteen-minute suite run that produced assertions and no pixels.
+send "echo '$USERPASS' | sudo -S nohup bash /mnt/test/arch-vm/guest-loop.sh >/dev/null 2>&1 &\r"
+
 puts "\n-- booted. The greeter is on vt1; connect to vnc://$BIND:$PORT"
 puts "-- log in as $USERNAME / $USERPASS"
 puts "-- Ctrl-C here stops the VM\n"

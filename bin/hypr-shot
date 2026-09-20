@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Look at the running VM's desktop, without rebooting or re-provisioning it.
+#
+#   ./bin/hypr-shot            capture the desktop as it is
+#   ./bin/hypr-shot theme      re-render theme + wallpaper, reload, then capture
+#
+# The 15-minute session suite produces assertions. Design work needs pixels, and
+# it needs them in seconds -- otherwise the loop is "change a colour, wait a
+# quarter of an hour, squint". This talks to the guest through the writable 9p
+# share that bin/hypr-vm already mounts: a request file goes in, a PNG comes
+# back. No tty, no reboot, no provisioning.
+#
+# Run this on the host that is RUNNING the VM (the one where hypr-vm was
+# started), since it reads and writes that host's $WORK/out directly.
+set -euo pipefail
+
+CACHE="${CACHE:-$HOME/.cache/fleet-artifacts}"
+WORK="${WORK:-$CACHE/arch-vm}"
+OUT="$WORK/out"
+REQ="${1:-shot}"
+TIMEOUT="${HYPR_SHOT_TIMEOUT:-90}"
+
+case "$REQ" in shot|theme) ;; *) echo "usage: hypr-shot [shot|theme]" >&2; exit 2 ;; esac
+[ -d "$OUT" ] || { echo "no $OUT — is the VM running? (bin/hypr-vm)" >&2; exit 1; }
+
+# The loop writes this once a session exists. Without it the request would sit
+# unread and this would look like a hang rather than "nobody has logged in".
+if [ ! -f "$OUT/loop-status" ]; then
+  echo "the guest loop has not reported a session yet — log in at the greeter over VNC first" >&2
+  exit 1
+fi
+
+rm -f "$OUT/reply" "$OUT/desktop.png"
+printf '%s\n' "$REQ" > "$OUT/request"
+chmod 666 "$OUT/request" 2>/dev/null || true
+
+for _ in $(seq "$TIMEOUT"); do
+  [ -s "$OUT/reply" ] && break
+  sleep 1
+done
+
+if [ ! -s "$OUT/reply" ]; then
+  echo "no reply from the guest in ${TIMEOUT}s" >&2
+  exit 1
+fi
+sed 's/^/   /' "$OUT/reply"
+if [ -s "$OUT/desktop.png" ]; then
+  printf '\n   %s  (%s)\n' "$OUT/desktop.png" "$(du -h "$OUT/desktop.png" | cut -f1)"
+else
+  echo "   no screenshot produced" >&2
+  exit 1
+fi

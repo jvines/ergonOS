@@ -53,14 +53,28 @@ A Wayland client cannot fake that for another client.
 
 ## Things that are not real
 
-- **Rendering is software.** `aquamarine` cannot get a dmabuf path in the VM and
-  floods the log with `EGL_BAD_ALLOC`. Layout, colour, fonts and behaviour are
-  accurate; smoothness is not. Do not judge animations here.
-- **The floppy.** qemu always emulates one. `udiskie` notices and asks polkit to
-  mount it.
-- **The GPU is virtio-vga.** `virtio-gpu-pci` gives the guest a DRM device with
-  no VGA scanout, so VNC shows a black screen while the compositor runs
-  perfectly behind it. That cost an evening.
+- **Rendering is software ONLY WITHOUT A RENDER NODE.** This was written up for a
+  long time as a permanent property of "the VM". It is not. Given a host with
+  `/dev/dri/renderD128`, the guest gets real GL and a working dmabuf path, the
+  wallpaper composites and `grim` captures. Three things had to be true at once,
+  and all three were bugs rather than limits:
+    * the qemu image installed `qemu-system-x86` with `--no-install-recommends`,
+      which drops `qemu-system-gui` -- so there was no `virtio-*-gl` device and
+      no display backend but `none` and `curses`;
+    * `libegl1`/`libgbm1`/`libgl1-mesa-dri` were missing, so `-display
+      egl-headless` exited with `Couldn't open libEGL.so.1`;
+    * qemu adds a DEFAULT VGA adapter on top of the `-device` you ask for, so the
+      guest had two DRM cards -- `bochs-drm` on card0 with no render node and the
+      real GPU on card1. `aquamarine` opened the first and every dmabuf import
+      failed. `-vga none` removes it.
+  checo has no render node (its iGPU is deliberately unbound), so the suites fall
+  back to software there and skip those assertions. Run them on chiki, which has
+  one. Smoothness is still not representative.
+- **The GPU device differs by harness.** `bin/hypr-vm` uses `virtio-vga-gl`
+  because VNC needs VGA scanout; `virtio-gpu-gl-pci` gives a DRM device with no
+  scanout, so VNC shows a black screen while the compositor runs perfectly
+  behind it. The headless suites use the `-pci` variant, which is correct for
+  them. Both pass `-vga none`.
 - **The pointer is a USB tablet.** The default PS/2 mouse is a relative device
   and VNC can only send absolute coordinates; qemu converts, the guest pointer
   drifts from yours, and you click one thing and hit another.
