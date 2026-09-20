@@ -41,7 +41,13 @@ if [ -f "$ZPLUG_HOME/init.zsh" ]; then
 
   source "$ZPLUG_HOME/init.zsh"
   zplug "mafredri/zsh-async", from:github
-  zplug "sindresorhus/pure", use:pure.zsh, from:github, as:theme
+  # on: rather than declaring these as two independent plugins. pure needs
+  # zsh-async loaded first; left implicit, zplug infers the dependency and
+  # prints
+  #   [zplug] WARNING: pipe syntax is deprecated! Please use 'on' tag instead.
+  # on EVERY shell start -- three times over, including every non-interactive
+  # `ssh host command`, where unexpected stdout corrupts whatever is parsing it.
+  zplug "sindresorhus/pure", use:pure.zsh, from:github, as:theme, on:"mafredri/zsh-async"
   # zdharma-continuum, NOT zdharma: the original org was removed from GitHub in
   # 2021 and the old path fails to install on any fresh machine.
   zplug "zdharma-continuum/fast-syntax-highlighting", as:plugin, defer:2
