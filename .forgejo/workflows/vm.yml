@@ -20,6 +20,24 @@ on:
     # Monday 04:00 America/Santiago. Forgejo evaluates cron in UTC.
     - cron: '0 7 * * 1'
   workflow_dispatch:
+  # And on any push that touches what this suite actually tests. A weekly run
+  # catches rot; it does not catch the change that broke the installer, which is
+  # found on the following Monday against a week of other commits.
+  #
+  # Narrow on purpose. These are the files whose failure mode is "the machine
+  # does not come up", where the feedback is worth 35 minutes of a runner. A
+  # README change is not.
+  push:
+    branches: [main]
+    paths:
+      - 'bin/arch-bootstrap.sh'
+      - 'bin/provision-arch.sh'
+      - 'bin/test-arch-vm.sh'
+      - 'bin/test-hypr-session.sh'
+      - 'install.sh'
+      - 'packages/**'
+      - 'test/arch-vm/**'
+      - '.forgejo/workflows/vm.yml'
 
 concurrency:
   # Never two at once: they would fight over the same qcow2 and over /dev/kvm.
@@ -69,6 +87,17 @@ jobs:
 
       - name: Provision it and prove the desktop works
         run: cd "$CI_DIR" && ./bin/test-hypr-session.sh
+
+      # Mail on failure. Last step, and it never fails the run itself -- a
+      # notifier that errors turns one red run into two, the second about the
+      # notifier. Silently does nothing when the secrets are unset.
+      - name: Mail on failure
+        if: failure()
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
+        run: python3 "$CI_DIR/.forgejo/notify-failure.py" || true
 
       - name: Clean up
         if: always()
