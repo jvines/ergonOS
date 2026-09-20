@@ -87,7 +87,11 @@ while :; do
       echo "-- btop color_theme:"; grep -E '^color_theme' "$H/.config/btop/btop.conf" 2>&1
       echo "-- does the theme file resolve?"
       head -3 "$H/.config/btop/themes/cool.theme" 2>&1
-      echo "-- themed configs present:"; ls "$H/.config/waybar/style.css" "$H/.config/mako/config" 2>&1
+      echo "-- themed configs present:"
+      ls -d "$H/.config/waybar/style.css" "$H/.config/mako/config" \
+            "$H/.config/yazi/theme.toml" "$H/.config/lazygit/config.yml" \
+            "$H/.config/lazydocker/config.yml" "$H/.config/bat/config" 2>&1
+      echo "-- bat sees the theme?"; su - "$U" -c "bat --list-themes 2>/dev/null | grep -c '^cool$'" 2>&1
     } >> /out/reply 2>&1
   fi
 
