@@ -494,6 +494,45 @@ if command -v emacs >/dev/null && [ -f "$HOME/.emacs.d/init.el" ]; then
     >/dev/null 2>&1 && ok "tree-sitter grammars" || warn "grammar build failed — run M-x my/treesit-install-missing"
 fi
 
+say "polkit for the desktop"
+# uwsm runs the compositor as wayland-wm@hyprland.service under user@.service,
+# so everything the desktop launches lives in
+#   /user.slice/user-1000.slice/user@1000.service/session.slice/...
+# and NOT in a logind session scope. sd_pid_get_session() therefore fails for
+# those processes, polkit resolves them to no session at all, and every action
+# whose policy is "implicit active: yes / implicit inactive: no" is refused
+# outright -- without even prompting, because inactive is a hard no.
+#
+# Demonstrated with power-profiles-daemon: a session reporting Active=yes on
+# seat0, an authentication agent running, a correct policy, and
+#   pkcheck --action-id ...switch-profile --process $$  ->  Not authorized.
+# The bar's profile button did nothing for that reason and no other.
+#
+# The trade: this grants wheel members the action regardless of session, which
+# includes over ssh. On a single-user laptop that is the difference between a
+# working button and a broken one; on a shared machine, narrow it.
+sudo install -Dm644 /dev/stdin /etc/polkit-1/rules.d/49-ergon-desktop.rules <<'EOF'
+// Written by provision-arch.sh.
+//
+// Actions a desktop user must be able to take, granted by GROUP rather than by
+// session activeness -- under uwsm the compositor's children are not in a
+// logind session scope, so polkit's implicit-active rules never match them.
+//
+// Deliberately a short list. Every entry here is one a person sitting at this
+// machine would otherwise be refused silently, with no prompt to explain why.
+polkit.addRule(function(action, subject) {
+    if (subject.isInGroup("wheel") &&
+        action.id == "org.freedesktop.UPower.PowerProfiles.switch-profile") {
+        return polkit.Result.YES;
+    }
+});
+EOF
+if sudo systemctl reload polkit 2>/dev/null || sudo systemctl restart polkit 2>/dev/null; then
+  ok "polkit: wheel may switch power profiles"
+else
+  warn "polkit rule written but the daemon was not reloaded; it applies after a reboot"
+fi
+
 say "shell"
 # oh-my-zsh and zplug are git clones, not packages. Deliberately not from the
 # AUR: both are a checkout and a source line, and an AUR wrapper would add a
