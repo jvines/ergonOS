@@ -23,12 +23,12 @@ chmod 777 /out 2>/dev/null
 # Wait for a compositor instance to exist. A person takes as long as they take
 # to reach the greeter and type a password.
 sig=""
-for _ in $(seq 180); do
+for _ in $(seq 2400); do
   d=$(ls -d /run/user/1000/hypr/*/ 2>/dev/null | head -1)
   if [ -n "$d" ]; then sig=$(basename "$d"); break; fi
   sleep 5
 done
-[ -n "$sig" ] || { echo "no Hyprland instance appeared within 15 minutes" > "$OUT"; exit 0; }
+[ -n "$sig" ] || { echo "no Hyprland instance appeared" > "$OUT"; exit 0; }
 
 # Everything runs AS THE USER with the session's own environment, because the
 # question is what that session can see -- not what root can.
@@ -66,3 +66,16 @@ run() { su - "$U" -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE
   echo "== end"
 } > "$OUT" 2>&1
 chmod 666 "$OUT" 2>/dev/null
+
+# Keep sampling. The first sample can land before autostart has finished, and a
+# single snapshot already misled this investigation once.
+for i in 2 3 4 5 6; do
+  sleep 60
+  {
+    echo
+    echo "== sample $i at $(date +%T)"
+    echo "-- background layer:"
+    run "hyprctl layers" | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b'
+    echo "-- hyprpaper:"; pgrep -a hyprpaper || echo "   NONE RUNNING"
+  } >> "$OUT" 2>&1
+done
