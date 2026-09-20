@@ -106,8 +106,13 @@ while :; do
   if [ "$req" = theme ]; then
     # The repo is handed over 9p read-only and copied in at boot, so a config
     # edited on the host is not visible until it is copied again.
-    rsync -a --delete --exclude '.git' /mnt/ "$H/ergonOS/" 2>/dev/null \
-      || { rm -rf "${H:?}/ergonOS"; cp -r /mnt "$H/ergonOS"; }
+    # --exclude hosts/: that directory is SCAFFOLDED on the machine, not
+    # committed (hosts/*/ is gitignored), so --delete against the share wipes
+    # hosts/<hostname>/host.env. install.sh then reads no GRAPHICAL=1, skips its
+    # entire desktop branch, and silently links nothing -- which is exactly why
+    # btop stayed unthemed through three rounds of "fixing" it.
+    rsync -a --delete --exclude '.git' --exclude 'hosts/' /mnt/ "$H/ergonOS/" 2>/dev/null \
+      || { echo "rsync failed" >> /out/reply; }
     chown -R "$U:$U" "$H/ergonOS"
     # install.sh too, not just the renderer: a NEW themed app needs its config
     # linked into $HOME before any amount of re-rendering reaches it. btop was
