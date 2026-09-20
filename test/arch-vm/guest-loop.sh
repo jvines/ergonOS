@@ -63,13 +63,31 @@ while :; do
   : > /out/reply
 
   if [ "$req" = demo ]; then
-    # Two terminals so the focused/unfocused border colours can be compared,
-    # and a notification because mako is themed and otherwise never visible.
+    # Close what is already open FIRST. Without this each call stacks another
+    # pair of windows, the tiles get narrower every time, and btop -- which
+    # needs 80x24 -- gives up and prints "terminal size too small" instead of
+    # the thing being judged.
+    pkill -u "$U" -x btop 2>/dev/null || true
+    pkill -u "$U" -x foot 2>/dev/null || true
+    sleep 1
+
+    # btop alone, so it gets the full width. Two side-by-side terminals at
+    # 1280px are about 78 columns each, which is just under what it needs.
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot -e btop\")'" >> /out/reply 2>&1
+    sleep 4
+    run "notify-send 'Ergon' 'A themed notification, so mako can be judged too.'" >> /out/reply 2>&1
+    sleep 2
+  fi
+
+  if [ "$req" = windows ]; then
+    # The other half of the question: two windows, so focused and unfocused
+    # border colours can be compared side by side.
+    pkill -u "$U" -x btop 2>/dev/null || true
+    pkill -u "$U" -x foot 2>/dev/null || true
+    sleep 1
     run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot\")'" >> /out/reply 2>&1
     sleep 2
-    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot -e btop\")'" >> /out/reply 2>&1
-    sleep 3
-    run "notify-send 'Ergon' 'A themed notification, so mako can be judged too.'" >> /out/reply 2>&1
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot\")'" >> /out/reply 2>&1
     sleep 2
   fi
 
