@@ -115,6 +115,7 @@ while :; do
       ls -d "$H/.config/waybar/style.css" "$H/.config/mako/config" \
             "$H/.config/yazi/theme.toml" "$H/.config/lazygit/config.yml" \
             "$H/.config/lazydocker/config.yml" "$H/.config/bat/config" 2>&1
+      echo "-- what is in ~/.zshrc?"; wc -l "$H/.zshrc" 2>&1; head -4 "$H/.zshrc" 2>&1
       echo "-- bat sees the theme?"; su - "$U" -c "bat --list-themes 2>/dev/null | grep -c '^cool$'" 2>&1
     } >> /out/reply 2>&1
   fi
