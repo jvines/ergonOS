@@ -95,6 +95,16 @@ while :; do
     } >> /out/reply 2>&1
   fi
 
+  if [ "$req" = tui ]; then
+    # bat on a real source file. This is the syntax theme delta also uses, so
+    # what shows here is what every git diff and every lazygit hunk looks like.
+    pkill -u "$U" -x btop 2>/dev/null || true
+    pkill -u "$U" -x foot 2>/dev/null || true
+    sleep 1
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"foot -e bash -c \\\"bat --paging=always /home/$U/ergonOS/bin/ergon-peek\\\"\")'" >> /out/reply 2>&1
+    sleep 4
+  fi
+
   if [ "$req" = windows ]; then
     # The other half of the question: two windows, so focused and unfocused
     # border colours can be compared side by side.
