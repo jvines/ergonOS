@@ -1,0 +1,182 @@
+/* GENERATED from gtk/gtk.css.in — edit the .in, then run: ergon theme
+ *
+ * Linked to BOTH ~/.config/gtk-3.0/gtk.css and ~/.config/gtk-4.0/gtk.css.
+ *
+ * This is NOT a widget theme. Adwaita-dark still draws every control — its
+ * metrics, its focus rings, its animations — and this file only changes the
+ * colours it draws them in. A full GTK theme is thousands of lines that break
+ * on every GTK release; this is two dozen colours and a short list of surfaces,
+ * and it degrades to "one dialog looks slightly off" rather than to a broken
+ * desktop when GTK changes underneath it.
+ *
+ * Without it, the palette stopped at the edge of the desktop. Every file
+ * chooser, every print dialog, every GTK app's chrome stayed Adwaita's default
+ * blue-grey no matter which palette was active — the one set of windows the
+ * user did not choose to open and could not retheme.
+ *
+ * GTK3 and libadwaita use DIFFERENT names for the same roles, and both are
+ * defined here because one file serves both directories. An unused
+ * @define-color is harmless; a missing one falls back to Adwaita's own value
+ * and shows up as the one dialog that did not get the memo.
+ */
+
+/* @define-color IS NOT ENOUGH ON ITS OWN FOR GTK3, and that is not obvious.
+ *
+ * Current Adwaita bakes its colours in when it is built and no longer draws
+ * most surfaces from these names, so overriding them changes nothing and looks
+ * exactly like the file not being loaded. Proven in the VM: with only the
+ * defines below, a GTK3 dialog stayed Adwaita's #353535 under a palette whose
+ * background is #282828 -- and a blunt `* { background-color: magenta }` in the
+ * same file turned it magenta, which is what established the file was being
+ * read at all.
+ *
+ * So the defines stay -- libadwaita (GTK4) really does honour them, and GTK3
+ * apps that reference them by name get the right answer -- and the explicit
+ * rules at the bottom of this file are what actually recolour GTK3.
+ */
+
+/* -- GTK3 ------------------------------------------------------------------ */
+@define-color theme_bg_color @COOL_BG0@;
+@define-color theme_fg_color @COOL_FG0@;
+@define-color theme_base_color @COOL_BG0@;
+@define-color theme_text_color @COOL_FG0@;
+@define-color theme_selected_bg_color @COOL_ACCENT@;
+@define-color theme_selected_fg_color @COOL_BG0@;
+
+@define-color insensitive_bg_color @COOL_BG1@;
+@define-color insensitive_fg_color @COOL_DIMMER@;
+@define-color insensitive_base_color @COOL_BG1@;
+
+@define-color theme_unfocused_bg_color @COOL_BG1@;
+@define-color theme_unfocused_fg_color @COOL_FG1@;
+@define-color theme_unfocused_base_color @COOL_BG1@;
+@define-color theme_unfocused_text_color @COOL_FG1@;
+@define-color theme_unfocused_selected_bg_color @COOL_BG2@;
+@define-color theme_unfocused_selected_fg_color @COOL_FG0@;
+
+@define-color borders @COOL_BG2@;
+@define-color unfocused_borders @COOL_BG2@;
+
+@define-color warning_color @COOL_WARN@;
+@define-color error_color @COOL_URGENT@;
+@define-color success_color @COOL_GOOD@;
+
+/* -- libadwaita (GTK4) ----------------------------------------------------- */
+@define-color window_bg_color @COOL_BG0@;
+@define-color window_fg_color @COOL_FG0@;
+@define-color view_bg_color @COOL_BG0@;
+@define-color view_fg_color @COOL_FG0@;
+
+@define-color headerbar_bg_color @COOL_BG1@;
+@define-color headerbar_fg_color @COOL_FG0@;
+@define-color headerbar_border_color @COOL_BG2@;
+@define-color headerbar_backdrop_color @COOL_BG0@;
+@define-color headerbar_shade_color @COOL_BG2@;
+
+@define-color card_bg_color @COOL_BG1@;
+@define-color card_fg_color @COOL_FG0@;
+@define-color dialog_bg_color @COOL_BG1@;
+@define-color dialog_fg_color @COOL_FG0@;
+@define-color popover_bg_color @COOL_BG1@;
+@define-color popover_fg_color @COOL_FG0@;
+@define-color sidebar_bg_color @COOL_BG1@;
+@define-color sidebar_fg_color @COOL_FG0@;
+
+/* accent_color is the text/icon accent and accent_bg_color the filled one.
+ * They are deliberately different roles: a filled button needs a foreground
+ * that survives on top of it, which is what accent_fg_color is for. Setting the
+ * pair to the same value is the usual mistake and produces accent-on-accent
+ * text in every GTK4 dialog. */
+@define-color accent_color @COOL_ACCENT@;
+@define-color accent_bg_color @COOL_ACCENT@;
+@define-color accent_fg_color @COOL_BG0@;
+
+@define-color destructive_color @COOL_URGENT@;
+@define-color destructive_bg_color @COOL_URGENT@;
+@define-color destructive_fg_color @COOL_BG0@;
+@define-color success_bg_color @COOL_GOOD@;
+@define-color success_fg_color @COOL_BG0@;
+@define-color warning_bg_color @COOL_WARN@;
+@define-color warning_fg_color @COOL_BG0@;
+@define-color error_bg_color @COOL_URGENT@;
+@define-color error_fg_color @COOL_BG0@;
+
+/* -- explicit rules: what actually recolours GTK3 -------------------------- */
+/*
+ * Scoped to named containers, NEVER to `*`. A universal selector reaches every
+ * GTK3 surface on the machine including waybar, which is a GTK3 app -- the bar
+ * would lose its own stylesheet's backgrounds and come up as one flat slab.
+ * waybar's rules are more specific (window#waybar), so it wins against these,
+ * but only because these stay this side of a wildcard.
+ */
+window,
+dialog,
+messagedialog,
+.background {
+  background-color: @COOL_BG0@;
+  color: @COOL_FG0@;
+}
+
+headerbar,
+.titlebar {
+  background-image: none;
+  background-color: @COOL_BG1@;
+  color: @COOL_FG0@;
+  border-bottom: 1px solid @COOL_BG2@;
+}
+
+popover,
+popover.background,
+menu,
+.menu {
+  background-color: @COOL_BG1@;
+  color: @COOL_FG0@;
+  border: 1px solid @COOL_BG2@;
+}
+
+entry,
+textview,
+textview text,
+treeview.view {
+  background-color: @COOL_BG1@;
+  color: @COOL_FG0@;
+  border-color: @COOL_BG2@;
+}
+
+entry:focus {
+  border-color: @COOL_ACCENT@;
+}
+
+button {
+  background-image: none;
+  background-color: @COOL_BG1@;
+  color: @COOL_FG0@;
+  border: 1px solid @COOL_BG2@;
+}
+
+button:hover        { background-color: @COOL_BG2@; }
+button:active,
+button:checked      { background-color: @COOL_ACCENT@; color: @COOL_BG0@; }
+button:disabled     { color: @COOL_DIMMER@; }
+
+/* Selection, everywhere it is drawn. Adwaita's default blue is the single most
+ * visible thing that gives away an untouched GTK app. */
+selection,
+*:selected,
+:selected {
+  background-color: @COOL_ACCENT@;
+  color: @COOL_BG0@;
+}
+
+/* The one place a wildcard is safe: link colours are otherwise Adwaita blue on
+ * every palette, including the warm ones where it is jarring. */
+link, *:link { color: @COOL_ACCENT@; }
+
+scrollbar slider { background-color: @COOL_BG2@; }
+scrollbar slider:hover { background-color: @COOL_DIMMER@; }
+
+tooltip, tooltip.background {
+  background-color: @COOL_BG1@;
+  color: @COOL_FG0@;
+  border: 1px solid @COOL_BG2@;
+}

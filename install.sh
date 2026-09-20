@@ -110,6 +110,11 @@ else
   fi
   link gtk/settings.ini .config/gtk-3.0/settings.ini
   link gtk/settings.ini .config/gtk-4.0/settings.ini
+  # The palette's colours, on top of Adwaita-dark's widgets. Both directories
+  # get the same file: GTK3 and libadwaita name the roles differently and
+  # gtk.css defines both sets, so one rendered file serves both.
+  link gtk/gtk.css .config/gtk-3.0/gtk.css
+  link gtk/gtk.css .config/gtk-4.0/gtk.css
   [ -f "$ERGON/hosts/$HOST/hyprland.lua" ] && link "hosts/$HOST/hyprland.lua" ".config/hypr/hosts/$HOST.lua"
 
   # PATH for the systemd user manager, which is what launches the session under
