@@ -150,3 +150,43 @@ platform, mostly as forum reports, and most of them cost other machines.
 MT7925 (in the AMD RZ717 card) fail with "driver own failed" until the machine is
 fully powered off. A reboot or a module reload does not clear it. Do not set that
 policy; if it is set, remove it and power off.
+
+## A desktop action is refused by polkit, with no prompt
+
+**Symptom.** A bar button, a mount, or anything else that changes system state
+does nothing at all. No error, no authentication dialog. Running the same
+command in a terminal prints
+
+    AccessDenied: Not Authorized: <some action id>
+
+while `loginctl` insists the session is `Active=yes` on `seat0`, the policy says
+`implicit active: yes`, and an authentication agent is running.
+
+**Cause.** uwsm runs the compositor as `wayland-wm@hyprland.service` under
+`user@<uid>.service`, so everything the desktop launches lives in
+
+    /user.slice/user-<uid>.slice/user@<uid>.service/session.slice/...
+
+and **not** in a logind session scope. `sd_pid_get_session()` fails for those
+processes, so polkit resolves them to *no session at all*. An action whose
+policy reads `implicit inactive: no` is then refused outright — and `no` is a
+hard refusal rather than a question, which is why no agent prompt appears.
+
+Every part of this looks correct in isolation. The session really is active; the
+process simply is not in it.
+
+**Confirm it in one command**, from inside the session rather than over `su -`
+(which has no seat and will fail for a different reason):
+
+    pkcheck --action-id <action id> --process $$   # "Not authorized." = this
+
+and compare `cat /proc/self/cgroup` against `loginctl list-sessions`.
+
+**Fix.** Grant the action by GROUP rather than by session activeness, in
+`/etc/polkit-1/rules.d/`. provision-arch.sh ships
+`49-ergon-desktop.rules` doing exactly that for power-profile switching. Add
+entries there as they are demonstrated, not speculatively: each one grants the
+action regardless of session, which includes over ssh.
+
+**Do not** chase the authentication agent, the policy file, or the session's
+Active state. All three are already correct.
