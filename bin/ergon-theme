@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# ergon:summary=Expand theme/cool.env into every themed config
+# ergon:summary=Render every themed config from the palette
 # ergon:group=theme
-# ergon:args=[--check]
+# ergon:args=[--check] [palette]
 # Expands the palette into every committed config that carries colours.
 #
 #   ergon-theme                   # render, report what changed
@@ -30,8 +30,29 @@ set -euo pipefail
 # somewhere it cannot be. ergon-wallpaper died exactly that way, under set -e,
 # before it could start hyprpaper, and the desktop had no wallpaper.
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
-PALETTE="$ERGON/theme/cool.env"
-CHECK=0; [ "${1:-}" = "--check" ] && CHECK=1
+CHECK=0; [ "${1:-}" = "--check" ] && { CHECK=1; shift; }
+
+# ONE palette, and that is a decision rather than an unfinished job.
+#
+# `cool` is not a preference: matplotlib/matplotlibrc sets image.cmap to cool
+# because every plot this machine makes uses cool, and theme/cool.env is that
+# same ramp -- COOL_0 and COOL_4 are its endpoints. That is why btop's
+# temperature gradient and a hot line in a figure are the same colour, and it is
+# the only reason the palette means anything rather than merely looking a way.
+#
+# A second SHIPPED palette would break exactly that. "Warm mode" would put the
+# desktop and the figures in different languages, and the coupling is the point.
+#
+# But the coupling is an argument about THIS user, not about everyone: someone
+# who does not plot in cool inherits none of it. So the palette is a variable
+# they can point elsewhere, while the shipped default stays the one that is
+# tested and coherent.
+#
+#   ergon theme                      the cool palette
+#   ERGON_PALETTE=~/mine.env ergon theme
+#   ergon theme ~/mine.env
+PALETTE="${1:-${ERGON_PALETTE:-$ERGON/theme/cool.env}}"
+case "$PALETTE" in /*) ;; *) [ -f "$PALETTE" ] || PALETTE="$ERGON/theme/$PALETTE" ;; esac
 
 [ -f "$PALETTE" ] || { echo "no palette at $PALETTE" >&2; exit 1; }
 
