@@ -97,7 +97,11 @@ while :; do
     rsync -a --delete --exclude '.git' /mnt/ "$H/ergonOS/" 2>/dev/null \
       || { rm -rf "${H:?}/ergonOS"; cp -r /mnt "$H/ergonOS"; }
     chown -R "$U:$U" "$H/ergonOS"
-    { run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme"
+    # install.sh too, not just the renderer: a NEW themed app needs its config
+    # linked into $HOME before any amount of re-rendering reaches it. btop was
+    # themed, rendered, and still drew its own colours for exactly this reason.
+    { run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/install.sh"
+      run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme"
       run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-wallpaper --force"
       run "hyprctl reload"
     } >> /out/reply 2>&1
