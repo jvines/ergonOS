@@ -131,10 +131,27 @@ else
   fi
 fi
 
-# The shell. link() refuses to replace a real file, which is exactly the
-# behaviour wanted here: if you already have a ~/.zshrc it is YOURS and this
-# leaves it alone, and zsh/zshrc documents how to source the OS's shell from it
-# instead. Only a machine with no shell config at all gets these linked.
+# The shell. link() refuses to replace a real file, which is the behaviour
+# wanted here: an existing ~/.zshrc is YOURS, and zsh/zshrc documents how to
+# source the OS's shell from it instead.
+#
+# With one exception, and it is not a loophole. `zsh-newuser-install` runs the
+# first time anyone starts zsh without a config, and answering "q" makes it
+# write an EMPTY ~/.zshrc purely so it stops asking. That file is not
+# configuration — it is a marker — but it is a real file, so it blocks this link
+# permanently and silently. Every fresh Arch user who opens a shell before
+# provisioning finishes hits it.
+#
+# A zero-byte ~/.zshrc is therefore treated as absent. Anything with a single
+# byte in it is left alone.
+if [ "$CHECK" != 1 ] && [ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ] && [ ! -s "$HOME/.zshrc" ]; then
+  rm -f "$HOME/.zshrc"
+  ok "removed an empty ~/.zshrc (zsh-newuser-install's marker, not config)"
+fi
+if [ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ]; then
+  warn "~/.zshrc is yours — to use the OS shell, add near the top:"
+  warn "    source \"$ERGON/zsh/zshrc\""
+fi
 link zsh/zshrc  .zshrc
 link zsh/zshenv .zshenv
 
