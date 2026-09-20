@@ -98,7 +98,15 @@ input-field {
 
     fade_on_empty = false
     rounding = 4
-    placeholder_text = <span foreground="##@COOL_DIMMER:raw@"></span>
+    # WORDS, not a glyph. This was a lone nerd-font icon, which renders as an
+    # empty box on a field that also has no caret -- so the lock screen showed a
+    # blank dark rectangle with nothing to say it accepts typing. Someone looking
+    # at this machine for the first time asked how they were supposed to unlock
+    # it, and the honest answer was "type into the part that looks inert".
+    #
+    # $USER so it is clear WHICH account is being unlocked, which matters on a
+    # machine that also has a greeter.
+    placeholder_text = <span foreground="##@COOL_DIMMER:raw@">Password for $USER</span>
     fail_text = <span foreground="##@COOL_URGENT:raw@">$FAIL ($ATTEMPTS)</span>
     hide_input = false
 
