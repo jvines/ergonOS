@@ -119,6 +119,16 @@
   "power-profiles-daemon": {
     "format": "{icon}",
     "tooltip-format": "{profile}",
+    // Explicit. waybar's ppd module is documented to cycle on click and
+    // depending on the build does not, which presents as a button drawing the
+    // right icon and doing nothing at all -- reported from a real session while
+    // the daemon was running correctly the whole time.
+    //
+    // ergon-power cycles by what the machine ACTUALLY offers: three profiles on
+    // a laptop with platform_profile, two in a VM without one. A hardcoded
+    // order breaks on whichever machine lacks the profile it assumes.
+    "on-click": "ergon-power cycle",
+    "on-click-right": "ergon-power balanced",
     "format-icons": {
       "performance": "󰓅",
       "balanced": "󰾅",

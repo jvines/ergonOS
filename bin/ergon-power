@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# ergon:summary=Show or change the power profile
+# ergon:group=power
+# ergon:args=[get | cycle | performance | balanced | power-saver]
+#
+# A thin, predictable wrapper over powerprofilesctl, so the bar has something
+# deterministic to call.
+#
+# waybar's power-profiles-daemon module is documented to cycle on click, and
+# depending on the build it does not -- which presents as a button that draws
+# the right icon and does nothing at all when clicked. Rather than depend on
+# that, the bar calls `ergon power cycle` explicitly.
+#
+# CYCLE ORDER IS BY AVAILABILITY, not a fixed list. Which profiles exist depends
+# on the machine: a laptop with an ACPI platform_profile offers three, an
+# AMD/Intel machine driving it through the cpufreq EPP may offer three, and a VM
+# with neither offers balanced and power-saver only. A hardcoded list means
+# cycling silently stops working on whichever machine lacks the profile the code
+# assumes -- which is every VM, and some desktops.
+set -euo pipefail
+
+command -v powerprofilesctl >/dev/null 2>&1 || {
+  echo "power-profiles-daemon is not installed" >&2; exit 1
+}
+systemctl is-active --quiet power-profiles-daemon 2>/dev/null || {
+  echo "power-profiles-daemon is not running (sudo systemctl enable --now power-profiles-daemon)" >&2
+  exit 1
+}
+
+# `powerprofilesctl list` marks the active one with a leading '*' and indents
+# the rest; both forms end in a colon. Parsed rather than assumed so the order
+# here is the daemon's own.
+_profiles() {
+  powerprofilesctl list 2>/dev/null \
+    | sed -n 's/^[* ]*\([a-z-]\+\):.*/\1/p'
+}
+
+case "${1:-get}" in
+  get)
+    powerprofilesctl get
+    ;;
+  cycle)
+    cur=$(powerprofilesctl get 2>/dev/null)
+    mapfile -t all < <(_profiles)
+    [ "${#all[@]}" -gt 1 ] || {
+      echo "only one profile available ($cur); nothing to cycle to" >&2; exit 0
+    }
+    next="${all[0]}"
+    for i in "${!all[@]}"; do
+      if [ "${all[$i]}" = "$cur" ]; then
+        next="${all[$(( (i + 1) % ${#all[@]} ))]}"
+        break
+      fi
+    done
+    powerprofilesctl set "$next"
+    echo "$next"
+    ;;
+  performance|balanced|power-saver)
+    # Say so rather than failing opaquely: asking for `performance` on a machine
+    # that does not offer it is a reasonable thing to do from a keybind.
+    if _profiles | grep -qx "$1"; then
+      powerprofilesctl set "$1"
+      echo "$1"
+    else
+      echo "no '$1' profile on this machine (have: $(_profiles | tr '\n' ' '))" >&2
+      exit 1
+    fi
+    ;;
+  -h|--help|help)
+    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    echo "unknown command '$1' (get|cycle|performance|balanced|power-saver)" >&2
+    exit 1
+    ;;
+esac

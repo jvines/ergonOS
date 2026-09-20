@@ -897,9 +897,23 @@ systemctl enable greetd >/dev/null 2>&1 || true
 ok "greetd left enabled for interactive use"
 
 # --- things that made the desktop useless and nothing asserted ------------
-systemctl is-active --quiet power-profiles-daemon \
-  && ok "power-profiles-daemon is running (the bar's profile button can switch)" \
-  || bad "power-profiles-daemon is not running — clicking the profile icon does nothing"
+# A RUNNING daemon is not the claim worth making: the bar's profile button did
+# nothing for a whole session while power-profiles-daemon was active the entire
+# time, because waybar's module did not cycle on click in this build. So assert
+# the switch itself.
+if systemctl is-active --quiet power-profiles-daemon; then
+  ok "power-profiles-daemon is running"
+  _before=$(su - "$U0" -c 'powerprofilesctl get' 2>/dev/null)
+  _after=$(su - "$U0" -c "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-power cycle" 2>&1 | tail -1)
+  if [ -n "$_after" ] && [ "$_after" != "$_before" ]; then
+    ok "ergon-power cycles the profile ($_before -> $_after), so the bar's click does something"
+    su - "$U0" -c "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-power $_before" >/dev/null 2>&1 || true
+  else
+    bad "ergon-power did not change the profile (was $_before, got '$_after')"
+  fi
+else
+  bad "power-profiles-daemon is not running — clicking the profile icon does nothing"
+fi
 # Assert the thing that survives a REBOOT, not the rmmod we just did. The first
 # version of this checked /dev/fd0 in the same boot that removed the module by
 # hand: it passed, and the prompt was still there on the next boot, because the
