@@ -51,7 +51,7 @@ BLEND = 0.78
 VIEWS = ["xz", "yz", "xy"]
 
 
-def generate(size, seed=0, ensemble=3, steps=160_000, dt=0.0022, burn=3000):
+def generate(size, seed=0, ensemble=4, steps=240_000, dt=0.0026, burn=3000):
     s, r, b = 10.0, 28.0, 8.0 / 3.0
 
     def deriv(p):

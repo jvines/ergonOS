@@ -275,9 +275,16 @@ def generate(size, seed=0, ensemble=16_000, steps=4800, dt=0.010, chunk=300):
             # bounding box: it is placed so that Jupiter, L3 and the triangular
             # points land where they do, and cropping past it would push L4 and
             # L5 off the top and bottom edges.
+            # path=True and NOT ravelled: buf is (step, coord, particle), so
+            # axis 0 is time and each column is one particle's continuous
+            # trajectory. Ravelling would join the end of one particle's arc to
+            # the start of another's and draw a line between unrelated orbits;
+            # depositing the points alone leaves the arcs as strings of dots
+            # wherever a particle is moving fast, which near the primaries is
+            # everywhere that matters.
             field[:] += histogram2d(
-                buf[:held, 0].ravel(), buf[:held, 1].ravel(), size,
-                extent=EXTENT, zoom=1.0,
+                buf[:held, 0], buf[:held, 1], size,
+                extent=EXTENT, zoom=1.0, path=True,
             )
             held = 0
 

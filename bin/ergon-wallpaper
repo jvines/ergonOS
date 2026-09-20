@@ -283,17 +283,49 @@ CONF
 # There is no IPC request that drops the cache on this version (`preload` and
 # `reload` both answer "invalid hyprpaper request"), so the cache is dropped by
 # ending the process that holds it. Restarting is cheap; it draws one image.
-pkill -x hyprpaper >/dev/null 2>&1 || true
-sleep 0.3
-hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
-sleep 1
-if command -v hyprctl >/dev/null 2>&1; then
-  for _ in $(seq 15); do
-    if hyprctl hyprpaper wallpaper ",$ACTIVE" >/dev/null 2>&1; then
-      applied=1; break
-    fi
-    sleep 1
-  done
-  [ "${applied:-0}" = 1 ] && echo "  wallpaper set on all outputs" \
-                          || echo "  hyprpaper did not accept the wallpaper; it is set at the next session" >&2
+# Switch over IPC when the PATH changes; restart only when it does not.
+#
+# Restarting on every switch is what made cycling backgrounds flash and take a
+# second and a half: kill, wait, start, wait, then ask. That was written to
+# beat hyprpaper's image cache, which is keyed by path -- and the cache is only
+# a problem when the file behind an unchanged path has been rewritten, which
+# happens for the generated gradient and never for an image. For a different
+# path, preload + wallpaper swaps it immediately with no process restart and no
+# gap on screen.
+_running=0
+pgrep -x hyprpaper >/dev/null 2>&1 && _running=1
+
+_prev=$( [ -f "$BG_STATE.applied" ] && cat "$BG_STATE.applied" || echo "" )
+_same_path=0
+[ "$_prev" = "$ACTIVE" ] && _same_path=1
+
+if [ "$_running" = 1 ] && [ "$_same_path" = 0 ] && command -v hyprctl >/dev/null 2>&1; then
+  # Fast path: no restart. preload first so the image is decoded before it is
+  # asked for, otherwise the compositor shows the old one until decoding ends.
+  hyprctl hyprpaper preload "$ACTIVE" >/dev/null 2>&1 || true
+  if hyprctl hyprpaper wallpaper ",$ACTIVE" >/dev/null 2>&1; then
+    applied=1
+    # Drop the images no longer on screen. Without this every background ever
+    # shown stays decoded in memory, which for 8K images is ~130 MB each.
+    hyprctl hyprpaper unload unused >/dev/null 2>&1 || true
+  fi
 fi
+
+if [ "${applied:-0}" != 1 ]; then
+  pkill -x hyprpaper >/dev/null 2>&1 || true
+  sleep 0.3
+  hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
+  sleep 1
+  if command -v hyprctl >/dev/null 2>&1; then
+    for _ in $(seq 15); do
+      if hyprctl hyprpaper wallpaper ",$ACTIVE" >/dev/null 2>&1; then
+        applied=1; break
+      fi
+      sleep 1
+    done
+  fi
+fi
+
+printf '%s\n' "$ACTIVE" > "$BG_STATE.applied"
+[ "${applied:-0}" = 1 ] && echo "  wallpaper set on all outputs" \
+                        || echo "  hyprpaper did not accept the wallpaper; it is set at the next session" >&2

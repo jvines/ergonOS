@@ -19,6 +19,11 @@ a seed, and it is ours because we computed it.
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 
+# How far the empty ground is allowed to travel from BG0 toward BG1. Low: this
+# is a background for a background, and anything stronger competes with the
+# structure drawn on top of it.
+GROUND_LIFT = 0.75
+
 
 def load_palette(path):
     """Read a theme/*.env into {COOL_BG0: '#1A1A2E', ...}.
@@ -189,7 +194,24 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
     cmap = ramp_cmap(palette, reverse=reverse)
     rgb = cmap(v)[..., :3]
 
-    bg = np.array([int(palette["COOL_BG0"][i:i + 2], 16) / 255 for i in (1, 3, 5)])
+    # The ground is a GRADIENT, not a flat fill.
+    #
+    # Flat BG0 everywhere makes the empty regions read as dead space, and on a
+    # large panel a single unbroken colour across two thirds of the screen
+    # looks like a missing image rather than a background. A slow diagonal lift
+    # from BG0 toward BG1 -- the palette's own next surface tone, so it cannot
+    # clash -- gives the emptiness somewhere to go. It is the same move the
+    # original ergon-wallpaper gradient makes, which also keeps the generated
+    # art and the no-image default looking like the same family.
+    h_i, w_i = rgb.shape[:2]
+    c0 = np.array([int(palette["COOL_BG0"][i:i + 2], 16) / 255 for i in (1, 3, 5)])
+    c1 = np.array([int(palette.get("COOL_BG1", palette["COOL_BG0"])[i:i + 2], 16) / 255
+                   for i in (1, 3, 5)])
+    gy, gx = np.mgrid[0:h_i, 0:w_i]
+    t = ((gx / max(1, w_i - 1)) + (gy / max(1, h_i - 1))) / 2.0
+    # Eased, so there is no visible linear seam running corner to corner.
+    t = (t * t * (3 - 2 * t))[..., None]
+    bg = c0 + (c1 - c0) * t * GROUND_LIFT
     rgb = bg + (rgb - bg) * blend
 
     # Dither, for the same reason ergon-wallpaper dithers: a low-contrast image
@@ -226,20 +248,34 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
     # was unreadable on a busy background -- a label you have to hunt for is
     # not a label. It is still small and still bottom-left, which is enough to
     # keep it out of the way.
-    col = palette.get("COOL_FG1", palette.get("COOL_FG0", "#DDDDDD"))
+    # OUTLINED, not just coloured. Alpha and colour alone cannot make a label
+    # readable over an unknown background: wherever the structure is bright the
+    # text sits light-on-light and disappears, which is what happened at DIM,
+    # then again at FG1. A stroke in the palette's own ground colour gives
+    # every glyph its own dark edge, so it reads over the attractor and over
+    # the empty corners alike -- the same trick a subtitle burned into video
+    # uses, and for the same reason.
+    import matplotlib.patheffects as pe
+    col = palette.get("COOL_FG0", "#EEEEEE")
+    ground = palette.get("COOL_BG0", "#000000")
+    stroke = [pe.withStroke(linewidth=max(2.5, w_px / 380.0), foreground=ground,
+                            alpha=0.85)]
     pad = max(22, int(w_px * 0.022))
     size = max(11.0, w_px / 110.0)
 
     # Title on top, subtitle beneath it. Written the other way round first,
     # which put the equation above the name and read as two unrelated labels.
     if subtitle:
-        ax.text(pad, h_px - pad, subtitle, color=col, alpha=0.70,
-                family="monospace", fontsize=size * 0.80, va="bottom", ha="left")
-        ax.text(pad, h_px - pad - size * 1.35, title, color=col, alpha=0.92,
-                family="monospace", fontsize=size, va="bottom", ha="left")
+        ax.text(pad, h_px - pad, subtitle, color=col, alpha=0.88,
+                family="monospace", fontsize=size * 0.82, va="bottom",
+                ha="left", path_effects=stroke)
+        ax.text(pad, h_px - pad - size * 1.45, title, color=col, alpha=1.0,
+                family="monospace", fontsize=size, va="bottom", ha="left",
+                weight="bold", path_effects=stroke)
     else:
-        ax.text(pad, h_px - pad, title, color=col, alpha=0.92,
-                family="monospace", fontsize=size, va="bottom", ha="left")
+        ax.text(pad, h_px - pad, title, color=col, alpha=1.0,
+                family="monospace", fontsize=size, va="bottom", ha="left",
+                weight="bold", path_effects=stroke)
 
     fig.savefig(out, dpi=dpi, pad_inches=0)
     plt.close(fig)
@@ -332,7 +368,8 @@ def deposit(xs, ys, size, extent, out=None):
     return field.reshape(h, w) if out is None else field
 
 
-def deposit_path(xs, ys, size, extent, out=None, max_step=0.7):
+def deposit_path(xs, ys, size, extent, out=None, max_step=0.7,
+                 max_subdiv=6000):
     """Deposit a CONTINUOUS trajectory, subdividing so it never gaps.
 
     A solution of an ODE is a curve, not a cloud. Sampling it at the
@@ -360,7 +397,17 @@ def deposit_path(xs, ys, size, extent, out=None, max_step=0.7):
     # trajectory to the start of the next and draw a line across the picture
     # between two unrelated orbits.
     d = np.hypot(np.diff(px, axis=0), np.diff(py, axis=0))
-    n = int(np.ceil(max(1.0, np.nanpercentile(d, 99.5) / max_step)))
+    # The MAXIMUM segment, not a percentile.
+    #
+    # 99.5 was used first, to stop one freak jump forcing thousands of
+    # subdivisions. The cost is that the longest half percent of segments stay
+    # under-resolved, and at 8K those are precisely the fast sweeps around the
+    # outside of a lobe -- so the picture came out continuous everywhere except
+    # the places the eye follows, which read as dashes. For an ODE at fixed dt
+    # the segment length is bounded anyway, so the maximum is the honest
+    # choice; the cap below is what protects against a genuine discontinuity.
+    n = int(np.ceil(max(1.0, float(np.nanmax(d)) / max_step)))
+    n = min(n, max_subdiv)
 
     if n <= 1:
         return deposit(xs, ys, size, extent, out=out)
@@ -419,6 +466,13 @@ def smooth(field, sigma):
 
 
 def downsample(field, ss):
+    """Area-average ss x ss blocks. The correct downsampling filter for this.
+
+    A box average over the exact block is what an ideal sensor pixel does:
+    every supersample inside the output pixel contributes equally and nothing
+    outside it contributes at all. Point-sampling or bilinear resizing would
+    reintroduce the aliasing the supersampling was done to remove.
+    """
     h, w = field.shape[0] // ss, field.shape[1] // ss
     return field[:h * ss, :w * ss].reshape(h, ss, w, ss).mean(axis=(1, 3))
 

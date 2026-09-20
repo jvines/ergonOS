@@ -32,6 +32,8 @@ def main():
     ap.add_argument("--fit", default=None, help="cover or contain")
     ap.add_argument("--zoom", type=float, default=None)
     ap.add_argument("--no-title", action="store_true")
+    ap.add_argument("--supersample", type=int, default=3,
+                    help="render at this multiple of the panel, then average down")
     args = ap.parse_args()
 
     w, h = (int(v) for v in args.size.lower().split("x"))
@@ -50,7 +52,23 @@ def main():
     kw = {}
     if args.fit is not None: kw["fit"] = args.fit
     if args.zoom is not None: kw["zoom"] = args.zoom
-    field = mod.generate((w, h), seed=args.seed, **kw)
+    # SUPERSAMPLE the whole generator, then area-average down.
+    #
+    # This is what removes moire and colour fringing, and neither is fixable
+    # afterwards. Both come from sampling structure finer than the pixel grid
+    # at exactly one sample per pixel: an attractor's filaments and a PDE's
+    # stripes both have detail below a pixel, and at 1:1 that detail beats
+    # against the grid and reappears as false large-scale patterns. Computing
+    # at ss times the panel and averaging each ss x ss block puts several
+    # samples inside every output pixel, so sub-pixel detail averages into
+    # tone instead of aliasing into a pattern that is not there.
+    #
+    # Done HERE rather than inside a generator so every generator gets it,
+    # including the ones that build a field directly and never bin anything.
+    ss = max(1, args.supersample)
+    field = mod.generate((w * ss, h * ss), seed=args.seed, **kw)
+    if ss > 1:
+        field = lib.downsample(field, ss)
     lib.render(field, palette, args.out, blend=blend, reverse=args.reverse,
                scale=scale, gamma=gamma,
                title=None if args.no_title else getattr(mod, "TITLE", None),
