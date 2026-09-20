@@ -115,6 +115,11 @@ while :; do
       ls -d "$H/.config/waybar/style.css" "$H/.config/mako/config" \
             "$H/.config/yazi/theme.toml" "$H/.config/lazygit/config.yml" \
             "$H/.config/lazydocker/config.yml" "$H/.config/bat/config" 2>&1
+      echo "-- waybar: pid / started / version"
+      pgrep -a waybar | head -1; ps -o lstart= -p "$(pgrep -x waybar | head -1)" 2>/dev/null
+      su - "$U" -c "waybar --version" 2>&1 | head -1
+      echo "-- the ppd module in the LIVE config:"
+      sed -n '/"power-profiles-daemon"/,/^  }/p' "$H/.config/waybar/config.jsonc" 2>&1 | grep -vE '^\s*//' | head -12
       echo "-- does ergon-power actually cycle?"
       _b=$(su - "$U" -c "powerprofilesctl get" 2>/dev/null)
       _a=$(su - "$U" -c "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-power cycle" 2>&1 | tail -1)
