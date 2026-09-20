@@ -104,15 +104,28 @@ while :; do
   fi
 
   if [ "$req" = power ]; then
-    # Run it INSIDE the compositor's session, which is the whole point.
-    # `su - user` has no logind seat, so polkit refuses allow_active actions
-    # there and every test so far has been measuring the harness rather than
-    # the product. hyprctl dispatch execs as a child of the running session, so
-    # this is exactly what the bar's on-click does.
+    # Run it INSIDE the compositor's session. `su - user` has no logind seat, so
+    # polkit refuses allow_active actions there by design -- every test of this
+    # so far measured the harness rather than the product.
+    #
+    # A SCRIPT, not a command escaped through hyprctl's Lua payload and two
+    # layers of shell quoting. That was tried and produced nothing at all, which
+    # is indistinguishable from the command failing. Third time this session
+    # that inline escaping has cost a round trip.
     rm -f /out/power.log
-    run "hyprctl dispatch 'hl.dsp.exec_raw(\"sh -c \\\"{ echo before=\\\$(powerprofilesctl get); ergon-power cycle; echo after=\\\$(powerprofilesctl get); loginctl show-session \\\$XDG_SESSION_ID -p Active -p Seat; } > /out/power.log 2>&1\\\"\")'" >/dev/null 2>&1
-    sleep 3
-    { echo "-- ergon-power run inside the session:"; cat /out/power.log 2>&1; } >> /out/reply 2>&1
+    cat > /out/power-test.sh <<'PTEST'
+{
+  echo "session: $XDG_SESSION_ID"
+  loginctl show-session "$XDG_SESSION_ID" -p Active -p Seat -p State 2>&1
+  echo "before: $(powerprofilesctl get 2>&1)"
+  echo "cycle:  $(ergon-power cycle 2>&1)"
+  echo "after:  $(powerprofilesctl get 2>&1)"
+} > /out/power.log 2>&1
+PTEST
+    chmod 755 /out/power-test.sh
+    run "hyprctl dispatch 'hl.dsp.exec_raw(\"sh /out/power-test.sh\")'" >/dev/null 2>&1
+    sleep 4
+    { echo "-- ergon-power, inside the session:"; cat /out/power.log 2>&1; } >> /out/reply 2>&1
   fi
 
   if [ "$req" = bar ]; then
