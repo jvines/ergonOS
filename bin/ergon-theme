@@ -31,6 +31,12 @@ set -euo pipefail
 # before it could start hyprpaper, and the desktop had no wallpaper.
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 CHECK=0; [ "${1:-}" = "--check" ] && { CHECK=1; shift; }
+# --no-apply renders the config files and stops: no wallpaper, no hyprctl
+# reload, no waybar restart. For callers that need the rendered files to be
+# correct but must not disturb a session someone is using -- the VM harness
+# re-renders after syncing the repo, and restarting the bar under someone who
+# is looking at it is not an acceptable side effect of a file sync.
+APPLY=1; [ "${1:-}" = "--no-apply" ] && { APPLY=0; shift; }
 
 # ONE palette, and that is a decision rather than an unfinished job.
 #
@@ -224,7 +230,7 @@ fi
 #
 # Only when there is a compositor to talk to: this also runs from install.sh on
 # a tty and from CI, where there is not.
-if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
+if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
   echo "   applying"
   # GTK4 and libadwaita read the theme from gsettings, NOT from settings.ini,
   # so a light palette that only rewrote the ini would leave every GTK4 app

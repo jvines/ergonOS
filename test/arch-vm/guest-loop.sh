@@ -57,6 +57,42 @@ while :; do
     exec bash "$SELF"
   fi
 
+  # Keep the guest's checkout current with the share.
+  #
+  # The guest works from a COPY of the repo, not from /mnt directly, and until
+  # now only a `palette:` or `theme` request ever refreshed it. So anything
+  # committed on the host stayed invisible to someone driving the VM by
+  # keybind -- which presented as "I still see 12 themes" after eighteen had
+  # been pushed, with nothing wrong anywhere except that the files were not
+  # there.
+  #
+  # Checked every SYNC_EVERY iterations rather than every second: this is a 9p
+  # mount and `find` across it is not free. `-quit` stops at the first changed
+  # file, so the usual case costs one stat.
+  SYNC_EVERY=${SYNC_EVERY:-10}
+  SYNC_TICK=$(( ${SYNC_TICK:-0} + 1 ))
+  if [ "$SYNC_TICK" -ge "$SYNC_EVERY" ]; then
+    SYNC_TICK=0
+    STAMP=$H/.ergon-sync-stamp
+    if [ ! -f "$STAMP" ] || [ -n "$(find /mnt -path /mnt/.git -prune -o \
+         -newer "$STAMP" -print -quit 2>/dev/null)" ]; then
+      # --delete so a file removed upstream goes away here too; hosts/ is
+      # excluded because the guest writes its own and it is not the share's.
+      if rsync -a --delete --exclude '.git' --exclude 'hosts/' \
+           /mnt/ "$H/ergonOS/" 2>/dev/null; then
+        chown -R "$U:$U" "$H/ergonOS" 2>/dev/null || true
+        # --no-apply: render the configs so they match the synced templates,
+        # but do NOT regenerate the wallpaper, reload hyprland or restart
+        # waybar. A file sync must not redraw the screen of someone who is
+        # using it; their next palette switch picks the new look up.
+        run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme --no-apply" \
+          >/dev/null 2>&1 || true
+        touch "$STAMP"
+        echo "synced from share at $(date +%H:%M:%S)" >> /out/loop-status
+      fi
+    fi
+  fi
+
   [ -f /out/request ] || { sleep 1; continue; }
   req=$(tr -d '[:space:]' < /out/request 2>/dev/null)
   rm -f /out/request
