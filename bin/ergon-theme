@@ -48,13 +48,49 @@ CHECK=0; [ "${1:-}" = "--check" ] && { CHECK=1; shift; }
 # they can point elsewhere, while the shipped default stays the one that is
 # tested and coherent.
 #
-#   ergon theme                      the cool palette
-#   ERGON_PALETTE=~/mine.env ergon theme
-#   ergon theme ~/mine.env
-PALETTE="${1:-${ERGON_PALETTE:-$ERGON/theme/cool.env}}"
-case "$PALETTE" in /*) ;; *) [ -f "$PALETTE" ] || PALETTE="$ERGON/theme/$PALETTE" ;; esac
+#   ergon theme                 re-render the palette in use
+#   ergon theme warm            switch to theme/warm.env
+#   ergon theme ~/mine.env      any file
+#   ergon theme --list          what is available, and what is active
+#
+# The choice is REMEMBERED, in $XDG_STATE_HOME/ergon/palette. Without that,
+# `ergon theme` with no argument after switching would quietly render the
+# default back over your choice -- and install.sh runs it on every session.
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"
+PALETTE_FILE="$STATE/palette"
 
-[ -f "$PALETTE" ] || { echo "no palette at $PALETTE" >&2; exit 1; }
+if [ "${1:-}" = "--list" ]; then
+  _active=$( [ -f "$PALETTE_FILE" ] && cat "$PALETTE_FILE" || echo cool )
+  for _p in "$ERGON"/theme/*.env; do
+    _n=$(basename "$_p" .env)
+    [ "$_n" = "$_active" ] && printf '   * %s\n' "$_n" || printf '     %s\n' "$_n"
+  done
+  exit 0
+fi
+
+if [ -n "${1:-}" ]; then
+  _want="$1"
+elif [ -n "${ERGON_PALETTE:-}" ]; then
+  _want="$ERGON_PALETTE"
+elif [ -f "$PALETTE_FILE" ]; then
+  _want=$(cat "$PALETTE_FILE")
+else
+  _want=cool
+fi
+
+case "$_want" in
+  /*|./*|../*) PALETTE="$_want" ;;
+  *)           PALETTE="$ERGON/theme/$_want.env" ;;
+esac
+[ -f "$PALETTE" ] || PALETTE="$_want"
+
+[ -f "$PALETTE" ] || {
+  echo "no palette '$_want' (try: ergon theme --list)" >&2; exit 1
+}
+if [ "$CHECK" != 1 ]; then
+  mkdir -p "$STATE"
+  basename "$PALETTE" .env > "$PALETTE_FILE"
+fi
 
 # Build the sed program from the palette. Keys are validated so a stray line in
 # cool.env cannot inject sed syntax.

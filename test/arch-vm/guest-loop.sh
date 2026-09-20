@@ -158,7 +158,7 @@ PTEST
     { echo "-- btop theme link:"; ls -l "$H/.config/btop/themes/" 2>&1
       echo "-- btop color_theme:"; grep -E '^color_theme' "$H/.config/btop/btop.conf" 2>&1
       echo "-- does the theme file resolve?"
-      head -3 "$H/.config/btop/themes/cool.theme" 2>&1
+      head -3 "$H/.config/btop/themes/ergon.theme" 2>&1
       echo "-- themed configs present:"
       ls -d "$H/.config/waybar/style.css" "$H/.config/mako/config" \
             "$H/.config/yazi/theme.toml" "$H/.config/lazygit/config.yml" \

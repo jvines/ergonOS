@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- GENERATED from bat/themes/cool.tmTheme.in — edit the .in, then: ergon theme
+<!-- GENERATED from bat/themes/ergon.tmTheme.in — edit the .in, then: ergon theme
      Then `bat cache --build`, which install.sh does.
 
      bat is the pager for `bat`, for `git` through delta, and for anything that
@@ -25,75 +25,75 @@
     <dict>
       <key>settings</key>
       <dict>
-        <key>background</key><string>@COOL_BG0@</string>
-        <key>foreground</key><string>@COOL_FG0@</string>
-        <key>caret</key><string>@COOL_ACCENT@</string>
-        <key>lineHighlight</key><string>@COOL_BG1@</string>
-        <key>selection</key><string>@COOL_BG2@</string>
-        <key>invisibles</key><string>@COOL_BG2@</string>
+        <key>background</key><string>#1A1A2E</string>
+        <key>foreground</key><string>#EDEDF8</string>
+        <key>caret</key><string>#ADFFFF</string>
+        <key>lineHighlight</key><string>#2A2A3E</string>
+        <key>selection</key><string>#3A3A4E</string>
+        <key>invisibles</key><string>#3A3A4E</string>
       </dict>
     </dict>
 
     <dict>
       <key>name</key><string>Comment</string>
       <key>scope</key><string>comment, punctuation.definition.comment</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_DIM@</string>
+      <key>settings</key><dict><key>foreground</key><string>#A6A6BC</string>
         <key>fontStyle</key><string>italic</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>String</string>
       <key>scope</key><string>string, punctuation.definition.string</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_MINT@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#D0FFEA</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>Number, Constant</string>
       <key>scope</key><string>constant.numeric, constant.language, constant.character</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_BLUSH@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#FFE0FF</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>Keyword, Storage</string>
       <key>scope</key><string>keyword, storage.type, storage.modifier</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_HOT_4@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#FF40FF</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>Operator</string>
       <key>scope</key><string>keyword.operator, punctuation.separator</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_3@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#EBC2FF</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>Function</string>
       <key>scope</key><string>entity.name.function, support.function, meta.function-call</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_0@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#ADFFFF</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>Type, Class</string>
       <key>scope</key><string>entity.name.type, entity.name.class, support.type, support.class</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_1@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#C2EBFF</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>Variable</string>
       <key>scope</key><string>variable, variable.other, variable.parameter</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_FG0@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#EDEDF8</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>Tag, Key</string>
       <key>scope</key><string>entity.name.tag, support.type.property-name, meta.mapping.key</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_2@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#D6D6FF</string></dict>
     </dict>
 
     <dict>
       <key>name</key><string>Invalid</string>
       <key>scope</key><string>invalid, invalid.illegal</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_BG0@</string>
-        <key>background</key><string>@COOL_URGENT@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#1A1A2E</string>
+        <key>background</key><string>#FF40FF</string></dict>
     </dict>
 
     <!-- Diffs. delta renders through this, so these are the colours on every
@@ -103,22 +103,22 @@
     <dict>
       <key>name</key><string>diff.inserted</string>
       <key>scope</key><string>markup.inserted</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_GOOD@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#D0FFEA</string></dict>
     </dict>
     <dict>
       <key>name</key><string>diff.deleted</string>
       <key>scope</key><string>markup.deleted</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_URGENT@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#FF40FF</string></dict>
     </dict>
     <dict>
       <key>name</key><string>diff.changed</string>
       <key>scope</key><string>markup.changed</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_WARN@</string></dict>
+      <key>settings</key><dict><key>foreground</key><string>#EBC2FF</string></dict>
     </dict>
     <dict>
       <key>name</key><string>Markup heading</string>
       <key>scope</key><string>markup.heading</string>
-      <key>settings</key><dict><key>foreground</key><string>@COOL_0@</string>
+      <key>settings</key><dict><key>foreground</key><string>#ADFFFF</string>
         <key>fontStyle</key><string>bold</string></dict>
     </dict>
   </array>

@@ -96,12 +96,12 @@ else
 
   if [ "$CHECK" != 1 ]; then
     mkdir -p "$HOME/.config/btop/themes"
-    ln -sfn "$ERGON/btop/themes/cool.theme" "$HOME/.config/btop/themes/cool.theme"
+    ln -sfn "$ERGON/btop/themes/ergon.theme" "$HOME/.config/btop/themes/ergon.theme"
     if [ -f "$HOME/.config/btop/btop.conf" ]; then
       if grep -q '^color_theme' "$HOME/.config/btop/btop.conf"; then
-        sed -i 's|^color_theme.*|color_theme = "cool"|' "$HOME/.config/btop/btop.conf"
+        sed -i 's|^color_theme.*|color_theme = "ergon"|' "$HOME/.config/btop/btop.conf"
       else
-        printf 'color_theme = "cool"\n' >> "$HOME/.config/btop/btop.conf"
+        printf 'color_theme = "ergon"\n' >> "$HOME/.config/btop/btop.conf"
       fi
     else
       cp "$ERGON/btop/btop.conf" "$HOME/.config/btop/btop.conf"

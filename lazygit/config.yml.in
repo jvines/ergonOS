@@ -59,4 +59,4 @@ git:
     # delta, so diffs are the same renderer git uses at the terminal. The theme
     # name must match the bat theme this repo installs -- see bat/.
     colorArg: always
-    pager: delta --dark --paging=never --syntax-theme=cool
+    pager: delta --dark --paging=never --syntax-theme=ergon

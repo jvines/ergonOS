@@ -1,4 +1,4 @@
-# GENERATED from btop/themes/cool.theme.in — edit the .in, then run: ergon theme
+# GENERATED from btop/themes/ergon.theme.in — edit the .in, then run: ergon theme
 #
 # btop ships with its own palette, and on this desktop that meant red and orange
 # meters on a cyan-and-violet machine. It is also the most visible TUI here: the
