@@ -10,6 +10,8 @@ only has to know how to connect them and what to call the result.
 
 import argparse
 import importlib
+
+import numpy as np
 import os
 import sys
 import time
@@ -32,6 +34,12 @@ def main():
     ap.add_argument("--fit", default=None, help="cover or contain")
     ap.add_argument("--zoom", type=float, default=None)
     ap.add_argument("--no-title", action="store_true")
+    # The field costs minutes and the colouring costs a second. Saving it means
+    # trying a palette, a stretch or a gamma does not re-run the simulation --
+    # which is the difference between iterating on how it looks and iterating
+    # on how long it takes.
+    ap.add_argument("--save-field", default=None,
+                    help="write the raw field as .npy for re-colouring")
     ap.add_argument("--supersample", type=int, default=3,
                     help="render at this multiple of the panel, then average down")
     args = ap.parse_args()
@@ -69,6 +77,8 @@ def main():
     field = mod.generate((w * ss, h * ss), seed=args.seed, **kw)
     if ss > 1:
         field = lib.downsample(field, ss)
+    if args.save_field:
+        np.save(args.save_field, field)
     lib.render(field, palette, args.out, blend=blend, reverse=args.reverse,
                scale=scale, gamma=gamma,
                title=None if args.no_title else getattr(mod, "TITLE", None),

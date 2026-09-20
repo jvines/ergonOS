@@ -160,9 +160,10 @@ esac
 mkdir -p "$(dirname "$BG_STATE")"
 printf '%s\n' "$WANT" > "$BG_STATE"
 
-# An image is used AS IT IS. No re-encode to the panel size: it costs a
-# multi-megapixel magick run on every switch, throws away quality, and hyprpaper
-# already scales to fit. Only the generated background is rendered here.
+# The chosen image stays the SOURCE of record here -- the state file names it,
+# not a scaled copy. What hyprpaper is actually handed is decided further down,
+# where an image larger than the panel is downsampled properly first; see the
+# block above the hyprpaper config for why hyprpaper must not scale it itself.
 if [ "$WANT" != "$GENERATED" ]; then
   ACTIVE="$WANT"
   echo "  $ACTIVE"
@@ -241,6 +242,47 @@ else
 fi
 fi
 
+# Downscale HERE, properly, instead of letting hyprpaper do it.
+#
+# Backgrounds are rendered at 4K precisely so they can be downsampled to any
+# panel -- and hyprpaper's own scaling threw that away. Measured on a 4K
+# Clifford shown on a 1280x800 panel: stair-stepped edges and moire through
+# every fine striation, where the same file downsampled with a real filter was
+# clean. A cheap scaler point-samples, and point-sampling fine structure is
+# exactly how aliasing is made.
+#
+# So the image is scaled once, in LINEAR light with Lanczos, and hyprpaper is
+# given a file at the panel's exact size: it then has nothing left to scale.
+# Linear light because averaging sRGB values darkens every edge where a bright
+# strand meets the dark ground -- the colour fringing a gamma-naive resize
+# leaves -- whereas light actually adds linearly. Cover-fit, matching what
+# hyprpaper would have done, so framing does not change.
+#
+# Cached by source path, source mtime and panel size, so switching back to a
+# background is instant and re-rendering one invalidates its copy.
+SHOWN="$ACTIVE"
+if [ "$ACTIVE" != "$OUT" ] && command -v magick >/dev/null 2>&1; then
+  _dims=$(magick identify -format '%w %h' "$ACTIVE" 2>/dev/null || true)
+  _iw=${_dims% *}; _ih=${_dims#* }
+  _pw=${SIZE%x*};  _ph=${SIZE#*x}
+  if [ -n "$_dims" ] && { [ "$_iw" -gt "$_pw" ] || [ "$_ih" -gt "$_ph" ]; }; then
+    _cache="${XDG_CACHE_HOME:-$HOME/.cache}/ergon/wallpaper"
+    mkdir -p "$_cache"
+    _key=$(printf '%s %s %s' "$ACTIVE" "$(stat -c %Y "$ACTIVE")" "$SIZE" \
+           | md5sum | cut -c1-12)
+    _base=$(basename "$ACTIVE"); _base=${_base%.*}
+    SHOWN="$_cache/$_base-$SIZE-$_key.png"
+    if [ ! -s "$SHOWN" ]; then
+      magick "$ACTIVE" -colorspace RGB -filter Lanczos \
+        -resize "${SIZE}^" -gravity center -extent "$SIZE" \
+        -colorspace sRGB "$SHOWN.tmp.png" && mv "$SHOWN.tmp.png" "$SHOWN"
+      # Keep the cache bounded: the twenty most recent copies.
+      ls -1t "$_cache"/*.png 2>/dev/null | tail -n +21 | xargs -r rm -f
+    fi
+    echo "  shown at $SIZE (downsampled from ${_iw}x${_ih})"
+  fi
+fi
+
 # A config with ABSOLUTE paths, written next to the image, and hyprpaper started
 # against it with -c.
 #
@@ -255,8 +297,8 @@ fi
 PAPER_CONF="$(dirname "$OUT")/hyprpaper.conf"
 cat > "$PAPER_CONF" <<CONF
 # Written by ergon-wallpaper. Absolute paths on purpose -- see that script.
-preload = $ACTIVE
-wallpaper = , $ACTIVE
+preload = $SHOWN
+wallpaper = , $SHOWN
 splash = false
 ipc = on
 CONF
@@ -297,13 +339,13 @@ pgrep -x hyprpaper >/dev/null 2>&1 && _running=1
 
 _prev=$( [ -f "$BG_STATE.applied" ] && cat "$BG_STATE.applied" || echo "" )
 _same_path=0
-[ "$_prev" = "$ACTIVE" ] && _same_path=1
+[ "$_prev" = "$SHOWN" ] && _same_path=1
 
 if [ "$_running" = 1 ] && [ "$_same_path" = 0 ] && command -v hyprctl >/dev/null 2>&1; then
   # Fast path: no restart. preload first so the image is decoded before it is
   # asked for, otherwise the compositor shows the old one until decoding ends.
-  hyprctl hyprpaper preload "$ACTIVE" >/dev/null 2>&1 || true
-  if hyprctl hyprpaper wallpaper ",$ACTIVE" >/dev/null 2>&1; then
+  hyprctl hyprpaper preload "$SHOWN" >/dev/null 2>&1 || true
+  if hyprctl hyprpaper wallpaper ",$SHOWN" >/dev/null 2>&1; then
     applied=1
     # Drop the images no longer on screen. Without this every background ever
     # shown stays decoded in memory, which for 8K images is ~130 MB each.
@@ -318,7 +360,7 @@ if [ "${applied:-0}" != 1 ]; then
   sleep 1
   if command -v hyprctl >/dev/null 2>&1; then
     for _ in $(seq 15); do
-      if hyprctl hyprpaper wallpaper ",$ACTIVE" >/dev/null 2>&1; then
+      if hyprctl hyprpaper wallpaper ",$SHOWN" >/dev/null 2>&1; then
         applied=1; break
       fi
       sleep 1
@@ -326,6 +368,6 @@ if [ "${applied:-0}" != 1 ]; then
   fi
 fi
 
-printf '%s\n' "$ACTIVE" > "$BG_STATE.applied"
+printf '%s\n' "$SHOWN" > "$BG_STATE.applied"
 [ "${applied:-0}" = 1 ] && echo "  wallpaper set on all outputs" \
                         || echo "  hyprpaper did not accept the wallpaper; it is set at the next session" >&2
