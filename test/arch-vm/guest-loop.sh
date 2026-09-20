@@ -79,6 +79,20 @@ while :; do
     sleep 2
   fi
 
+  if [ "$req" = wezterm ]; then
+    # wezterm-git is a long Rust build, far past any request timeout, so it runs
+    # DETACHED and reports into its own log. The VM normally skips it
+    # (ERGON_SKIP_AUR=1), which is why wezterm is the one themed surface that
+    # has never been looked at on this machine.
+    if command -v wezterm >/dev/null 2>&1; then
+      echo "wezterm already installed: $(wezterm --version 2>&1)" >> /out/reply
+    else
+      su - "$U" -c "nohup \$HOME/ergonOS/bin/ergon-aur wezterm-git > /out/wezterm-build.log 2>&1 &" >/dev/null 2>&1
+      echo "wezterm-git build started; watch /out/wezterm-build.log" >> /out/reply
+    fi
+    chmod 666 /out/wezterm-build.log 2>/dev/null || true
+  fi
+
   if [ "$req" = diag ]; then
     # Read the state instead of judging it from a screenshot. Twice now a theme
     # has looked unchanged in a capture when the real question was whether the
