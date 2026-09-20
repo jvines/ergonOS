@@ -131,6 +131,13 @@ else
   fi
 fi
 
+# The shell. link() refuses to replace a real file, which is exactly the
+# behaviour wanted here: if you already have a ~/.zshrc it is YOURS and this
+# leaves it alone, and zsh/zshrc documents how to source the OS's shell from it
+# instead. Only a machine with no shell config at all gets these linked.
+link zsh/zshrc  .zshrc
+link zsh/zshenv .zshenv
+
 link matplotlib/matplotlibrc .config/matplotlib/matplotlibrc
 
 # Agent knowledge. This OS ships two coding agents, and one SKILL.md serves

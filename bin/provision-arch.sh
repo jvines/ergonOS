@@ -494,6 +494,28 @@ if command -v emacs >/dev/null && [ -f "$HOME/.emacs.d/init.el" ]; then
     >/dev/null 2>&1 && ok "tree-sitter grammars" || warn "grammar build failed — run M-x my/treesit-install-missing"
 fi
 
+say "shell"
+# oh-my-zsh and zplug are git clones, not packages. Deliberately not from the
+# AUR: both are a checkout and a source line, and an AUR wrapper would add a
+# build step and a maintainer between this machine and two `git clone`s.
+#
+# zsh itself is in packages/pacman and arch-bootstrap.sh already creates the
+# user with /bin/zsh as their shell.
+for _repo in \
+  "https://github.com/ohmyzsh/ohmyzsh.git|$HOME/.oh-my-zsh" \
+  "https://github.com/zplug/zplug.git|$HOME/.zplug"
+do
+  _url=${_repo%%|*}; _dir=${_repo##*|}
+  if [ -d "$_dir/.git" ]; then
+    skip "$(basename "$_dir") already cloned"
+  elif git clone --depth 1 -q "$_url" "$_dir" 2>/dev/null; then
+    ok "$(basename "$_dir")"
+  else
+    warn "could not clone $_url — the shell works without it, with no prompt theme"
+  fi
+done
+unset _repo _url _dir
+
 say "commands on the system PATH"
 # waybar's click handlers and hypr/common/autostart.lua exec `ergon-*` BY NAME,
 # so they resolve through PATH. PATH reaches a graphical session only through

@@ -1,0 +1,43 @@
+# Interactive zsh, for Ergon.
+#
+# This file is the OS's shell, and it is written to sit UNDERNEATH your own
+# dotfiles rather than compete with them. Two ways to use it:
+#
+#   * let install.sh link it as ~/.zshrc, which it does ONLY when you have none;
+#   * or keep your own ~/.zshrc and source this near the top of it:
+#         source "$HOME/ergonOS/zsh/zshrc"
+#
+# Either way the last thing this does is hand control back to you, below.
+#
+# There is deliberately nothing here about any specific machine, network or
+# account — no hostnames, no shortcuts to particular servers, no secret
+# handling. That is not an oversight: this repo is public, and a shell config
+# is where private infrastructure leaks from first.
+
+ERGON="${ERGON:-$HOME/ergonOS}"
+
+[ -f "$ERGON/zsh/zshenv" ] && source "$ERGON/zsh/zshenv"
+[ -f "$ERGON/zsh/common.zsh" ] && source "$ERGON/zsh/common.zsh"
+
+# Tools that configure the shell themselves, each guarded so a machine part-way
+# through provisioning still gets a working prompt rather than an error on every
+# line. All four are in packages/pacman.
+command -v zoxide >/dev/null && eval "$(zoxide init zsh)"
+command -v atuin  >/dev/null && eval "$(atuin init zsh --disable-up-arrow)"
+command -v fzf    >/dev/null && source <(fzf --zsh) 2>/dev/null
+
+# eza, if it is there: the same aliases, with icons and git status.
+if command -v eza >/dev/null; then
+  alias ls='eza --long --header --git --icons=auto'
+  alias ll='eza --long --header --git --icons=auto --all'
+  alias tree='eza --tree --level=2 --icons=auto'
+fi
+command -v bat >/dev/null && alias cat='bat --paging=never'
+
+# ---------- yours ----------
+# Anything private, per-machine or simply preferred goes in ONE of these, and
+# neither is tracked by this repo. This is the seam: the OS stops here.
+#
+#   ~/.zshrc.local        quick, single-file
+#   ~/.dotfiles/zsh/...   a real dotfiles repo, sourced however it likes
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"

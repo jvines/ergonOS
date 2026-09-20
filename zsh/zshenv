@@ -1,0 +1,42 @@
+# Loaded by EVERY zsh: interactive or not, login or not.
+#
+# Environment that must also hold in scripts, `ssh host cmd` and cron belongs
+# here. common.zsh is only sourced for interactive shells, so anything a
+# non-interactive shell needs cannot live there.
+#
+# This is the OS's shell environment. It is written to sit UNDERNEATH whatever
+# dotfiles you already have: it sets nothing it does not have to, and everything
+# it does set is guarded so sourcing it twice changes nothing.
+
+# ~/.local/bin, where uv and most fetched binaries land, is not reliably on PATH.
+# The guarded idiom is deliberate: a plain prepend stacks duplicates every time
+# a shell re-sources this, and a PATH with forty copies of the same directory is
+# a real thing that happens.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) PATH="$HOME/.local/bin:$PATH"; export PATH ;;
+esac
+
+# The ergon-* commands. environment.d puts these on PATH for the graphical
+# session; this is the same job for shells, which do not read environment.d.
+ERGON="${ERGON:-$HOME/ergonOS}"
+case ":$PATH:" in
+  *":$ERGON/bin:"*) ;;
+  *) [ -d "$ERGON/bin" ] && { PATH="$ERGON/bin:$PATH"; export PATH; } ;;
+esac
+
+# EDITOR only if nothing has already chosen one, because this is exactly the
+# kind of setting a person has an opinion about and dotfiles set for themselves.
+# emacs is what the OS ships; the fallbacks are for a machine where provisioning
+# has not finished.
+if [ -z "${EDITOR:-}" ]; then
+  for _e in emacs nvim vim nano vi; do
+    if command -v "$_e" >/dev/null 2>&1; then
+      export EDITOR="$_e"
+      break
+    fi
+  done
+  unset _e
+fi
+export VISUAL="${VISUAL:-$EDITOR}"
+export SUDO_EDITOR="${SUDO_EDITOR:-$EDITOR}"
