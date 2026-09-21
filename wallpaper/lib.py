@@ -27,7 +27,7 @@ GROUND_LIFT = 0.75
 # House defaults for colour, chosen by looking at a blend x saturation grid on
 # a real desktop rather than by taste in the abstract.
 #
-# 2.5 is high, and deliberately so: blending structure toward a dark ground
+# 2.25 is high, and deliberately so: blending structure toward a dark ground
 # desaturates it, and every earlier attempt to fix "washed" by raising blend
 # only made the image louder without making it more colourful. Saturation is
 # the knob that actually answers that complaint. Exposure lifts value slightly
@@ -35,7 +35,7 @@ GROUND_LIFT = 0.75
 #
 # These are DEFAULTS. A generator that wants to be quieter sets its own, and a
 # user who disagrees passes --saturation / --exposure or edits one number.
-DEFAULT_SATURATION = 2.5
+DEFAULT_SATURATION = 2.25
 DEFAULT_EXPOSURE = 1.1
 
 
@@ -240,11 +240,19 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
     # Done in HSV so hue is untouched: the palette decides hue and nothing here
     # is entitled to move it. Saturation multiplies S, exposure multiplies V,
     # both clipped.
+    #
+    # Weighted by the STRUCTURE, so the empty ground is left alone. Applied
+    # uniformly, a 2.25x saturation turned catppuccin's muted grey-blue base
+    # into saturated navy: the wallpaper's background stopped matching the
+    # desktop's, which is the one thing BG0 as the colormap's first stop exists
+    # to guarantee -- and it made the whole image read as more extreme than the
+    # structure alone ever was. At v = 0 the factor is exactly 1.
     if saturation != 1.0 or exposure != 1.0:
         from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
         hsv = rgb_to_hsv(np.clip(rgb, 0, 1))
-        hsv[..., 1] = np.clip(hsv[..., 1] * saturation, 0, 1)
-        hsv[..., 2] = np.clip(hsv[..., 2] * exposure, 0, 1)
+        wgt = np.clip(v, 0, 1)
+        hsv[..., 1] = np.clip(hsv[..., 1] * (1 + (saturation - 1) * wgt), 0, 1)
+        hsv[..., 2] = np.clip(hsv[..., 2] * (1 + (exposure - 1) * wgt), 0, 1)
         rgb = hsv_to_rgb(hsv)
 
     # Dither, for the same reason ergon-wallpaper dithers: a low-contrast image
