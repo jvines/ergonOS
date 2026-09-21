@@ -48,7 +48,10 @@ def main():
     # served from one simulation.
     ap.add_argument("--from-field", default=None,
                     help="colour this saved .npy instead of simulating")
-    ap.add_argument("--supersample", type=int, default=3,
+    # Default from the generator (SUPERSAMPLE), else 3. A generator that
+    # already band-limits its own field -- Ising smooths a coarse lattice --
+    # gains nothing from it and draws a subtly different picture with it.
+    ap.add_argument("--supersample", type=int, default=None,
                     help="render at this multiple of the panel, then average down")
     args = ap.parse_args()
 
@@ -109,7 +112,8 @@ def main():
         if (fw, fh) != (w, h) and fw % w == 0 and fh % h == 0 and fw // w == fh // h:
             field = lib.downsample(field, fw // w)
     else:
-        ss = max(1, args.supersample)
+        ss = max(1, args.supersample if args.supersample is not None
+                 else getattr(mod, "SUPERSAMPLE", 3))
         field = mod.generate((w * ss, h * ss), seed=args.seed, **kw)
         if ss > 1:
             field = lib.downsample(field, ss)

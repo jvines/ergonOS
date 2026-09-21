@@ -30,23 +30,37 @@ Metropolis implementation useless at this resolution never appears.
 
 import numpy as np
 
-# Exactly half the panel lands on background, by construction below -- but the
-# other half is solid, not filamentary, and a large contiguous patch of colour
-# pulls the eye harder than the same ink spent on threads. So this sits between
-# the attractors, which leave the panel nearly empty and can take 0.55, and
-# Gray-Scott, which covers every pixel and has to whisper at 0.20. Checked
-# against both at 1440x960 rather than guessed.
 TITLE = "Ising model at criticality"
-SUBTITLE = "T_c = 2 / ln(1 + sqrt 2)"
+SUBTITLE = ("a magnet at its critical temperature: islands of aligned spin at every size,"
+            "  T_c = 2 / ln(1 + sqrt 2)")
 
-BLEND = 0.46
+# The house blend. It was 0.46 -- half the panel is solid colour, which pulls
+# the eye harder than threads -- and read dim; with the crisp walls below it
+# was chosen at 0.85 on a real desktop, in the house colours.
+BLEND = 0.85
+
+# Crisp domain walls (see generate): the width of a wall as a fraction of the
+# panel height, 0 for the soft walls of the plain block-spin field -- 15 px at
+# 2400, chosen against 1.5 to 21 px; and the tone just inside a wall.
+CRISP = 15.0 / 2400
+
+# A lattice cell, as a fraction of the panel height: 3 px at 2400. In pixels
+# it would change the picture with the render size -- a supersampled or 8K
+# render would simulate a finer lattice and draw smaller islands.
+CELL = 3.0 / 2400
+
+# Rendered at the panel's own resolution: the field is a smoothed coarse
+# lattice, already band-limited, and 3x supersampling only moved scattered
+# pixels of the picture chosen at 1x.
+SUPERSAMPLE = 1
+FLOOR = 0.4
 
 # Onsager's T_c, in units of J/k_B. Not a fitted or eyeballed number: it is the
 # exact self-dual point of the 2-D square-lattice model.
 TC = 2.0 / np.log1p(np.sqrt(2.0))
 
-# Block-spin radius in lattice cells; the seed picks one, and also picks a
-# different sample from the same ensemble.
+# Block-spin radius in lattice cells, and the random seed that drew this
+# sample from the ensemble -- part of the picture, so pinned.
 #
 # Every preset is at T_c exactly, and the temperature is deliberately not a
 # knob. The coarse-to-fine construction below is only valid at the fixed point:
@@ -60,13 +74,12 @@ TC = 2.0 / np.log1p(np.sqrt(2.0))
 #
 # What is left to vary is the radius, which is the RG scale: it sets the
 # smallest surviving feature, so changing it is literally zooming. That the
-# four presets differ in magnification and still look like each other is the
+# presets differed in magnification and still looked like each other is the
 # whole claim the critical point makes.
+# Only the view chosen on a real desktop is here: the coarsest, largest
+# islands. Radii 2, 3 and 4 (grain, critical, clusters) were built and pruned.
 PRESETS = {
-    "critical": 3,
-    "grain":    2,
-    "clusters": 4,
-    "islands":  6,
+    "islands": (6, 3),
 }
 
 
@@ -133,9 +146,12 @@ def _box(a, r):
     return a
 
 
-def generate(size, seed=0, scale=3, relax=200, radius=None):
-    if radius is None:
-        radius = PRESETS[list(PRESETS)[seed % len(PRESETS)]]
+def generate(size, seed=0, scale=None, relax=200, radius=None, crisp=None,
+             floor=None):
+    w, h = size
+    r0, rng_seed = PRESETS[list(PRESETS)[seed % len(PRESETS)]]
+    radius = r0 if radius is None else radius
+    scale = scale or max(1, round(CELL * h))
 
     # Simulated below panel resolution, for a different reason than Gray-Scott:
     # that pattern has an intrinsic wavelength, this one has none. What sets the
@@ -147,7 +163,6 @@ def generate(size, seed=0, scale=3, relax=200, radius=None):
     # field always covers it and only ever needs cropping; and up to a multiple
     # of 64, so that halving it five times still lands on an even lattice, which
     # the checkerboard requires at every level.
-    w, h = size
     gw, gh = _lattice_side(w, scale), _lattice_side(h, scale)
 
     # Critical slowing down is the whole difficulty. Local spin flips relax a
@@ -169,7 +184,7 @@ def generate(size, seed=0, scale=3, relax=200, radius=None):
     local_field = np.array([-4.0, -2.0, 0.0, 2.0, 4.0])
     table = (1.0 / (1.0 + np.exp(-2.0 * local_field / TC))).astype(np.float32)
 
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(rng_seed)
     s = np.where(rng.random((bh, bw)) < 0.5, np.int8(1), np.int8(-1)).astype(np.int8)
 
     # Six autocorrelation times at the coarsest level, which is the only level
@@ -193,6 +208,7 @@ def generate(size, seed=0, scale=3, relax=200, radius=None):
     for _ in range(3):
         m = _box(m, radius)
 
+
     field = np.repeat(np.repeat(m, scale, 0), scale, 1)
     # One more blur at panel resolution, radius equal to the upscale factor, to
     # dissolve the block edges the repeat introduced. Nearest-neighbour is right
@@ -212,6 +228,27 @@ def generate(size, seed=0, scale=3, relax=200, radius=None):
     # It also disposes of the Z2 ambiguity -- flipping every spin swaps which
     # half is lit, and the two are the same picture.
     field -= np.median(field)
+
+    # CRISP WALLS without flattening the islands. The block-spin field rises
+    # from zero at a domain wall over tens of pixels, so every island edge is a
+    # soft ramp. Edge and interior are therefore taken apart: the edge from
+    # the distance to the wall, field / |grad field| -- a real distance in
+    # pixels, like the nodal lines in chladni.py -- ramped over `crisp` pixels
+    # so it stays anti-aliased; the interior keeps the magnetisation's own
+    # gradient, starting from `floor` just inside the wall so the edge reads
+    # as a clean step rather than a climb out of the ground. A tanh on the
+    # field was tried first: crisp, but it flattened every island to one tone.
+    crisp = CRISP if crisp is None else crisp
+    floor = FLOOR if floor is None else floor
+    if crisp > 0:
+        gy, gx = np.gradient(field)
+        d = field / (np.hypot(gx, gy) + 1e-9)
+        edge = np.clip(0.5 + d / (crisp * h), 0.0, 1.0)
+        lit = field > 0
+        top = np.percentile(field[lit], 99) if lit.any() else 1.0
+        tone = np.clip(field / (top or 1.0), 0.0, 1.0)
+        field = edge * (floor + (1.0 - floor) * tone)
+
 
     # The below-median half sits at zero, which the ramp grounds in the desktop
     # background, so the zero contour becomes the edge of the visible structure.
