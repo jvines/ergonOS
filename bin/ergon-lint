@@ -217,7 +217,10 @@ while IFS= read -r f; do
   while IFS=: read -r ln _; do
     report "$f" "$ln" "render setting assigned inside a function -- it reverts when a palette switch re-colours the saved field; use caption(seed)"
     wp_bad=$((wp_bad+1))
-  done < <(grep -nE '^[[:space:]]+global[[:space:]]+(TITLE|SUBTITLE|SCALE|GAMMA|BLEND|RAMP|REVERSE|SATURATION|EXPOSURE|SOFTEN|HUE_SMOOTH)\b' "$ERGON/$f" || true)
+  # Both spellings: `global SUBTITLE` then an assignment, and
+  # `globals()["SUBTITLE"] = ...`, which reached the tree in a second
+  # generator after the first was caught.
+  done < <(grep -nE '^[[:space:]]+(global[[:space:]]+|globals\(\)\[["'"'"'])(TITLE|SUBTITLE|SCALE|GAMMA|BLEND|RAMP|REVERSE|SATURATION|EXPOSURE|SOFTEN|HUE_SMOOTH)\b' "$ERGON/$f" || true)
 done <<< "$wp_files"
 [ "$wp_bad" = 0 ] && echo "  ok   wallpaper generators take captions and settings from module level"
 
