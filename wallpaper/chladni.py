@@ -45,6 +45,20 @@ SUBTITLE = "nodal lines of a vibrating square plate"
 
 BLEND = 0.78
 
+# Hue from the neighbourhood, so a line's soft edge fades in the line's own
+# colour instead of stepping down the ramp into a different one (see
+# lib.render). No SOFTEN: the lines are an analytic Gaussian several pixels
+# wide already, so there is nothing to band-limit.
+HUE_SMOOTH = 3.0
+
+# How much of the plate's motion shows between the lines (see generate). It
+# has to be tiny: the house stretch lifts faint values hard, and 0.06 to 0.6
+# all flooded the panel with colour and took the top of the ramp away from the
+# lines. 0.004 reads as a dark, pillowed tint. Chosen on a real desktop against
+# the plain figures and a stronger 0.012.
+GLOW = 0.004
+GLOW_POWER = 2.0
+
 # Each preset is a set of (n, m, weight) terms summing to the mode, written out
 # term by term rather than hiding the classical pairing in code, because the
 # pairing is a choice and the last preset breaks it.
@@ -82,7 +96,7 @@ PRESETS = {
 }
 
 
-def generate(size, seed=0, width=0.0012):
+def generate(size, seed=0, width=0.0012, glow=None, glow_power=None):
     names = sorted(PRESETS)
     terms = PRESETS[names[seed % len(PRESETS)]]
 
@@ -131,4 +145,17 @@ def generate(size, seed=0, width=0.0012):
     # The Gaussian profile is what anti-aliases the line -- d is a real
     # distance, so the falloff is smooth without supersampling anything.
     lw = max(1.2, width * unit) / unit
-    return np.exp(-(d / lw) ** 2)
+    line = np.exp(-(d / lw) ** 2)
+    glow = GLOW if glow is None else glow
+    glow_power = GLOW_POWER if glow_power is None else glow_power
+    if glow <= 0:
+        return line
+
+    # The plate's own motion between the lines, as a glow under them: how hard
+    # each point vibrates, |s|, brightest at the antinodes -- exactly where the
+    # sand is thrown from. It falls to zero at every node, so it never touches
+    # a line and leaves a dark margin along each one, and it sits in the lower
+    # part of the ramp so the lines keep the top of it.
+    a = np.abs(s)
+    a /= a.max() or 1.0
+    return line + glow * a ** glow_power
