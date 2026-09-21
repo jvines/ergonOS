@@ -124,6 +124,17 @@ if [ "$ACTION" = list ]; then
   exit 0
 fi
 
+# ONE SWITCH AT A TIME. Pressing next faster than a switch completes ran
+# several of these at once: each read the same state and computed the same
+# "next", and each started its own downscale. With 8K images that was several
+# ImageMagick processes of ~1 GB each in a 4 GB VM, and the OOM killer took
+# the whole compositor session with them (2026-09-21). Queued instead: every
+# press still counts, in order.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"${XDG_RUNTIME_DIR:-/tmp}/ergon-wallpaper.lock"
+  flock -w 120 9 || { echo "  another switch is still running" >&2; exit 1; }
+fi
+
 # What is wanted, before it is checked for existence.
 _cur=$( [ -f "$BG_STATE" ] && cat "$BG_STATE" || echo "$GENERATED" )
 case "$ACTION" in
@@ -273,13 +284,28 @@ if [ "$ACTIVE" != "$OUT" ] && command -v magick >/dev/null 2>&1; then
     _base=$(basename "$ACTIVE"); _base=${_base%.*}
     SHOWN="$_cache/$_base-$SIZE-$_key.png"
     if [ ! -s "$SHOWN" ]; then
-      magick "$ACTIVE" -colorspace RGB -filter Lanczos \
+      # Memory-capped. An HDRI ImageMagick holds each pixel as four floats, so
+      # an 8K image is ~600 MB before the resize allocates anything; past the
+      # cap it pages to a disk cache instead of being OOM-killed. The cache
+      # directory, not /tmp, which may itself be RAM.
+      MAGICK_TEMPORARY_PATH="$_cache" \
+      magick -limit memory 256MiB -limit map 512MiB "$ACTIVE" \
+        -colorspace RGB -filter Lanczos \
         -resize "${SIZE}^" -gravity center -extent "$SIZE" \
         -colorspace sRGB "$SHOWN.tmp.png" && mv "$SHOWN.tmp.png" "$SHOWN"
-      # Keep the cache bounded: the twenty most recent copies.
-      ls -1t "$_cache"/*.png 2>/dev/null | tail -n +21 | xargs -r rm -f
+      rm -f "$SHOWN.tmp.png"
+      # Keep the cache bounded, but above the size of a curated set: at twenty,
+      # cycling a larger set evicted each copy before it came round again.
+      ls -1t "$_cache"/*.png 2>/dev/null | tail -n +65 | xargs -r rm -f
     fi
-    echo "  shown at $SIZE (downsampled from ${_iw}x${_ih})"
+    if [ -s "$SHOWN" ]; then
+      echo "  shown at $SIZE (downsampled from ${_iw}x${_ih})"
+    else
+      # Never hand hyprpaper a path that was not written -- it then shows
+      # nothing and stops answering. Unscaled is worse-looking, not broken.
+      echo "  could not downsample; showing it unscaled" >&2
+      SHOWN="$ACTIVE"
+    fi
   fi
 fi
 
@@ -356,7 +382,9 @@ fi
 if [ "${applied:-0}" != 1 ]; then
   pkill -x hyprpaper >/dev/null 2>&1 || true
   sleep 0.3
-  hyprpaper -c "$PAPER_CONF" >/dev/null 2>&1 &
+  # 9>&-: the daemon must not inherit the switch lock, or it holds it for
+  # its whole life and every later switch waits out the timeout.
+  hyprpaper -c "$PAPER_CONF" 9>&- >/dev/null 2>&1 &
   sleep 1
   if command -v hyprctl >/dev/null 2>&1; then
     for _ in $(seq 15); do
