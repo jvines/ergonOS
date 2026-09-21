@@ -26,12 +26,12 @@ d=$(su - "$U" -c "$H/ergonOS/bin/ergon-doctor" 2>&1 | grep -E ' backup ')
 printf '%s\n' "$d" | grep -q 'nothing leaves this disk' \
   && ok "doctor: an unconfigured machine is told nothing leaves the disk" || bad "doctor unconfigured: $d"
 
-backup_roundtrip() {  # backup_roundtrip LABEL REPO
-  local label=$1 repo=$2 canary="$H/ergon-backup-canary.txt" sum out
+backup_roundtrip() {  # backup_roundtrip LABEL REPO [ALLOW_LOCAL]
+  local label=$1 repo=$2 allow=${3:-} canary="$H/ergon-backup-canary.txt" sum out
   backup_reset
   head -c 4096 /dev/urandom | base64 > "$canary"; chown "$U:$U" "$canary"
   sum=$(sha256sum "$canary" | cut -d' ' -f1)
-  out=$("$B" init "$repo" 2>&1) && ok "$label: repository created" || { bad "$label: init failed"; printf '%s\n' "$out" | tail -5; return; }
+  out=$(ERGON_BACKUP_ALLOW_LOCAL=$allow "$B" init "$repo" 2>&1) && ok "$label: repository created" || { bad "$label: init failed"; printf '%s\n' "$out" | tail -5; return; }
   # Through the unit, as the timer would run it -- not the script by hand.
   if systemctl start ergon-backup.service \
      && [ "$(systemctl show -p Result --value ergon-backup.service)" = success ]; then
@@ -41,21 +41,31 @@ backup_roundtrip() {  # backup_roundtrip LABEL REPO
   fi
   "$B" restic snapshots --json 2>/dev/null | grep -q '"/home"' \
     && ok "$label: the snapshot records /home, not the btrfs snapshot's path" || bad "$label: snapshot paths wrong"
-  findmnt -rn -o TARGET | grep -q ergon-backup && bad "$label: a backup mount leaked" || ok "$label: no mount left behind"
+  grep -q "^ergon-backup: from snapshot" /var/lib/ergon/backup/last-run.log \
+    && ok "$label: backed up from a read-only btrfs snapshot" || bad "$label: backed up the live tree, not a snapshot"
   btrfs subvolume list / 2>/dev/null | grep -q 'ergon-backup' \
     && bad "$label: the btrfs snapshot was left behind" || ok "$label: the btrfs snapshot was removed"
   rm -f "$canary"
   out=$("$B" restore "$canary" --to "/var/tmp/restore-$label" 2>&1) || { bad "$label: restore failed"; printf '%s\n' "$out" | tail -5; }
-  [ "$(sha256sum "/var/tmp/restore-$label$canary" 2>/dev/null | cut -d' ' -f1)" = "$sum" ] \
-    && ok "$label: the deleted file came back byte-identical" || bad "$label: restored file missing or different"
+  [ "$(su - "$U" -c "sha256sum '/var/tmp/restore-$label$canary'" 2>/dev/null | cut -d' ' -f1)" = "$sum" ] \
+    && ok "$label: the deleted file came back byte-identical, readable by $U" || bad "$label: restored file missing or different"
   d=$(su - "$U" -c "$H/ergonOS/bin/ergon-doctor" 2>&1 | grep -E ' backup ')
   printf '%s\n' "$d" | grep -qE 'ok +backup +last good backup' \
     && ok "$label: doctor reports the backup as fresh" || bad "$label: doctor: $d"
-  "$B" check >/dev/null 2>&1 && ok "$label: prune + read-back check passed" || bad "$label: check failed"
+  "$B" check >/dev/null 2>&1 && grep -q "^last_check=[0-9]* ok" /var/lib/ergon/backup/status \
+    && ok "$label: prune + read-back check passed" || bad "$label: check failed or was skipped"
   rm -rf "/var/tmp/restore-$label"
 }
 
-backup_roundtrip local /var/tmp/ergon-backup-repo
+# A path that is not a mounted share is this disk: init must refuse it, or an
+# unmounted NAS becomes a green "off-disk" backup on the SSD it should survive.
+backup_reset
+out=$("$B" init /nas-not-mounted/ergon-backup 2>&1) \
+  && bad "init accepted a repository on the same disk as /home" \
+  || { printf '%s\n' "$out" | grep -q "same disk" && ok "init refuses a repository on the same disk as /home" || bad "init refused, but not for the right reason: $out"; }
+[ ! -f /etc/ergon/backup.conf ] && ok "a refused init leaves no config" || bad "config written despite the refusal"
+
+backup_roundtrip local /var/tmp/ergon-backup-repo 1   # same disk on purpose: the suite must not need the NAS
 rm -rf /var/tmp/ergon-backup-repo
 
 if [ -n "${BACKUP_NAS:-}" ]; then

@@ -51,7 +51,10 @@ HOST=$(uname -n); HOST=${HOST%%.*}
 ok()   { printf '   ok   %s\n' "$*"; }
 warn() { printf '   !!   %s\n' "$*" >&2; }
 die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
-root() { [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"; }
+# Not sudo -E: init would then prove the repository with YOUR ssh agent or cloud
+# credentials, which the root timer never has, and every run after it would be
+# logged as unreachable.
+root() { [ "$(id -u)" = 0 ] || exec sudo --preserve-env=ERGON_BACKUP_ALLOW_LOCAL "$0" "$@"; }
 
 # The status file is what `ergon doctor` reads, as the user, so it holds no
 # secrets: times, counts, and the last error line.
@@ -73,15 +76,20 @@ load() {
 }
 
 # Reachable and opens with our key, within a bound: an NFS share that has gone
-# away must not hang a timer for hours.
-reachable() { timeout "${REACH_TIMEOUT:-120}" restic cat config >/dev/null 2>"$STATE/reach.err"; }
+# away must not hang a timer for hours. Lock-free, so a lock left by a killed
+# run does not read as "unreachable". restic exits 12 for a wrong key: that is
+# a failure to report, not a NAS that is out of reach.
+reachable() { timeout "${REACH_TIMEOUT:-120}" restic --no-lock cat config >/dev/null 2>"$STATE/reach.err"; }
 
+# Snapshots from before a reinstall are tagged at adopt time and never forgotten
+# until released, or a week of backups of the new, empty /home would age them out.
 keep() { KEEP=(--keep-daily "${KEEP_DAILY:-7}" --keep-weekly "${KEEP_WEEKLY:-5}"
-              --keep-monthly "${KEEP_MONTHLY:-12}" --host "$HOST"); }
+              --keep-monthly "${KEEP_MONTHLY:-12}" --host "$HOST"
+              --keep-tag ergon-pre-adopt); }
 
 # One run at a time. Two would share the snapshot's name, and the second would
 # delete the first one's snapshot out from under it.
-lock() { install -d -m 755 "$STATE"; exec 9>"$STATE/lock"; flock -n 9 || die "a backup or check is already running"; }
+lock() { install -d -m 755 "$STATE"; exec 9>"$STATE/lock"; flock -w 3600 9 || die "a backup or check has held the lock for an hour"; }
 
 cmd="${1:-status}"; [ $# -gt 0 ] && shift
 case "$cmd" in
@@ -93,9 +101,26 @@ init)
   [ "${1:-}" = --key ] && adopt="${2:?--key needs a file}"
   command -v restic >/dev/null || die "restic is not installed"
   [ ! -f "$CONF" ] || die "already configured ($CONF); remove it first to point somewhere else"
+  # A path on a share that is not mounted -- or is mistyped -- is a plain
+  # directory on THIS disk, and restic init would create the "off-disk"
+  # repository there without a word, green in doctor forever after.
+  case "$repo" in
+    local:*) p=${repo#local:} ;;
+    *:*)     p="" ;;              # sftp:, rest:, s3:, ... -- elsewhere by definition
+    *)       p=$repo ;;
+  esac
+  if [ -n "$p" ] && [ "${ERGON_BACKUP_ALLOW_LOCAL:-}" != 1 ]; then
+    a=$(readlink -m "$p"); until [ -e "$a" ]; do a=$(dirname "$a"); done
+    src() { findmnt -no SOURCE -T "$1" | sed 's/\[.*//'; }
+    [ "$(findmnt -no FSTYPE -T "$a")" != tmpfs ] || die "$repo would be in RAM ($a is tmpfs)"
+    [ "$(src "$a")" != "$(src /home)" ] \
+      || die "$repo is on the same disk as /home — is the share mounted? (ERGON_BACKUP_ALLOW_LOCAL=1 if you mean it)"
+  fi
   install -d -m 755 /etc/ergon "$STATE"
   if [ -n "$adopt" ]; then
-    install -m 400 "$adopt" "$KEYF"
+    # Staged: a key that turns out not to open the repository must not replace
+    # the one already here.
+    install -m 400 "$adopt" "$KEYF.new"
   elif [ ! -f "$KEYF" ]; then
     ( umask 277; head -c 32 /dev/urandom | base64 | tr -d '\n=' > "$KEYF" )
   fi
@@ -116,8 +141,16 @@ CHECK_SUBSET=5%
 CONF
   load
   if [ -n "$adopt" ]; then
-    reachable || { rm -f "$CONF"; die "the key does not open $repo: $(tail -1 "$STATE/reach.err")"; }
-    ok "adopted $repo; its snapshots are yours to restore"
+    RESTIC_PASSWORD_FILE="$KEYF.new" reachable \
+      || { rm -f "$CONF" "$KEYF.new"; die "the key does not open $repo: $(tail -1 "$STATE/reach.err")"; }
+    mv -f "$KEYF.new" "$KEYF"
+    restic tag --add ergon-pre-adopt >/dev/null \
+      || { rm -f "$CONF"; die "could not mark $repo's existing snapshots to be kept"; }
+    ok "adopted $repo"
+    printf '   Its snapshots are tagged ergon-pre-adopt and kept until you release them.\n'
+    printf '   Restore from them, not from latest -- the timer will soon back up this empty /home:\n'
+    printf '       ergon backup restic snapshots --tag ergon-pre-adopt\n'
+    printf '       ergon backup restore /home/YOU --snapshot ID\n'
   elif reachable; then
     ok "$repo already holds a repository this key opens; using it"
   else
@@ -137,11 +170,16 @@ now)
   load
   lock
   setstate last_attempt "$(date +%s)"
-  if ! reachable; then
+  rrc=0; reachable || rrc=$?
+  if [ "$rrc" = 12 ]; then
+    setstate last_fail "$(date +%s) the key no longer opens the repository"
+    die "the key does not open $REPO"
+  elif [ "$rrc" != 0 ]; then
     setstate last_skip "$(date +%s) $(tail -1 "$STATE/reach.err" | cut -c1-200)"
     warn "repository unreachable, skipped: $(tail -1 "$STATE/reach.err")"
     exit 0   # away from the NAS is not a failure; doctor reports the age instead
   fi
+  restic unlock >/dev/null 2>&1 || true   # stale locks only: a killed run's
   args=(backup --one-file-system --exclude-caches --host "$HOST" --tag ergon)
   while IFS= read -r e; do [ -n "$e" ] && args+=(--exclude "$e"); done <<< "${EXCLUDES:-}"
   # shellcheck disable=SC2206
@@ -164,6 +202,7 @@ trap cleanup EXIT
 [ -d "$snap" ] && btrfs subvolume delete "$snap" >/dev/null   # left by a killed run
 btrfs subvolume snapshot -r "$top/$sv" "$snap" >/dev/null
 mount --bind "$snap" /home
+echo "ergon-backup: from snapshot $snap" >&2
 restic "$@" /home
 SNAP
     rc=0
@@ -179,7 +218,15 @@ SNAP
     setstate last_ok "$(date +%s)"
     setstate last_ok_note "$(grep -E '^(Added to the repository|processed)' "$log" | tr '\n' ' ' | cut -c1-200)"
     setstate last_fail ""
-    [ "$rc" = 3 ] && warn "some files could not be read; see $log"
+    # From a read-only snapshot as root, nothing is unreadable for permissions
+    # or vanishes mid-run. Unreadable here means read errors -- how a failing
+    # SSD first shows -- so it is recorded for doctor, not only logged.
+    if [ "$rc" = 3 ]; then
+      setstate last_partial "$(date +%s) $(grep -m1 -iE '^error' "$log" | cut -c1-160)"
+      warn "some files could not be read; see $log"
+    else
+      setstate last_partial ""
+    fi
     ok "backed up: $(grep -E '^processed' "$log" | tail -1)"
   else
     setstate last_fail "$(date +%s) $(grep -v '^$' "$log" | tail -1 | cut -c1-200)"
@@ -191,7 +238,14 @@ check)
   root check "$@"
   load
   lock
-  if ! reachable; then warn "repository unreachable, check skipped"; exit 0; fi
+  rrc=0; reachable || rrc=$?
+  if [ "$rrc" = 12 ]; then
+    setstate last_check "$(date +%s) FAILED the key no longer opens the repository"
+    die "the key does not open $REPO"
+  elif [ "$rrc" != 0 ]; then
+    warn "repository unreachable, check skipped"; exit 0   # doctor ages the last check
+  fi
+  restic unlock >/dev/null 2>&1 || true
   log="$STATE/last-check.log"
   keep
   if restic forget "${KEEP[@]}" --prune > "$log" 2>&1 \
@@ -234,7 +288,11 @@ restore)
   [ ${#inc[@]} -gt 0 ] || die "usage: ergon backup restore PATH... [--to DIR] [--snapshot ID]"
   to="${to:-/var/tmp/ergon-restore-$(date +%Y%m%d-%H%M%S)}"
   [ ! -e "$to" ] || [ -z "$(ls -A "$to")" ] || die "$to is not empty; restore never overwrites"
+  [ -e "$to" ] || install -d -m 755 "$to"   # restic would make it root 0700, out of your reach
   restic restore "$snap" --target "$to" "${inc[@]}"
+  # restic says nothing when an include matches nothing -- after a reinstall,
+  # "latest" is the new, empty /home, and silence would read as success.
+  [ -n "$(ls -A "$to")" ] || die "nothing matched in snapshot $snap — list them with: ergon backup restic snapshots, then --snapshot ID"
   ok "restored into $to — the tree under it mirrors the original paths"
   ;;
 

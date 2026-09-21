@@ -127,8 +127,12 @@ if [ ! -f "$BK" ]; then
   rec warn "backup" "nothing leaves this disk — ergon backup init REPO"
 else
   last=$(bk last_ok); fail=$(bk last_fail); chk=$(bk last_check); skip=$(bk last_skip)
+  part=$(bk last_partial)
   if [ -n "$fail" ] && [ "${fail%% *}" -gt "${last:-0}" ]; then
     rec fail "backup" "last run FAILED: ${fail#* } (ergon backup status)"
+  elif [ -n "$part" ]; then
+    # From a read-only snapshot as root, unreadable means read errors.
+    rec fail "backup" "the last run could not read some files — disk errors? ${part#* } (/var/lib/ergon/backup/last-run.log)"
   elif [ -z "$last" ]; then
     rec warn "backup" "configured, never completed${skip:+ — last skip: ${skip#* }}"
   elif [ $(( ($(date +%s) - last) / 86400 )) -ge "${ERGON_BACKUP_STALE_DAYS:-3}" ]; then
@@ -139,7 +143,13 @@ else
   case "$chk" in
     *FAILED*) rec fail "backup-check" "the repository failed its check: ${chk#* FAILED }" ;;
     "")       rec warn "backup-check" "the repository has never been verified (weekly timer)" ;;
-    *)        rec ok "backup-check" "verified $(( ($(date +%s) - ${chk%% *}) / 86400 )) day(s) ago" ;;
+    *) a=$(( ($(date +%s) - ${chk%% *}) / 86400 ))
+       # Two missed weekly runs: skipped away from the NAS, or the timer is gone.
+       if [ "$a" -ge "${ERGON_BACKUP_CHECK_STALE_DAYS:-14}" ]; then
+         rec warn "backup-check" "last verified $a day(s) ago; nothing pruned or read back since"
+       else
+         rec ok "backup-check" "verified $a day(s) ago"
+       fi ;;
   esac
   systemctl is-enabled ergon-backup.timer >/dev/null 2>&1 \
     || rec fail "backup-timer" "ergon-backup.timer is not enabled — nothing runs it (ergon backup install)"
