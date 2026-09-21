@@ -29,10 +29,15 @@ PY="$VENV/bin/python"
 # wallpaper that needs its own dependency tree is a wallpaper that breaks.
 [ -x "$PY" ] || { echo "no python at $PY — run: pyfleet ensure" >&2; exit 1; }
 
+# A generator is a module that defines generate(). Not every module in
+# wallpaper/ is one: lib.py and render.py never were, and shared helpers
+# (pen.py, the vector pen behind the line-art generators) arrived later.
+# Excluding by name would need updating for every new helper, and missing one
+# makes --all try to render a module that cannot, so the test is the contract
+# itself.
 _generators() {
-  find -L "$GENDIR" -maxdepth 1 -name '*.py' \
-    -not -name 'lib.py' -not -name 'render.py' -printf '%f\n' 2>/dev/null \
-    | sed 's/\.py$//' | sort
+  grep -l '^def generate(' "$GENDIR"/*.py 2>/dev/null \
+    | sed 's#.*/##; s/\.py$//' | sort
 }
 
 # The palette resolves exactly as it does in ergon-theme and ergon-wallpaper,
