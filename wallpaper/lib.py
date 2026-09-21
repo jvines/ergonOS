@@ -27,7 +27,7 @@ GROUND_LIFT = 0.75
 # House defaults for colour, chosen by looking at a blend x saturation grid on
 # a real desktop rather than by taste in the abstract.
 #
-# 2.8 is high, and deliberately so: blending structure toward a dark ground
+# 2.5 is high, and deliberately so: blending structure toward a dark ground
 # desaturates it, and every earlier attempt to fix "washed" by raising blend
 # only made the image louder without making it more colourful. Saturation is
 # the knob that actually answers that complaint. Exposure lifts value slightly
@@ -35,8 +35,8 @@ GROUND_LIFT = 0.75
 #
 # These are DEFAULTS. A generator that wants to be quieter sets its own, and a
 # user who disagrees passes --saturation / --exposure or edits one number.
-DEFAULT_SATURATION = 2.8
-DEFAULT_EXPOSURE = 1.15
+DEFAULT_SATURATION = 2.5
+DEFAULT_EXPOSURE = 1.1
 
 
 def load_palette(path):
