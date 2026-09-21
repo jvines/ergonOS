@@ -27,6 +27,8 @@ count and embarrassingly parallel in r, so the loop runs `keep` times over an
 array of two hundred thousand orbits and never once over a point.
 """
 
+import os
+
 import numpy as np
 
 # Sparse: 22% of cells carry anything at all in the default view, and in the
@@ -38,6 +40,24 @@ import numpy as np
 # click. Pulled back to 0.5 for that reason and no other.
 TITLE = "Logistic map"
 SUBTITLE = "x' = r x (1-x),  period-doubling cascade"
+
+
+# The field is handed over ALREADY in 0..1 -- see generate() for why -- so the
+# renderer is told to take it as it is.
+SCALE = "unit"
+GAMMA = 1.0
+
+# How the chaotic half is stretched, inside the generator.
+MIST_SCALE = "equalize"
+MIST_GAMMA = 2.0
+
+# Line width of the periodic branches: a Gaussian pen, as a fraction of the
+# frame height, so the look does not change with resolution. 0.6 px at 4K.
+PEN = 0.6 / 2400
+
+# Anti-aliasing at the resolution being coloured; see lib.render.
+SOFTEN = 0.8
+HUE_SMOOTH = 3.0
 
 BLEND = 0.78
 
@@ -61,20 +81,30 @@ PRESETS = {
 }
 
 
-def generate(size, seed=0, sub=3, ninit=24, burn=1000, keep=1400):
-    w, h = size
-    names = sorted(PRESETS)
-    window = PRESETS[names[seed % len(PRESETS)]]
-    r0, r1 = window[:2]
+# An orbit counts as periodic when it repeats to within a quarter of a pixel
+# after `burn` steps, with any period up to this. Beyond it the orbit is drawn
+# as chaos, which at this resolution is what it looks like.
+MAX_PERIOD = 128
 
-    rng = np.random.default_rng(seed)
+
+def _strip(args):
+    """One vertical strip of the diagram: columns c0..c1, every row.
+
+    Columns never interact -- each is a different map -- so the diagram splits
+    into strips with no communication at all, one per core. Returns two
+    fields for the strip: the periodic branches, as line coverage, and the
+    chaotic density, as counts.
+    """
+    c0, c1, w, h, r0, r1, xlo, xhi, seed, sub, ninit, burn, keep = args
+    rng = np.random.default_rng([seed, c0])
+    cw = c1 - c0
 
     # `sub` values of r inside each pixel column, placed at random within the
     # column rather than on a lattice. A regular grid of r beats against the
     # period of the orbit and prints moire through the cascade; jitter turns
     # that into the anti-aliasing of a curve, which is what it actually is.
-    col = np.repeat(np.arange(w), sub)
-    r = r0 + (r1 - r0) * (col + rng.random(col.size)) / w
+    col = np.repeat(np.arange(cw), sub)
+    r = r0 + (r1 - r0) * (c0 + col + rng.random(col.size)) / w
 
     # `ninit` starts per r. For almost every r the map has a single attractor,
     # so these are not different outcomes -- they are the same invariant
@@ -88,6 +118,96 @@ def generate(size, seed=0, sub=3, ninit=24, burn=1000, keep=1400):
 
     for _ in range(burn):
         x = r * x * (1.0 - x)
+
+    scale = h / (xhi - xlo)
+
+    # PERIODIC OR CHAOTIC, decided per orbit at the resolution being drawn.
+    #
+    # The two halves of this diagram are different kinds of object and cannot
+    # share one brightness scale. A periodic branch puts all of a column's
+    # samples into one or two pixels; the chaotic mist spreads the same count
+    # over thousands. Any stretch that makes the mist visible clips the
+    # branches ~200x over, and a clipped line cannot be anti-aliased: a pixel
+    # the curve half-covers saturates exactly like one it fully covers, so the
+    # line alternates between one and two pixels wide -- a staircase, however
+    # carefully each point was deposited. Measured on the 4K cascade.
+    #
+    # So the branches are drawn as LINES, brightness proportional to how much
+    # of the pixel the line covers, and only the chaotic orbits make density.
+    hist = np.empty((MAX_PERIOD, x.size))
+    for k in range(MAX_PERIOD):
+        x = r * x * (1.0 - x)
+        hist[k] = x
+    close = np.abs(hist[-1] - hist[-2::-1]) < 0.25 / scale
+    period = np.where(close.any(0), close.argmax(0) + 1, 0)
+    del hist, close
+    # A period-k orbit visits each of its k branches keep/k times. This weight
+    # makes every branch total exactly 1 per column when all the column's
+    # orbits are periodic, whatever k is -- so a period-8 branch is as bright
+    # as the fixed point, as in every drawing of this diagram.
+    wline = period / float(keep * sub * ninit)
+    wchaos = (period == 0).astype(float)
+
+    # Deposited BILINEARLY in x: each point is split between the two rows it
+    # falls between, by how close it is to each. The columns need no such
+    # treatment; r is already jittered within each one.
+    #
+    # One guard row above and below, so a point just outside the frame can
+    # still give its share to the edge row. Anything further out is dropped,
+    # not clamped: a cropped preset leaves two thirds of the attractor outside
+    # the frame, and clamping would stack all of it onto the edge rows as two
+    # bright rules that are not in the dynamics.
+    H = h + 2
+    dump = H * cw                      # one extra bin for everything outside
+    line = np.zeros(dump + 1)
+    mist = np.zeros(dump + 1)
+
+    # Buffered and binned through bincount in batches. Per step it would
+    # allocate the whole strip for a scatter of a few tens of thousands of
+    # points; np.add.at avoids that and is an order of magnitude slower.
+    per_call = max(1, min(keep, 4_000_000 // x.size))
+    idx = np.empty((per_call, x.size), dtype=np.intp)
+    frac = np.empty((per_call, x.size))
+
+    def flush(k):
+        i = idx[:k].ravel()
+        up = np.minimum(i + cw, dump)
+        f = frac[:k].ravel()
+        for acc, wt in ((line, wline), (mist, wchaos)):
+            wt = np.broadcast_to(wt, (k, wt.size)).ravel()
+            acc += np.bincount(i, weights=(1.0 - f) * wt, minlength=dump + 1)
+            acc += np.bincount(up, weights=f * wt, minlength=dump + 1)
+
+    k = 0
+    for _ in range(keep):
+        x = r * x * (1.0 - x)
+        # xhi - x, not x - xlo: x increases upward, because everyone has seen
+        # this diagram that way up and a flipped one reads as a mistake.
+        # +1 for the guard row, -0.5 so a point on a pixel centre lands wholly
+        # in that pixel.
+        t = (xhi - x) * scale + 0.5
+        row = np.floor(t).astype(np.intp)
+        ok = (row >= 0) & (row < H - 1)
+        idx[k] = np.where(ok, row * cw + col, dump)
+        frac[k] = np.where(ok, t - row, 0.0)
+        k += 1
+        if k == per_call:
+            flush(k)
+            k = 0
+    if k:
+        flush(k)
+    return (c0, line[:dump].reshape(H, cw)[1:-1],
+            mist[:dump].reshape(H, cw)[1:-1])
+
+
+def generate(size, seed=0, sub=3, ninit=24, burn=1000, keep=4000, jobs=None,
+             mist_scale=None, mist_gamma=None, pen=None):
+    import lib
+
+    w, h = size
+    names = sorted(PRESETS)
+    window = PRESETS[names[seed % len(PRESETS)]]
+    r0, r1 = window[:2]
 
     # The frame is the map's own, not a guess. For r in [2, 4] the interval
     # [f(f(1/2)), f(1/2)] -- the first two images of the critical point --
@@ -109,43 +229,43 @@ def generate(size, seed=0, sub=3, ninit=24, burn=1000, keep=1400):
     # are a parameter and a state variable. They have no common unit, there is
     # no aspect to preserve, and forcing one would frame empty r beyond 4 where
     # the map escapes to minus infinity. r fills the width, x fills the height.
-    field = np.zeros(h * w)
-    scale = h / (xhi - xlo)
+    #
+    # keep=4000 rather than the 1400 this started with: the chaotic mist
+    # spreads a column's samples over thousands of rows, and at 1400 it was
+    # visibly grainy once the curves were anti-aliased and the grain was the
+    # only roughness left.
+    jobs = jobs or os.cpu_count() or 4
+    edges = np.linspace(0, w, jobs + 1).astype(int)
+    work = [(edges[j], edges[j + 1], w, h, r0, r1, xlo, xhi, seed, sub, ninit,
+             burn, keep) for j in range(jobs) if edges[j + 1] > edges[j]]
+    line = np.zeros((h, w), dtype=np.float32)
+    mist = np.zeros((h, w), dtype=np.float32)
+    if len(work) > 1:
+        import multiprocessing as mp
+        with mp.Pool(len(work)) as pool:
+            for c0, lp, mp_ in pool.imap_unordered(_strip, work):
+                line[:, c0:c0 + lp.shape[1]] = lp
+                mist[:, c0:c0 + mp_.shape[1]] = mp_
+    else:
+        _, line[:], mist[:] = _strip(work[0])
 
-    # Accumulate through bincount in chunks. Per step it would allocate and
-    # zero a 5.5M-cell array fourteen hundred times over for a scatter of two
-    # hundred thousand points; np.add.at avoids that and is an order of
-    # magnitude slower than either. Chunking costs ~60 MB and neither.
-    per_call = max(1, min(keep, 8_000_000 // x.size))
-    buf = np.empty((per_call, x.size), dtype=np.intp)
-    dump = h * w  # one extra bin, for everything outside the frame
-    k = 0
-    for _ in range(keep):
-        x = r * x * (1.0 - x)
-        # xhi - x, not x - xlo: x increases upward, because everyone has seen
-        # this diagram that way up and a flipped one reads as a mistake.
-        t = (xhi - x) * scale
-        row = t.astype(np.intp)
-        # Dropped, not clamped. A cropped preset leaves two thirds of the
-        # attractor outside the frame, and clamping would stack all of it onto
-        # the edge rows as two bright rules that are not in the dynamics.
-        buf[k] = np.where((t >= 0) & (row < h), row * w + col, dump)
-        k += 1
-        if k == per_call:
-            field += np.bincount(buf.ravel(), minlength=dump + 1)[:dump]
-            k = 0
-    if k:
-        field += np.bincount(buf[:k].ravel(), minlength=dump + 1)[:dump]
+    # The branches, through a Gaussian pen. Each column of a branch holds a
+    # total of 1 spread over one or two rows; blurring by sigma spreads it
+    # over a profile whose peak is 1 / (sigma sqrt(2 pi)), so rescaling by
+    # that makes a branch exactly 1 at its centre wherever it sits between
+    # pixel rows -- the whole point. Blurred after the strips are joined, so
+    # no seam appears at a strip edge.
+    sigma = (PEN if pen is None else pen) * h
+    line = np.clip(lib.smooth(line, sigma) * sigma * np.sqrt(2 * np.pi),
+                   0.0, 1.0)
 
-    # Handed over as raw counts, on a linear scale, which is not the obvious
-    # choice: the density spans five decades, because a periodic curve puts
-    # every sample a column has into one or two cells while the chaotic fan
-    # spreads the same count over a thousand rows. That argues for SCALE="log",
-    # and log is wrong here. The curves are delta functions and should clip --
-    # lib clips at the 99.5th percentile, and since the curves are a rounding
-    # error in the cell count, that percentile lands inside the chaotic mist,
-    # which is exactly where the structure worth resolving is. Log instead
-    # spends most of the range lifting the mist into a flat slab and erases the
-    # caustics -- the bright arcs swept out by the images of the critical point
-    # -- which are the whole reason the chaotic half is interesting to look at.
-    return field.reshape(h, w)
+    # The mist stretched on its own, now that nothing 200x brighter shares its
+    # range. Done here rather than in the renderer because the renderer has
+    # one stretch per image and this image needs two.
+    mist = lib.normalise(mist,
+                         gamma=MIST_GAMMA if mist_gamma is None else mist_gamma,
+                         scale=MIST_SCALE if mist_scale is None else mist_scale)
+
+    # Where a column holds both -- a window edge falling inside one pixel --
+    # the brighter wins rather than the two adding to more than full.
+    return np.maximum(line, mist)
