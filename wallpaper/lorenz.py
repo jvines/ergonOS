@@ -48,6 +48,14 @@ SUBTITLE = "3 orbits, t=120,  sigma=10, rho=28, beta=8/3   (Lorenz 1963)"
 SCALE = "zscale"
 GAMMA = 0.4
 
+# Defringe and demoire (see lib.render). The lines here are one pixel wide and
+# gamma 0.4 is a hard stretch, so without these every line beaded and changed
+# colour at its edges, and the lobes' hundreds of near-parallel lines turned
+# the beading into moire. 0.8 / 3.0 chosen against 1.2 / 4.0 and against none,
+# at 8K, on a real desktop.
+SOFTEN = 0.8
+HUE_SMOOTH = 3.0
+
 # BLEND 0.85: nearly the palette's own colour, with a trace of the ground left
 # in it.
 #

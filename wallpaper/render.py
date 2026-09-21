@@ -69,6 +69,10 @@ def main():
         getattr(mod, "EXPOSURE", lib.DEFAULT_EXPOSURE)
     ramp = getattr(mod, "RAMP", "full")
     reverse = args.reverse or getattr(mod, "REVERSE", False)
+    # In pixels of the image being coloured, because both are anti-aliasing
+    # filters: they act at the scale of the pixel grid whatever its size.
+    soften = getattr(mod, "SOFTEN", 0.0)
+    hue_smooth = getattr(mod, "HUE_SMOOTH", 0.0)
 
     t0 = time.time()
     kw = {}
@@ -113,6 +117,7 @@ def main():
         np.save(args.save_field, field)
     lib.render(field, palette, args.out, blend=blend, reverse=reverse, ramp=ramp,
                scale=scale, gamma=gamma, saturation=sat, exposure=expo,
+               soften=soften, hue_smooth=hue_smooth,
                title=None if args.no_title else getattr(mod, "TITLE", None),
                subtitle=None if args.no_title else getattr(mod, "SUBTITLE", None))
     print(f"{args.out} ({w}x{h}, {time.time() - t0:.1f}s)")

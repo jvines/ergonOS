@@ -185,6 +185,10 @@ def normalise(field, gamma=0.45, clip=99.5, scale="linear"):
     unstable fixed points at the lobe centres are all visible at once.
     """
     field = np.asarray(field, dtype=float)
+    if scale == "unit":
+        # Already in 0..1: the generator did its own stretch, because the
+        # image needed more than one (see bifurcation.py).
+        return np.clip(field, 0.0, 1.0) ** gamma
     if scale == "equalize":
         # HISTOGRAM EQUALISATION: colour by rank, not by value.
         #
@@ -234,7 +238,8 @@ def normalise(field, gamma=0.45, clip=99.5, scale="linear"):
 
 def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
            scale="linear", title=None, subtitle=None,
-           saturation=1.0, exposure=1.0, ramp="full"):
+           saturation=1.0, exposure=1.0, ramp="full", soften=0.0,
+           hue_smooth=0.0):
     """Write `field` as a wallpaper PNG in the palette's colours.
 
     `blend` is how far toward full colour the structure is taken. It is well
@@ -247,9 +252,43 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    # SOFTEN: band-limit the field before any nonlinearity touches it.
+    #
+    # A line one pixel wide is not equally bright wherever it lies: centred on
+    # a pixel it is one pixel at full value, straddling two it is two at half.
+    # The stretch below is strongly nonlinear -- gamma 0.4 turns those halves
+    # into 0.76 each -- so a straddling line carries half as much light again,
+    # and a slightly tilted one alternates between the two along its length.
+    # That is beading, and hundreds of near-parallel beaded lines are a moire
+    # that no downsampling can remove, because it is in the image rather than
+    # in the resampling. A Gaussian of ~0.8 px makes every line wide enough
+    # that where it falls between pixels no longer changes its profile.
+    if soften > 0:
+        field = smooth(np.asarray(field, dtype=np.float32), soften)
     v = normalise(field, gamma=gamma, scale=scale)
     cmap = ramp_cmap(palette, reverse=reverse, ramp=ramp)
-    rgb = cmap(v)[..., :3]
+    if hue_smooth > 0:
+        # DEFRINGE: hue from the neighbourhood, opacity from the pixel.
+        #
+        # The colormap reads one number as both brightness and hue, so the
+        # soft edge of a line -- lower in value than its core -- came out a
+        # different COLOUR as well as dimmer: pink core, blue edge, cyan rim.
+        # Here the hue is the value-weighted mean over a few pixels, which is
+        # the same across a line's width and along its length, and the
+        # pixel's own value only sets how far it is laid over the ground. An
+        # edge is then the line's colour fading out, not another colour. In a
+        # uniform region the two agree and nothing changes.
+        vv = v.astype(np.float32)
+        den = smooth(vv, hue_smooth)
+        num = smooth(vv * vv, hue_smooth)
+        hue = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0)
+        alpha = np.where(hue > 1e-6, np.clip(v / np.maximum(hue, 1e-6), 0, 1), 0.0)
+        del vv, den, num
+        g0 = np.asarray(cmap(0.0)[:3])
+        rgb = g0 + (cmap(hue)[..., :3] - g0) * alpha[..., None]
+        del hue, alpha
+    else:
+        rgb = cmap(v)[..., :3]
 
     # The ground is a GRADIENT, not a flat fill.
     #
