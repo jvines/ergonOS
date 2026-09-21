@@ -59,7 +59,13 @@ import numpy as np
 # accessible region, so this cannot take the 0.55 an attractor takes. 0.40
 # keeps the caustics legible while the haze stays under a window's noise floor.
 TITLE = "Double pendulum"
-SUBTITLE = "ensemble caustic, m1=m2, l1=l2"
+# Three pendulums, started 0.01 rad apart, four minutes of motion, drawn as
+# the continuous path of each lower bob. Chosen by looking at 40 s, 3, 4, 5, 6
+# and 12 minutes on a real desktop: 40 s is a few stray lines, twelve minutes
+# is a haze, and four is where the paths fill the reachable region without
+# losing the individual swings. The earlier ensemble of 3000 released 1e-10
+# apart was the opposite trade and read as mush.
+SUBTITLE = "path of the lower bob, three pendulums, 4 minutes"
 
 # zscale, the IRAF/DS9 stretch. These density fields have the same shape as an
 # astronomical frame -- a core orders of magnitude brighter than the structure
@@ -140,8 +146,8 @@ def _frame(energy, n=1024):
     return (-x, x, -2.0, (-a - b)[ok].max())
 
 
-def generate(size, seed=0, ensemble=3000, steps=12_000, dt=0.002,
-             spread=1e-10):
+def generate(size, seed=0, ensemble=3, steps=120_000, dt=0.002,
+             spread=0.01):
     """steps * dt = 24 s of pendulum, which is not an arbitrary duration.
 
     At lambda ~= 1.2 /s a 1e-10 rad perturbation needs ln(3e-3 / 1e-10) /
@@ -200,7 +206,11 @@ def generate(size, seed=0, ensemble=3000, steps=12_000, dt=0.002,
     if k > 1:
         field += histogram2d(bx[:k], by[:k], size, extent=extent, zoom=1.0,
                              path=True)
-    return field
+    # Flipped vertically. The raster's rows grow downward while physical y
+    # grows up, so without this the pendulum is drawn hanging upward: released
+    # from rest, the bob can never rise above its starting height, and the
+    # reachable region came out flat along the BOTTOM instead of the top.
+    return field[::-1]
 
 
 def generate_rods(size, seed=0, ensemble=60, spread=1e-10, dt=0.002,
@@ -256,3 +266,64 @@ def generate_rods(size, seed=0, ensemble=60, spread=1e-10, dt=0.002,
         field += histogram2d(xs, ys, size, extent=extent, fit="contain",
                              zoom=1.0, path=True)
     return field
+
+
+def generate_flip(size, seed=0, t_max=20.0, dt=0.01, flip_on="either",
+                  rows=None, **kw):
+    """The flip-time map: every PIXEL is a pendulum.
+
+    x is the initial upper angle theta1 and y the initial lower angle theta2,
+    both over [-pi, pi], released from rest. Each pixel is integrated until one
+    arm passes over the top (|theta| > pi) and its value is how long that took.
+    Low-energy starts near the centre can never flip at all and stay at zero --
+    the empty lens in the middle -- while the chaotic region breaks into
+    filaments at every scale, because neighbouring starting positions diverge.
+
+    This is the double pendulum's sensitivity to initial conditions shown
+    directly, as a field over the initial conditions themselves, rather than
+    inferred from where one pendulum's tip went. It also fills the screen, which
+    the trajectory renderings never could without becoming a haze.
+
+    Vectorised over the whole grid: the pixels ARE the ensemble. Pendulums that
+    have flipped are dropped from the working set, so the late steps cost only
+    the ones still swinging.
+    """
+    w, h = size
+    th1_0 = np.linspace(-np.pi, np.pi, w)
+    th2_0 = np.linspace(np.pi, -np.pi, h)       # +pi at the top row
+    # rows=(r0, r1) computes one horizontal band of the full grid. Every pixel
+    # is an independent pendulum, so the map splits across processes and across
+    # machines with no communication at all -- which is what makes a 4K,
+    # supersampled map (37 million pendulums, ~2 core-hours) take minutes.
+    if rows is not None:
+        th2_0 = th2_0[rows[0]:rows[1]]
+    h = th2_0.size
+    T1, T2 = np.meshgrid(th1_0, th2_0)
+    th1 = T1.ravel().copy(); th2 = T2.ravel().copy()
+    n = th1.size
+
+    y = np.stack([th1, th2, np.zeros(n), np.zeros(n)])
+    flip_t = np.zeros(n)
+    active = np.arange(n)
+    t = 0.0
+    steps = int(t_max / dt)
+    for _ in range(steps):
+        y = _step(y, dt)
+        t += dt
+        a1 = np.abs(y[0]) > np.pi
+        a2 = np.abs(y[1]) > np.pi
+        flipped = (a1 | a2) if flip_on == "either" else a2
+        if flipped.any():
+            flip_t[active[flipped]] = t
+            keep = ~flipped
+            y = y[:, keep]
+            active = active[keep]
+            if active.size == 0:
+                break
+
+    # Early flips should be BRIGHT and never-flipped should be ground, so the
+    # value is how much of the budget was left when it flipped. The map is the
+    # interesting structure; the log keeps the fast-flipping outer region from
+    # swamping the slow filaments nearer the lens.
+    val = np.where(flip_t > 0, np.log1p(t_max - flip_t + dt), 0.0)
+    return val.reshape(h, w)

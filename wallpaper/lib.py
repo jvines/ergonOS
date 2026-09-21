@@ -59,7 +59,7 @@ def load_palette(path):
     return out
 
 
-def ramp_cmap(palette, reverse=False):
+def ramp_cmap(palette, reverse=False, ramp="full"):
     """A colormap from the palette's five-step ramp, grounded in BG0.
 
     BG0 is the first stop rather than the ramp's own dark end, so that empty
@@ -67,7 +67,21 @@ def ramp_cmap(palette, reverse=False):
     has no edge. A wallpaper whose corners are a slightly different dark from
     the compositor's is worse than one with no structure at all.
     """
-    stops = [palette["COOL_BG0"]] + [palette[f"COOL_{i}"] for i in range(5)]
+    # How many of the palette's colours the image may use.
+    #
+    # "full" -- all five ramp stops -- suits sparse structure: lines on an empty
+    # ground, where each colour covers a small area and the ramp reads as depth.
+    # On a SCREEN-FILLING field with fine filaments it is a disaster: every
+    # colour appears everywhere at once and the result is rainbow noise. Those
+    # want one hue ("mono": ground to the palette's accent) or two ("duo").
+    if ramp == "mono":
+        stops = [palette["COOL_BG0"], palette["COOL_ACCENT"]]
+    elif ramp == "duo":
+        stops = [palette["COOL_BG0"], palette["COOL_1"], palette["COOL_3"]]
+    elif ramp == "warm":
+        stops = [palette["COOL_BG0"], palette["COOL_3"], palette["COOL_4"]]
+    else:
+        stops = [palette["COOL_BG0"]] + [palette[f"COOL_{i}"] for i in range(5)]
     if reverse:
         stops = [stops[0]] + stops[1:][::-1]
 
@@ -171,13 +185,41 @@ def normalise(field, gamma=0.45, clip=99.5, scale="linear"):
     unstable fixed points at the lobe centres are all visible at once.
     """
     field = np.asarray(field, dtype=float)
+    if scale == "equalize":
+        # HISTOGRAM EQUALISATION: colour by rank, not by value.
+        #
+        # For a field whose values bunch up -- most pendulums in the phase map
+        # flip quickly, so most pixels share nearly the same value -- any
+        # value-based stretch hands most of the colour range to that bulk and
+        # squeezes the interesting structure into a sliver at one end. Ranking
+        # instead gives every colour an equal share of the lit pixels, so the
+        # detail spreads across the whole ramp and no single colour floods the
+        # screen. Empty pixels (0) are left out of the ranking and stay exactly
+        # on the ground colour. gamma still applies after, to bias the share.
+        out = np.zeros_like(field)
+        lit = field > 0
+        if lit.any():
+            vals = field[lit]
+            ranks = np.argsort(np.argsort(vals, kind="stable"), kind="stable")
+            out[lit] = (ranks + 1) / vals.size
+        return np.clip(out, 0.0, 1.0) ** gamma
     if scale == "zscale":
         # Empty cells must stay at exactly 0 so they land on the desktop
         # background; zscale's z1 is usually above zero, which would lift the
         # whole panel off the ground colour and put a visible rectangle on the
         # desktop. So the floor is forced to 0 and only z2 is taken from the
         # fit.
-        _, z2 = zscale_limits(field)
+        #
+        # Fitted on the LIT pixels only. The empty ground is not data: it is
+        # where nothing was drawn. Including it made the fit resolution-
+        # dependent -- at 8K the lines are thinner relative to the frame, ~75%
+        # of pixels are empty, the sorted sample is dominated by zeros and the
+        # ceiling collapsed BELOW the typical line pixel. Measured: Lorenz's z2
+        # fell from 2.26 at 4K to 0.80 at 8K, pinning 71% of its lines to the
+        # top of the ramp -- one solid colour -- while the same field at 4K
+        # spread across it.
+        lit = field[field > 0]
+        _, z2 = zscale_limits(lit) if lit.size else (0.0, 0.0)
         if z2 <= 0:
             z2 = float(field.max()) or 1.0
         return np.clip(field / z2, 0.0, 1.0) ** gamma
@@ -192,7 +234,7 @@ def normalise(field, gamma=0.45, clip=99.5, scale="linear"):
 
 def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
            scale="linear", title=None, subtitle=None,
-           saturation=1.0, exposure=1.0):
+           saturation=1.0, exposure=1.0, ramp="full"):
     """Write `field` as a wallpaper PNG in the palette's colours.
 
     `blend` is how far toward full colour the structure is taken. It is well
@@ -206,7 +248,7 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
     import matplotlib.pyplot as plt
 
     v = normalise(field, gamma=gamma, scale=scale)
-    cmap = ramp_cmap(palette, reverse=reverse)
+    cmap = ramp_cmap(palette, reverse=reverse, ramp=ramp)
     rgb = cmap(v)[..., :3]
 
     # The ground is a GRADIENT, not a flat fill.

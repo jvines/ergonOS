@@ -67,6 +67,8 @@ def main():
         getattr(mod, "SATURATION", lib.DEFAULT_SATURATION)
     expo = args.exposure if args.exposure is not None else \
         getattr(mod, "EXPOSURE", lib.DEFAULT_EXPOSURE)
+    ramp = getattr(mod, "RAMP", "full")
+    reverse = args.reverse or getattr(mod, "REVERSE", False)
 
     t0 = time.time()
     kw = {}
@@ -109,7 +111,7 @@ def main():
             field = lib.downsample(field, ss)
     if args.save_field:
         np.save(args.save_field, field)
-    lib.render(field, palette, args.out, blend=blend, reverse=args.reverse,
+    lib.render(field, palette, args.out, blend=blend, reverse=reverse, ramp=ramp,
                scale=scale, gamma=gamma, saturation=sat, exposure=expo,
                title=None if args.no_title else getattr(mod, "TITLE", None),
                subtitle=None if args.no_title else getattr(mod, "SUBTITLE", None))
