@@ -123,6 +123,12 @@ ok "snapshot + cache timers"
 # missing -- a desktop installed some other way is unaffected.
 "$ERGON/bin/ergon-boot-guard" install || warn "boot guard not installed (see the message above)"
 
+# Snapshots live on the disk they protect. The backup timers go in now; they do
+# nothing until `ergon backup init REPO` says where, and ergon doctor warns
+# until then -- a repository and its key are the one step that cannot be
+# chosen for you.
+sudo "$ERGON/bin/ergon-backup" install || warn "backup timers not installed (see the message above)"
+
 # ---------------------------------------------------------------------------
 say "no floppy controller"
 # Nothing made since the 1990s has one, but the emulated i440fx machine presents

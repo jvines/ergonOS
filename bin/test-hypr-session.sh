@@ -24,6 +24,10 @@ PASSPHRASE="${LUKS_PASSPHRASE:-testpass123}"
 USERPASS="${USER_PASSWORD:-testuser123}"
 VMHOST="${HOSTNAME_NEW:-testarch}"
 USERNAME="${USERNAME:-jayvains}"
+# An NFS export to rehearse the backup restore against, e.g.
+# ERGON_TEST_NAS=192.168.0.85:/mnt/user/jvnas. Unset, only the local repository
+# is exercised: the suite must not need the NAS to pass.
+BACKUP_NAS="${ERGON_TEST_NAS:-}"
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -91,7 +95,7 @@ expect {
   "SHARE_OK" {}
 }
 
-send "echo '$USERPASS' | sudo -S bash /mnt/test/arch-vm/guest-desktop.sh\r"
+send "echo '$USERPASS' | sudo -S env BACKUP_NAS=$BACKUP_NAS bash /mnt/test/arch-vm/guest-desktop.sh\r"
 expect {
   timeout { puts "\n!! the desktop test did not finish"; exit 1 }
   -re {DESKTOP_RESULT=[0-9]+} {}

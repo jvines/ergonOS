@@ -1066,5 +1066,9 @@ grep -q 'ergon explain' "$H/.codex/AGENTS.md" 2>/dev/null \
   && ok "codex AGENTS.md reads through to the content" \
   || bad "$H/.codex/AGENTS.md is present but unreadable or empty"
 
+# The off-disk backup: provisioning installed it, and it round-trips.
+# shellcheck source=guest-backup.sh
+. "$SHARE/test/arch-vm/guest-backup.sh"
+
 [ "$F" -gt 0 ] && dump_log
 finish

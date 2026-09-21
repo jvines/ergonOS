@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# ergon:summary=Back up /home off this disk, and restore from it
+# ergon:group=system
+# ergon:args=init REPO [--key FILE] | now | check | status | restore PATH... [--to DIR] | key | restic ARGS
+#
+# Every snapper snapshot lives on the same disk as the data it protects, so
+# they cover a bad update and nothing else. A dead SSD takes the snapshots with
+# it. This puts /home somewhere else.
+#
+#   init REPO      create a repository and this machine's key. REPO is anything
+#                  restic takes: a path (an NFS mount of the NAS), sftp:,
+#                  rest:, s3:. With --key FILE, adopt an existing repository
+#                  instead -- the reinstall case.
+#   now            back up now; what the daily timer runs
+#   check          prune to the retention policy, then read back a sample of
+#                  the stored data; what the weekly timer runs
+#   status         last backup, last check, and why a run did not happen
+#   restore PATH   restore PATH from the newest backup into a NEW directory
+#                  (never over the live file); --to DIR, --snapshot ID
+#   key            print the repository password
+#   restic ARGS    restic itself, with this machine's repository and key --
+#                  `ergon backup restic snapshots`, `... mount /mnt`, `... find`
+#
+# restic, not btrfs send. The NAS is not btrfs, so send/receive would mean a
+# chain of stream files: unverifiable without replaying it, one bad link
+# breaks every restore after it, and there is no getting one file back. A
+# restic repository deduplicates, encrypts, checks itself, and restores a
+# single file as readily as the tree.
+#
+# The KEY is the whole backup. The repository is encrypted with it, and the
+# only copy on this machine is on the disk the backup exists to survive. init
+# prints it; keep it somewhere that is not this laptop.
+#
+# What is backed up is a read-only btrfs snapshot of /home, not the live tree,
+# so a file being written mid-run is captured whole or not at all. The
+# snapshot is taken beside @home at the top of the filesystem -- never inside
+# @, where an interrupted run would leave a nested subvolume in the tree a
+# rollback replaces -- and bind-mounted over /home in a private mount
+# namespace, so the backup records the paths you will ask for at restore time.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+CONF="${ERGON_BACKUP_CONF:-/etc/ergon/backup.conf}"
+KEYF="${ERGON_BACKUP_KEY:-/etc/ergon/backup.key}"
+STATE="${ERGON_BACKUP_STATE:-/var/lib/ergon/backup}"
+UNITS=/etc/systemd/system
+# The kernel's name for this machine. Not `hostname`: that is inetutils, which
+# a minimal Arch install does not have.
+HOST=$(uname -n); HOST=${HOST%%.*}
+
+ok()   { printf '   ok   %s\n' "$*"; }
+warn() { printf '   !!   %s\n' "$*" >&2; }
+die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
+root() { [ "$(id -u)" = 0 ] || exec sudo -E "$0" "$@"; }
+
+# The status file is what `ergon doctor` reads, as the user, so it holds no
+# secrets: times, counts, and the last error line.
+setstate() {  # setstate KEY VALUE
+  mkdir -p "$STATE"
+  local f="$STATE/status" t
+  t=$(mktemp "$STATE/.status.XXXXXX")
+  { grep -v "^$1=" "$f" 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } > "$t"
+  chmod 644 "$t"; mv "$t" "$f"
+}
+
+load() {
+  [ -f "$CONF" ] || die "no backup configured — run: ergon backup init REPO"
+  # shellcheck disable=SC1090
+  . "$CONF"
+  export RESTIC_REPOSITORY="$REPO" RESTIC_PASSWORD_FILE="$KEYF"
+  export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-/var/cache/ergon-backup}"
+  command -v restic >/dev/null || die "restic is not installed"
+}
+
+# Reachable and opens with our key, within a bound: an NFS share that has gone
+# away must not hang a timer for hours.
+reachable() { timeout "${REACH_TIMEOUT:-120}" restic cat config >/dev/null 2>"$STATE/reach.err"; }
+
+keep() { KEEP=(--keep-daily "${KEEP_DAILY:-7}" --keep-weekly "${KEEP_WEEKLY:-5}"
+              --keep-monthly "${KEEP_MONTHLY:-12}" --host "$HOST"); }
+
+# One run at a time. Two would share the snapshot's name, and the second would
+# delete the first one's snapshot out from under it.
+lock() { install -d -m 755 "$STATE"; exec 9>"$STATE/lock"; flock -n 9 || die "a backup or check is already running"; }
+
+cmd="${1:-status}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+
+init)
+  root init "$@"
+  repo="${1:?usage: ergon backup init REPO [--key FILE]}"; shift
+  adopt=""
+  [ "${1:-}" = --key ] && adopt="${2:?--key needs a file}"
+  command -v restic >/dev/null || die "restic is not installed"
+  [ ! -f "$CONF" ] || die "already configured ($CONF); remove it first to point somewhere else"
+  install -d -m 755 /etc/ergon "$STATE"
+  if [ -n "$adopt" ]; then
+    install -m 400 "$adopt" "$KEYF"
+  elif [ ! -f "$KEYF" ]; then
+    ( umask 277; head -c 32 /dev/urandom | base64 | tr -d '\n=' > "$KEYF" )
+  fi
+  install -m 600 /dev/stdin "$CONF" <<CONF
+# ergon backup -- written by \`ergon backup init\`. Sourced as bash.
+REPO=$(printf '%q' "$repo")
+PATHS="/home"
+# restic --exclude patterns, one per line. Directories tagged CACHEDIR.TAG are
+# skipped as well. Everything here is either rebuilt on demand or not yours.
+EXCLUDES="/home/*/.cache
+/home/*/.local/share/Trash
+/home/*/.local/share/pyfleet
+/home/*/.local/share/containers"
+KEEP_DAILY=7
+KEEP_WEEKLY=5
+KEEP_MONTHLY=12
+CHECK_SUBSET=5%
+CONF
+  load
+  if [ -n "$adopt" ]; then
+    reachable || { rm -f "$CONF"; die "the key does not open $repo: $(tail -1 "$STATE/reach.err")"; }
+    ok "adopted $repo; its snapshots are yours to restore"
+  elif reachable; then
+    ok "$repo already holds a repository this key opens; using it"
+  else
+    restic init >/dev/null || { rm -f "$CONF"; die "restic init failed for $repo"; }
+    ok "created $repo"
+  fi
+  setstate configured "$(date +%s)"
+  printf '\n   The repository key -- the ONLY thing that can read this backup:\n\n       %s\n\n' "$(cat "$KEYF")"
+  printf '   Keep it OFF this machine (a password manager, your sops secrets).\n'
+  printf '   Restoring onto a new disk is:  ergon backup init %s --key FILE\n\n' "$repo"
+  systemctl is-enabled ergon-backup.timer >/dev/null 2>&1 || "$0" install \
+    || warn "the timers are not installed; run: ergon backup install"
+  ;;
+
+now)
+  root now "$@"
+  load
+  lock
+  setstate last_attempt "$(date +%s)"
+  if ! reachable; then
+    setstate last_skip "$(date +%s) $(tail -1 "$STATE/reach.err" | cut -c1-200)"
+    warn "repository unreachable, skipped: $(tail -1 "$STATE/reach.err")"
+    exit 0   # away from the NAS is not a failure; doctor reports the age instead
+  fi
+  args=(backup --one-file-system --exclude-caches --host "$HOST" --tag ergon)
+  while IFS= read -r e; do [ -n "$e" ] && args+=(--exclude "$e"); done <<< "${EXCLUDES:-}"
+  # shellcheck disable=SC2206
+  paths=(${PATHS:-/home})
+  log="$STATE/last-run.log"
+  if [ "${paths[*]}" = /home ] && [ "$(findmnt -no FSTYPE /home)" = btrfs ] \
+     && btrfs subvolume show /home >/dev/null 2>&1; then
+    # Crash-consistent: back up a read-only snapshot mounted AT /home, in a
+    # mount namespace nobody else sees. Passed with -c, not on stdin, so
+    # nothing it runs can read the rest of the script as input.
+    read -r -d '' SNAP <<'SNAP' || true
+set -euo pipefail
+dev=$(findmnt -no SOURCE /home | sed 's/\[.*//')
+sv=$(findmnt -no FSROOT /home); sv=${sv#/}
+top=/run/ergon-backup-top; snap="$top/$sv.ergon-backup"
+mkdir -p "$top"; mount -o subvolid=5 "$dev" "$top"
+cleanup() { cd /; umount /home 2>/dev/null || true
+            [ -d "$snap" ] && btrfs subvolume delete "$snap" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+[ -d "$snap" ] && btrfs subvolume delete "$snap" >/dev/null   # left by a killed run
+btrfs subvolume snapshot -r "$top/$sv" "$snap" >/dev/null
+mount --bind "$snap" /home
+restic "$@" /home
+SNAP
+    rc=0
+    unshare --mount --propagation private bash -c "$SNAP" ergon-backup "${args[@]}" \
+      > "$log" 2>&1 < /dev/null || rc=$?
+  else
+    rc=0; restic "${args[@]}" "${paths[@]}" > "$log" 2>&1 || rc=$?
+  fi
+  # restic exits 3 when some files could not be read but a snapshot WAS
+  # written: a partial backup, not a missing one.
+  if [ "$rc" = 0 ] || [ "$rc" = 3 ]; then
+    keep; restic forget "${KEEP[@]}" >/dev/null 2>>"$log" || true
+    setstate last_ok "$(date +%s)"
+    setstate last_ok_note "$(grep -E '^(Added to the repository|processed)' "$log" | tr '\n' ' ' | cut -c1-200)"
+    setstate last_fail ""
+    [ "$rc" = 3 ] && warn "some files could not be read; see $log"
+    ok "backed up: $(grep -E '^processed' "$log" | tail -1)"
+  else
+    setstate last_fail "$(date +%s) $(grep -v '^$' "$log" | tail -1 | cut -c1-200)"
+    die "backup failed (rc $rc); see $log"
+  fi
+  ;;
+
+check)
+  root check "$@"
+  load
+  lock
+  if ! reachable; then warn "repository unreachable, check skipped"; exit 0; fi
+  log="$STATE/last-check.log"
+  keep
+  if restic forget "${KEEP[@]}" --prune > "$log" 2>&1 \
+     && restic check --read-data-subset="${CHECK_SUBSET:-5%}" >> "$log" 2>&1; then
+    setstate last_check "$(date +%s) ok"
+    ok "repository pruned and checked ($CHECK_SUBSET of the data read back)"
+  else
+    setstate last_check "$(date +%s) FAILED $(grep -v '^$' "$log" | tail -1 | cut -c1-160)"
+    die "check failed; see $log"
+  fi
+  ;;
+
+status)
+  f="$STATE/status"
+  [ -f "$f" ] || { echo "   no backup configured — ergon backup init REPO"; exit 0; }
+  get() { sed -n "s/^$1=//p" "$f" | tail -1; }
+  ago() { [ -n "$1" ] && printf '%s (%s h ago)' "$(date -d "@${1%% *}" '+%F %R')" \
+                              "$(( ($(date +%s) - ${1%% *}) / 3600 ))" || printf 'never'; }
+  printf '   last backup   %s\n' "$(ago "$(get last_ok)")"
+  [ -n "$(get last_ok_note)" ] && printf '                 %s\n' "$(get last_ok_note)"
+  [ -n "$(get last_fail)" ]    && printf '   last FAILURE  %s — %s\n' "$(ago "$(get last_fail)")" "$(get last_fail | cut -d' ' -f2-)"
+  [ -n "$(get last_skip)" ]    && printf '   last skip     %s — %s\n' "$(ago "$(get last_skip)")" "$(get last_skip | cut -d' ' -f2-)"
+  printf '   last check    %s\n' "$(c=$(get last_check); [ -n "$c" ] && echo "$(ago "$c") ${c#* }" || echo never)"
+  for t in ergon-backup.timer ergon-backup-check.timer; do
+    printf '   %-13s %s\n' "${t%.timer}" "$(systemctl is-enabled "$t" 2>/dev/null || echo 'not installed')"
+  done
+  ;;
+
+restore)
+  root restore "$@"
+  load
+  snap=latest; to=""; inc=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --to) to="${2:?}"; shift 2 ;;
+      --snapshot) snap="${2:?}"; shift 2 ;;
+      *) inc+=(--include "$(readlink -m "$1")"); shift ;;
+    esac
+  done
+  [ ${#inc[@]} -gt 0 ] || die "usage: ergon backup restore PATH... [--to DIR] [--snapshot ID]"
+  to="${to:-/var/tmp/ergon-restore-$(date +%Y%m%d-%H%M%S)}"
+  [ ! -e "$to" ] || [ -z "$(ls -A "$to")" ] || die "$to is not empty; restore never overwrites"
+  restic restore "$snap" --target "$to" "${inc[@]}"
+  ok "restored into $to — the tree under it mirrors the original paths"
+  ;;
+
+key)   root key "$@"; load; cat "$KEYF"; echo ;;
+restic) root restic "$@"; load; exec restic "$@" ;;
+
+install)
+  root install "$@"
+  unit() {  # unit NAME DESCRIPTION SUBCOMMAND CALENDAR
+    install -Dm644 /dev/stdin "$UNITS/$1.service" <<UNIT
+# Written by ergon-backup install.
+[Unit]
+Description=$2
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=$CONF
+
+[Service]
+Type=oneshot
+ExecStart=$ERGON/bin/ergon-backup $3
+Nice=19
+IOSchedulingClass=idle
+UNIT
+    # Persistent: a laptop asleep at the appointed hour runs it on waking.
+    install -Dm644 /dev/stdin "$UNITS/$1.timer" <<UNIT
+[Unit]
+Description=$2 (timer)
+
+[Timer]
+OnCalendar=$4
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+  }
+  unit ergon-backup "Back up /home off this disk" now daily
+  unit ergon-backup-check "Prune and verify the off-disk backup" check weekly
+  systemctl daemon-reload
+  systemctl enable --now ergon-backup.timer ergon-backup-check.timer >/dev/null 2>&1
+  ok "backup timers enabled (daily backup, weekly prune + check)"
+  [ -f "$CONF" ] || warn "nothing is backed up until: ergon backup init REPO"
+  ;;
+
+-h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) die "unknown command $cmd (ergon backup --help)" ;;
+esac

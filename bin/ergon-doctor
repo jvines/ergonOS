@@ -115,6 +115,36 @@ else
   rec warn "rollback" "root is not btrfs; snapshots and rollback are unavailable"
 fi
 
+# --- off-disk backup ---------------------------------------------------------
+# Snapshots share the disk they protect, so without this a dead SSD is total
+# loss. Read from ergon-backup's status file, which is world-readable on
+# purpose: this runs as the user, and "cannot check without root" is no answer
+# to "is my work anywhere else". Away from the NAS a run is skipped, not
+# failed, so the age of the last good backup is what goes stale here.
+BK=/var/lib/ergon/backup/status
+bk() { sed -n "s/^$1=//p" "$BK" 2>/dev/null | tail -1; }
+if [ ! -f "$BK" ]; then
+  rec warn "backup" "nothing leaves this disk — ergon backup init REPO"
+else
+  last=$(bk last_ok); fail=$(bk last_fail); chk=$(bk last_check); skip=$(bk last_skip)
+  if [ -n "$fail" ] && [ "${fail%% *}" -gt "${last:-0}" ]; then
+    rec fail "backup" "last run FAILED: ${fail#* } (ergon backup status)"
+  elif [ -z "$last" ]; then
+    rec warn "backup" "configured, never completed${skip:+ — last skip: ${skip#* }}"
+  elif [ $(( ($(date +%s) - last) / 86400 )) -ge "${ERGON_BACKUP_STALE_DAYS:-3}" ]; then
+    rec warn "backup" "last good backup $(( ($(date +%s) - last) / 86400 )) day(s) ago${skip:+ — last skip: ${skip#* }}"
+  else
+    rec ok "backup" "last good backup $(( ($(date +%s) - last) / 3600 )) h ago"
+  fi
+  case "$chk" in
+    *FAILED*) rec fail "backup-check" "the repository failed its check: ${chk#* FAILED }" ;;
+    "")       rec warn "backup-check" "the repository has never been verified (weekly timer)" ;;
+    *)        rec ok "backup-check" "verified $(( ($(date +%s) - ${chk%% *}) / 86400 )) day(s) ago" ;;
+  esac
+  systemctl is-enabled ergon-backup.timer >/dev/null 2>&1 \
+    || rec fail "backup-timer" "ergon-backup.timer is not enabled — nothing runs it (ergon backup install)"
+fi
+
 # --- firmware --------------------------------------------------------------
 # Which BIOS this machine is actually running. Every vendor publishes a support
 # article telling you to install dmidecode and read this by hand; it is three

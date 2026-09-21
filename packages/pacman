@@ -119,6 +119,10 @@ power-profiles-daemon   # PPD, never TLP: the two conflict. ergon-hardware adds 
                         # drop-in that stops it desaturating an amdgpu panel.
 fwupd                   # firmware updates from LVFS (BIOS, fingerprint reader,
                         # docks, SSDs). ergon-sleep check reports pending ones.
+restic                  # ergon backup: /home off this disk. Snapshots share the
+                        # disk they protect; this is what survives a dead SSD.
+nfs-utils               # the NAS is an NFS share, and a restic repository is a
+                        # path on it. Not needed for an sftp: or rest: one.
 
 # --- graphics ------------------------------------------------------------
 # mesa and the loader are vendor-neutral and always needed; the ICD that
