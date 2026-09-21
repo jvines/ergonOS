@@ -115,11 +115,22 @@ def main():
             field = lib.downsample(field, ss)
     if args.save_field:
         np.save(args.save_field, field)
+    # The caption. A module whose caption depends on the seed -- which view,
+    # which parameters -- defines caption(seed) -> (title, subtitle).
+    #
+    # Assigning a module global from inside generate() looks equivalent and is
+    # not: re-colouring from a saved field, which every palette switch does,
+    # never calls generate(), so the caption silently reverted to the module's
+    # default. ergon-lint rejects that pattern for exactly this reason.
+    if callable(getattr(mod, "caption", None)):
+        title, subtitle = mod.caption(args.seed)
+    else:
+        title, subtitle = getattr(mod, "TITLE", None), getattr(mod, "SUBTITLE", None)
     lib.render(field, palette, args.out, blend=blend, reverse=reverse, ramp=ramp,
                scale=scale, gamma=gamma, saturation=sat, exposure=expo,
                soften=soften, hue_smooth=hue_smooth,
-               title=None if args.no_title else getattr(mod, "TITLE", None),
-               subtitle=None if args.no_title else getattr(mod, "SUBTITLE", None))
+               title=None if args.no_title else title,
+               subtitle=None if args.no_title else subtitle)
     print(f"{args.out} ({w}x{h}, {time.time() - t0:.1f}s)")
 
 

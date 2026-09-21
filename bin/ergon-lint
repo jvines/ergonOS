@@ -195,6 +195,32 @@ elif [ "$skills_seen" = 0 ]; then
   echo "  !!   no skills found under $ERGON/skills" >&2
 fi
 
+# Wallpaper captions and render settings must not be set from inside generate().
+#
+# render.py reads TITLE, SUBTITLE and the render settings off the module. A
+# generator that assigns them as globals inside generate() gets the right
+# caption on a fresh render and the WRONG one on every palette switch, which
+# re-colours a saved field without calling generate() at all. Nine generators
+# were written that way in one pass. A seed-dependent caption belongs in
+# caption(seed); see render.py.
+#
+# Tracked files only: this guards what the repository ships, and should not
+# fail on work in progress that has not been committed yet.
+if git -C "$ERGON" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  wp_files=$(git -C "$ERGON" ls-files 'wallpaper/*.py')
+else
+  wp_files=$(cd "$ERGON" && ls wallpaper/*.py 2>/dev/null || true)
+fi
+wp_bad=0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  while IFS=: read -r ln _; do
+    report "$f" "$ln" "render setting assigned inside a function -- it reverts when a palette switch re-colours the saved field; use caption(seed)"
+    wp_bad=$((wp_bad+1))
+  done < <(grep -nE '^[[:space:]]+global[[:space:]]+(TITLE|SUBTITLE|SCALE|GAMMA|BLEND|RAMP|REVERSE|SATURATION|EXPOSURE|SOFTEN|HUE_SMOOTH)\b' "$ERGON/$f" || true)
+done <<< "$wp_files"
+[ "$wp_bad" = 0 ] && echo "  ok   wallpaper generators take captions and settings from module level"
+
 # Every shipped background must have a provenance row.
 #
 # A wallpaper is redistributed to everyone who installs this OS, and an image's
