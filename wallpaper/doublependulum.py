@@ -71,7 +71,13 @@ SUBTITLE = "ensemble caustic, m1=m2, l1=l2"
 SCALE = "zscale"
 GAMMA = 0.4
 
-BLEND = 0.62
+# BLEND 1.0: the colormap undiluted.
+#
+# This started at 0.55 to keep a wallpaper from competing with the windows on
+# it, and every complaint since -- washed, dim, no colour -- traced back to
+# that one number. On a real desktop the undiluted version is the one that
+# reads. The constraint was wrong for these images.
+BLEND = 1.0
 
 G = 9.81  # g/l with l = 1 m; the only physical constant that matters here.
 

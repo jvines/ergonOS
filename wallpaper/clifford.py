@@ -55,7 +55,13 @@ SCALE = "zscale"
 # to the ground, and the ridges are what is left lit.
 GAMMA = 1.8
 
-BLEND = 0.75
+# BLEND 1.0: the colormap undiluted.
+#
+# This started at 0.55 to keep a wallpaper from competing with the windows on
+# it, and every complaint since -- washed, dim, no colour -- traced back to
+# that one number. On a real desktop the undiluted version is the one that
+# reads. The constraint was wrong for these images.
+BLEND = 1.0
 
 #
 # Log was tried because the core is visited orders of magnitude more than the

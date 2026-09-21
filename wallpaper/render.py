@@ -31,6 +31,8 @@ def main():
     # Default comes from the generator, which knows whether it fills the panel.
     ap.add_argument("--blend", type=float, default=None)
     ap.add_argument("--reverse", action="store_true")
+    ap.add_argument("--saturation", type=float, default=None)
+    ap.add_argument("--exposure", type=float, default=None)
     ap.add_argument("--fit", default=None, help="cover or contain")
     ap.add_argument("--zoom", type=float, default=None)
     ap.add_argument("--no-title", action="store_true")
@@ -61,6 +63,10 @@ def main():
     blend = args.blend if args.blend is not None else getattr(mod, "BLEND", 0.45)
     scale = getattr(mod, "SCALE", "linear")
     gamma = getattr(mod, "GAMMA", 0.45)
+    sat = args.saturation if args.saturation is not None else \
+        getattr(mod, "SATURATION", lib.DEFAULT_SATURATION)
+    expo = args.exposure if args.exposure is not None else \
+        getattr(mod, "EXPOSURE", lib.DEFAULT_EXPOSURE)
 
     t0 = time.time()
     kw = {}
@@ -104,7 +110,7 @@ def main():
     if args.save_field:
         np.save(args.save_field, field)
     lib.render(field, palette, args.out, blend=blend, reverse=args.reverse,
-               scale=scale, gamma=gamma,
+               scale=scale, gamma=gamma, saturation=sat, exposure=expo,
                title=None if args.no_title else getattr(mod, "TITLE", None),
                subtitle=None if args.no_title else getattr(mod, "SUBTITLE", None))
     print(f"{args.out} ({w}x{h}, {time.time() - t0:.1f}s)")

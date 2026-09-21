@@ -24,6 +24,20 @@ from matplotlib.colors import LinearSegmentedColormap
 # structure drawn on top of it.
 GROUND_LIFT = 0.75
 
+# House defaults for colour, chosen by looking at a blend x saturation grid on
+# a real desktop rather than by taste in the abstract.
+#
+# 2.8 is high, and deliberately so: blending structure toward a dark ground
+# desaturates it, and every earlier attempt to fix "washed" by raising blend
+# only made the image louder without making it more colourful. Saturation is
+# the knob that actually answers that complaint. Exposure lifts value slightly
+# on top.
+#
+# These are DEFAULTS. A generator that wants to be quieter sets its own, and a
+# user who disagrees passes --saturation / --exposure or edits one number.
+DEFAULT_SATURATION = 2.8
+DEFAULT_EXPOSURE = 1.15
+
 
 def load_palette(path):
     """Read a theme/*.env into {COOL_BG0: '#1A1A2E', ...}.
@@ -177,7 +191,8 @@ def normalise(field, gamma=0.45, clip=99.5, scale="linear"):
 
 
 def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
-           scale="linear", title=None, subtitle=None):
+           scale="linear", title=None, subtitle=None,
+           saturation=1.0, exposure=1.0):
     """Write `field` as a wallpaper PNG in the palette's colours.
 
     `blend` is how far toward full colour the structure is taken. It is well
@@ -213,6 +228,24 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
     t = (t * t * (3 - 2 * t))[..., None]
     bg = c0 + (c1 - c0) * t * GROUND_LIFT
     rgb = bg + (rgb - bg) * blend
+
+    # SATURATION and EXPOSURE, after the blend.
+    #
+    # Blending toward BG0 is what keeps a wallpaper from competing with the
+    # windows on it, but mixing a colour toward a dark grey desaturates as well
+    # as darkens -- so everything came out looking washed, which is a different
+    # complaint from "too bright" and needs a different knob. Raising blend
+    # instead would just make it louder, not more colourful.
+    #
+    # Done in HSV so hue is untouched: the palette decides hue and nothing here
+    # is entitled to move it. Saturation multiplies S, exposure multiplies V,
+    # both clipped.
+    if saturation != 1.0 or exposure != 1.0:
+        from matplotlib.colors import rgb_to_hsv, hsv_to_rgb
+        hsv = rgb_to_hsv(np.clip(rgb, 0, 1))
+        hsv[..., 1] = np.clip(hsv[..., 1] * saturation, 0, 1)
+        hsv[..., 2] = np.clip(hsv[..., 2] * exposure, 0, 1)
+        rgb = hsv_to_rgb(hsv)
 
     # Dither, for the same reason ergon-wallpaper dithers: a low-contrast image
     # spans few 8-bit levels and bands visibly on a large panel. One level of

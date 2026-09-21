@@ -48,7 +48,13 @@ SUBTITLE = "3 orbits, t=120,  sigma=10, rho=28, beta=8/3   (Lorenz 1963)"
 SCALE = "zscale"
 GAMMA = 0.4
 
-BLEND = 0.78
+# BLEND 1.0: the colormap undiluted.
+#
+# This started at 0.55 to keep a wallpaper from competing with the windows on
+# it, and every complaint since -- washed, dim, no colour -- traced back to
+# that one number. On a real desktop the undiluted version is the one that
+# reads. The constraint was wrong for these images.
+BLEND = 1.0
 
 # Log density: the lobes are orders of magnitude denser than the sheet between
 # them, so a linear scale renders the butterfly as one solid blob. See

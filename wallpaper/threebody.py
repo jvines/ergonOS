@@ -74,6 +74,14 @@ import numpy as np
 # cover is exactly background -- the hole inside the innermost caustic and the
 # corners past the outermost are empty, not dim -- so it can carry more colour
 # than a field without ever being the brightest thing on the screen.
+# 90 particles, not 16000.
+#
+# The arcs ARE trajectories, and an arc you can follow has to be drawn rather
+# than averaged with ten thousand others: at 16000 every part of the allowed
+# region is occupied by something at every moment, so the picture is a plate
+# bounded by the zero-velocity curve and nothing inside it reads. Steps rise as
+# the count falls, so the total drawn path length stays comparable and fewer
+# particles does not simply mean an emptier image.
 TITLE = "Restricted three-body problem"
 SUBTITLE = "Sun-Jupiter rotating frame, mu = 9.5388e-4"
 
@@ -87,7 +95,13 @@ SUBTITLE = "Sun-Jupiter rotating frame, mu = 9.5388e-4"
 SCALE = "zscale"
 GAMMA = 0.4
 
-BLEND = 0.59
+# BLEND 1.0: the colormap undiluted.
+#
+# This started at 0.55 to keep a wallpaper from competing with the windows on
+# it, and every complaint since -- washed, dim, no colour -- traced back to
+# that one number. On a real desktop the undiluted version is the one that
+# reads. The constraint was wrong for these images.
+BLEND = 1.0
 
 MU = 9.5388e-4
 
@@ -241,7 +255,7 @@ def _deriv(p):
     return np.stack([vx, vy, ax + 2.0 * vy, ay - 2.0 * vx])
 
 
-def generate(size, seed=0, ensemble=16_000, steps=4800, dt=0.010, chunk=300):
+def generate(size, seed=0, ensemble=90, steps=22_000, dt=0.010, chunk=300):
     names = sorted(PRESETS)
     c4, c3 = _jacobi_window()
     c = c4 + PRESETS[names[seed % len(PRESETS)]] * (c3 - c4)
