@@ -43,7 +43,17 @@ SUBTITLE = "x' = sin(ay) + c cos(ax),  y' = sin(bx) + d cos(by)"
 # filaments. A percentile clip cannot do that, and log flattens the density
 # ridges that ARE the filaments.
 SCALE = "zscale"
-GAMMA = 1.0
+# GAMMA 1.8 -- ABOVE one, and the opposite of what Lorenz wants.
+#
+# Clifford is a map, not a flow: consecutive iterates jump across the whole
+# shape, so there are no orbits to thin out and the point count only sets how
+# noisy the density estimate is. What reads as strands is the RIDGES of the
+# invariant density, standing on a smooth fill between them. At gamma 0.4 --
+# correct for Lorenz, whose structure is thin curves with nothing between them
+# -- that fill lifts to 0.68 of the ramp and the attractor renders as a solid
+# body with a few brighter lines on it. At 1.8 the fill sinks to 0.175, close
+# to the ground, and the ridges are what is left lit.
+GAMMA = 1.8
 
 BLEND = 0.75
 
