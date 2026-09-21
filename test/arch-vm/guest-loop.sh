@@ -39,8 +39,31 @@ done
 wld=$(basename "$(ls /run/user/1000/wayland-* 2>/dev/null | grep -v '\.lock$' | head -1)" 2>/dev/null)
 wld=${wld:-wayland-1}
 
+# The LIVE session, re-resolved for every request. The signature used to be
+# taken once, above, and a compositor restart broke that silently: the
+# OOM kill on 2026-09-21 restarted Hyprland, the dead instance's directory
+# stayed behind and sorted first, and every request after it -- including
+# `ergon-wallpaper` runs that then started a hyprpaper against the dead
+# session -- went to a compositor that no longer existed. The live one is the
+# directory whose hyprland.lock names a running PID; its second line is the
+# Wayland display.
+live_session() {
+  local d pid
+  for d in /run/user/1000/hypr/*/; do
+    pid=$(head -1 "${d}hyprland.lock" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      sig=$(basename "$d")
+      wld=$(sed -n 2p "${d}hyprland.lock" 2>/dev/null)
+      wld=${wld:-wayland-1}
+      return 0
+    fi
+  done
+  return 1
+}
+
 # As the user, in the session's environment. Root cannot talk to the compositor.
-run() { su - "$U" -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$sig WAYLAND_DISPLAY=$wld $1" 2>&1; }
+run() { live_session || true
+        su - "$U" -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$sig WAYLAND_DISPLAY=$wld $1" 2>&1; }
 
 echo "ready $sig $wld" > /out/loop-status
 
