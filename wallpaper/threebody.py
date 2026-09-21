@@ -85,7 +85,7 @@ SUBTITLE = "Sun-Jupiter rotating frame, mu = 9.5388e-4"
 # filaments. A percentile clip cannot do that, and log flattens the density
 # ridges that ARE the filaments.
 SCALE = "zscale"
-GAMMA = 1.0
+GAMMA = 0.4
 
 BLEND = 0.59
 

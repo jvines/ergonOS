@@ -40,6 +40,12 @@ def main():
     # on how long it takes.
     ap.add_argument("--save-field", default=None,
                     help="write the raw field as .npy for re-colouring")
+    # The counterpart: colour a field that was computed earlier. The field is
+    # PALETTE-INDEPENDENT -- a generator produces a scalar density and the
+    # palette only decides how that maps to colour -- so every palette can be
+    # served from one simulation.
+    ap.add_argument("--from-field", default=None,
+                    help="colour this saved .npy instead of simulating")
     ap.add_argument("--supersample", type=int, default=3,
                     help="render at this multiple of the panel, then average down")
     args = ap.parse_args()
@@ -73,10 +79,28 @@ def main():
     #
     # Done HERE rather than inside a generator so every generator gets it,
     # including the ones that build a field directly and never bin anything.
-    ss = max(1, args.supersample)
-    field = mod.generate((w * ss, h * ss), seed=args.seed, **kw)
-    if ss > 1:
-        field = lib.downsample(field, ss)
+    if args.from_field:
+        field = np.load(args.from_field)
+        # Downsample the FIELD to the requested size before colouring.
+        #
+        # Fields are stored at 4K because that is the master, but re-colouring
+        # for a palette switch only has to produce what will be shown. Colouring
+        # 9.2M pixels and then having the compositor scale them down costs about
+        # fifteen seconds an image; colouring 1M costs about one. Measured in
+        # the test VM, eight of the former saturated four vCPUs and made the
+        # session's own shells crawl, which is not an acceptable price for
+        # changing a colour.
+        #
+        # Area-averaged, and only by a whole number of pixels -- the common case
+        # by construction, since the field was rendered at the panel's aspect.
+        fh, fw = field.shape
+        if (fw, fh) != (w, h) and fw % w == 0 and fh % h == 0 and fw // w == fh // h:
+            field = lib.downsample(field, fw // w)
+    else:
+        ss = max(1, args.supersample)
+        field = mod.generate((w * ss, h * ss), seed=args.seed, **kw)
+        if ss > 1:
+            field = lib.downsample(field, ss)
     if args.save_field:
         np.save(args.save_field, field)
     lib.render(field, palette, args.out, blend=blend, reverse=args.reverse,

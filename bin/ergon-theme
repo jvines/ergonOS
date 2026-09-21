@@ -232,6 +232,20 @@ fi
 # a tty and from CI, where there is not.
 if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
   echo "   applying"
+  # Re-colour the generated backgrounds for the palette just chosen.
+  #
+  # They are coloured FROM the palette, so before this a palette switch left
+  # the new palette with no backgrounds at all and the desktop fell back to the
+  # plain gradient -- the images were not lost, they simply did not exist in
+  # that palette yet. Re-colouring runs from cached fields, so it is seconds
+  # rather than the minutes a re-simulation would take.
+  #
+  # Detached, because even seconds should not be spent between pressing the
+  # keybind and the palette appearing. It sets the background itself when it
+  # finishes.
+  if command -v ergon-wallpaper-gen >/dev/null 2>&1; then
+    ( setsid ergon-wallpaper-gen --recolour >/dev/null 2>&1 & ) || true
+  fi
   # GTK4 and libadwaita read the theme from gsettings, NOT from settings.ini,
   # so a light palette that only rewrote the ini would leave every GTK4 app
   # dark. Needs a session bus, which is why this is here and not in the

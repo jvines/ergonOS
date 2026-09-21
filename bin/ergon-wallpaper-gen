@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Compute wallpapers from simulations, in the active palette
 # ergon:group=theme
-# ergon:args=[--list | --all | GENERATOR [SEED]]
+# ergon:args=[--list | --all | --recolour | GENERATOR [SEED]]
 #
 # Wallpapers this machine computes for itself, rather than photographs it is
 # not licensed to redistribute.
@@ -51,6 +51,15 @@ PAL_NAME=$(basename "$PALETTE" .env)
 
 OUTDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/backgrounds/$PAL_NAME"
 
+# Fields are kept, and they are PALETTE-INDEPENDENT.
+#
+# A generator computes a scalar density; the palette only decides how that
+# density becomes colour. So the minutes of simulation are spent ONCE and every
+# palette is served from the same field in about a second -- which is what
+# makes `--recolour` on a palette switch possible at all. Without it, keeping
+# nine backgrounds in step with nineteen palettes would be 171 simulations.
+FIELDDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/fields"
+
 # Rendered ABOVE the panel, on purpose, and capped at 4K.
 #
 # A wallpaper generated at exactly the panel's resolution has no headroom: it
@@ -69,12 +78,17 @@ OUTDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/backgrounds/$PAL_NAME"
 # laptop showing a 16:9 image either crops the structure or pillarboxes it.
 # Only the aspect is taken from the monitor; the size is ours.
 LONG_EDGE=${ERGON_WALLPAPER_LONG_EDGE:-3840}
+# The panel itself, kept separately from the render target: masters are 4K,
+# re-coloured copies are panel-sized, and conflating the two is how a palette
+# switch ends up colouring 9.2M pixels to show 1M of them.
+PANEL=""
 if [ -n "${ERGON_WALLPAPER_SIZE:-}" ]; then
   SIZE="$ERGON_WALLPAPER_SIZE"
 elif command -v hyprctl >/dev/null 2>&1 \
      && _panel=$(hyprctl monitors -j 2>/dev/null \
                  | jq -r 'max_by(.width * .height) | "\(.width)x\(.height)"' 2>/dev/null) \
      && [ -n "$_panel" ] && [ "$_panel" != "null" ]; then
+  PANEL="$_panel"
   _pw=${_panel%x*}; _ph=${_panel#*x}
   # Never render SMALLER than the panel, which would be upscaled on display.
   if [ "$_pw" -ge "$LONG_EDGE" ]; then
@@ -91,14 +105,113 @@ fi
 
 _render() {
   local gen="$1" seed="${2:-0}"
-  mkdir -p "$OUTDIR"
+  mkdir -p "$OUTDIR" "$FIELDDIR"
   "$PY" "$GENDIR/render.py" \
     --generator "$gen" --palette "$PALETTE" \
     --size "$SIZE" --seed "$seed" \
+    --save-field "$FIELDDIR/$gen-$seed-$SIZE.npy" \
     --out "$OUTDIR/$gen-$seed.png"
 }
 
+# Colour every cached field into the ACTIVE palette, skipping what is already
+# current. Seconds per image against minutes to simulate one.
+# Is the palette this run was started for still the one in use?
+#
+# Cycling palettes starts a re-colour per switch, and a slow one from an
+# EARLIER palette will otherwise finish last and apply its own image over the
+# current one -- the desktop visibly reverting to the previous colours a few
+# seconds after changing. Every step checks, so a superseded run stops at the
+# next image instead of finishing work nobody wants.
+_still_current() {
+  local now
+  now=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette" 2>/dev/null || echo cool)
+  [ "$(basename "$now" .env)" = "$PAL_NAME" ]
+}
+
+_recolour() {
+  local made=0 gen seed fsize f base
+
+  # One at a time. flock is not about corruption -- two runs write different
+  # palettes' files -- but about not having four of them competing for the CPU
+  # of a machine whose desktop is meant to stay responsive.
+  local lock="${XDG_RUNTIME_DIR:-/tmp}/ergon-recolour.lock"
+  # WAIT for the lock rather than giving up on it.
+  #
+  # Skipping when busy looked right and was wrong: cycling palettes starts a
+  # run per switch, the first one holds the lock, and every later run -- 
+  # including the one for the palette actually chosen -- exits immediately. The
+  # desktop then keeps whichever palette happened to win the race, which reads
+  # exactly like the background reverting.
+  #
+  # Queue instead. Each run re-checks the active palette once it holds the
+  # lock, so the superseded ones cost a process and nothing else, and the last
+  # switch is the one that does the work.
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$lock"
+    flock -w 120 9 || { echo "  timed out waiting for another recolour"; return 0; }
+  fi
+  _still_current || { echo "  palette changed before starting; nothing to do"; return 0; }
+  [ -d "$FIELDDIR" ] || { echo "  no cached fields yet"; return 0; }
+  mkdir -p "$OUTDIR"
+  # The one currently on screen FIRST. Re-colouring the whole set takes as long
+  # as it takes, but the user is looking at ONE background and it should follow
+  # the palette immediately; the rest can arrive while they carry on.
+  local first="" want
+  want=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/background" 2>/dev/null || true)
+  case "$want" in */*) want=$(basename "$want" .png) ;; *) want="" ;; esac
+  [ -n "$want" ] && first=$(ls "$FIELDDIR"/"$want"-*.npy 2>/dev/null | head -1)
+
+  for f in $first $(ls "$FIELDDIR"/*.npy 2>/dev/null); do
+    [ -e "$f" ] || continue
+    # Skip the prioritised one when the loop reaches it again.
+    [ -n "$first" ] && [ "$f" = "$first" ] && [ "$made" -gt 0 ] && continue
+    base=$(basename "$f" .npy)              # <gen>-<seed>-<WxH>
+    fsize=${base##*-}; gen=${base%-*-*}; seed=${base#"$gen"-}; seed=${seed%-*}
+    _generators | grep -qx "$gen" || continue
+    _still_current || { echo "  palette changed; stopping"; return 0; }
+    # Skip when the PNG is already newer than the field it came from.
+    if [ -s "$OUTDIR/$gen-$seed.png" ] && [ "$OUTDIR/$gen-$seed.png" -nt "$f" ]; then
+      continue
+    fi
+    # nice + ionice: this is bulk work that must never make the session it is
+    # decorating feel slow. Eight 4K matplotlib renders will saturate a laptop
+    # -- measured by doing exactly that inside the test VM and making its
+    # shells crawl -- and none of it is urgent.
+    # Rendered at the PANEL size, not the field's 4K. A re-coloured background
+    # is for showing now; the 4K master is what ergon-wallpaper-gen produces
+    # when a generator is actually run. See render.py --from-field.
+    nice -n 19 ionice -c3 "$PY" "$GENDIR/render.py" \
+      --generator "$gen" --palette "$PALETTE" \
+      --size "${PANEL:-$SIZE}" --seed "$seed" \
+      --from-field "$f" \
+      --out "$OUTDIR/$gen-$seed.png" >/dev/null && made=$((made+1))
+    # Put it on screen the moment the one being looked at is ready.
+    if [ "$made" = 1 ] && [ -n "$want" ] && [ "$gen-$seed" = "$want" ] \
+       && _still_current && command -v ergon-wallpaper >/dev/null 2>&1; then
+      ergon-wallpaper --set "$OUTDIR/$gen-$seed.png" >/dev/null 2>&1 || true
+    fi
+  done
+  echo "  $made background(s) recoloured for $PAL_NAME"
+
+  # Put the equivalent background back on screen: the user was looking at, say,
+  # lorenz, and after a palette switch they should still be looking at lorenz
+  # rather than at the fallback gradient.
+  local prev
+  prev=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/background" 2>/dev/null || true)
+  case "$prev" in
+    */*) prev=$(basename "$prev") ;;
+    *)   prev="" ;;
+  esac
+  if [ -n "$prev" ] && [ -s "$OUTDIR/$prev" ] && _still_current \
+     && command -v ergon-wallpaper >/dev/null 2>&1; then
+    ergon-wallpaper --set "$OUTDIR/$prev" >/dev/null 2>&1 || true
+  fi
+}
+
 case "${1:---list}" in
+  --recolour|--recolor)
+    _recolour
+    ;;
   --list)
     echo "  generators (palette: $PAL_NAME, size: $SIZE)"
     _generators | sed 's/^/     /'
