@@ -71,13 +71,16 @@ SUBTITLE = "ensemble caustic, m1=m2, l1=l2"
 SCALE = "zscale"
 GAMMA = 0.4
 
-# BLEND 1.0: the colormap undiluted.
+# BLEND 0.85: nearly the palette's own colour, with a trace of the ground left
+# in it.
 #
 # This started at 0.55 to keep a wallpaper from competing with the windows on
 # it, and every complaint since -- washed, dim, no colour -- traced back to
-# that one number. On a real desktop the undiluted version is the one that
-# reads. The constraint was wrong for these images.
-BLEND = 1.0
+# that one number: mixing a colour toward a dark grey desaturates it as well as
+# darkening it. 0.85 was picked off a blend x saturation grid on a real
+# desktop. Fully undiluted (1.0) is a touch harder than what was chosen; 0.75
+# is the other side of it if this ever reads as too much.
+BLEND = 0.85
 
 G = 9.81  # g/l with l = 1 m; the only physical constant that matters here.
 
