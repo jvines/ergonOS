@@ -588,6 +588,49 @@ NB=${NB:-0}
 if [ "$NB" -gt 20 ]; then ok "$NB keybindings registered"; else bad "only $NB keybindings registered"; fi
 hq binds -j | grep -q '"description"' && ok "binds carry descriptions (ergon-keys works)" || bad "binds have no descriptions"
 
+# ERGON-24/23: SUPER+SHIFT+E must open the session menu now, not exit
+# instantly, and XF86PowerOff must reach it too but NOT as a `locked` bind --
+# fuzzel cannot draw over hyprlock, and on the Framework 13 that key IS the
+# fingerprint reader, so a locked bind there would queue an invisible menu
+# that pops up right after a fingerprint unlock. hyprctl cannot report WHAT a
+# Lua bind dispatches (every one shows dispatcher "__lua"), so this checks the
+# two things that do survive: the description hyprctl reports, and the config
+# source itself.
+if grep -q 'hl\.dsp\.exit()' "$H/.config/hypr/common/binds.lua" 2>/dev/null; then
+  bad "binds.lua still calls hl.dsp.exit() directly -- SUPER+SHIFT+E must open the session menu instead"
+else
+  ok "no direct hl.dsp.exit() left in binds.lua"
+fi
+hq binds -j | grep -q '"description": *"Session menu"' \
+  && ok "a bind describes itself as the session menu (hyprctl sees it registered)" \
+  || bad "no registered bind describes itself as the session menu"
+grep -qE '^bind\("SUPER \+ SHIFT \+ E".*ergon-session' "$H/.config/hypr/common/binds.lua" \
+  && ok "SUPER+SHIFT+E runs ergon-session" || bad "SUPER+SHIFT+E is not wired to ergon-session"
+grep -qE '^bind\("XF86PowerOff".*ergon-session' "$H/.config/hypr/common/binds.lua" \
+  && ok "XF86PowerOff runs ergon-session" || bad "XF86PowerOff is not wired to ergon-session"
+if grep -qE '^bind\("XF86PowerOff".*locked' "$H/.config/hypr/common/binds.lua" 2>/dev/null; then
+  bad "XF86PowerOff is bound locked -- fuzzel cannot draw over hyprlock, and this is the Framework fingerprint reader"
+else
+  ok "XF86PowerOff is not bound locked (a queued menu cannot pop up right after an unlock)"
+fi
+
+# Hibernate must appear in `ergon session --list` exactly when ergon-hardware
+# -- the one place that decision is made -- says hibernation is ready. This VM
+# is s2idle-only with working hibernation (see the lid assertions above), so
+# it must appear here; a machine without that must not offer an entry that
+# would fail the moment it is chosen.
+_hwd=$(usr "ergon-hardware detect" 2>&1)
+_sl=$(usr "ergon-session --list" 2>&1)
+if printf '%s\n' "$_hwd" | grep -Eq 'hibernation:[[:space:]]+yes'; then
+  printf '%s\n' "$_sl" | grep -qx hibernate \
+    && ok "ergon session --list offers hibernate (ergon-hardware says it is ready)" \
+    || bad "hibernation is ready but ergon session --list does not offer it"
+else
+  printf '%s\n' "$_sl" | grep -qx hibernate \
+    && bad "ergon session --list offers hibernate but ergon-hardware says it is not ready" \
+    || ok "ergon session --list correctly omits hibernate (not ready)"
+fi
+
 # Window rules and monitors.
 hq monitors -j | grep -q '"name"' && ok "a monitor is present" || bad "no monitors"
 

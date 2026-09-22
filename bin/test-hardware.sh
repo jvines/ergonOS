@@ -122,6 +122,7 @@ check "  reading the sensor by glob, not a device number" hasx "$D/etc/illuminan
 check "  and started" hasx "$T/log/systemctl" "enable --now illuminanced.service"
 check "profile matched by DMI: kernel parameter added" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet amdgpu.dcdebugmask=0x610"'
 check "  and grub.cfg regenerated" hasx "$T/log/grub" "-o $D/boot/grub/grub.cfg"
+check "power key: ignored by logind (ergon-session owns it)" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 reset_logs; apply fw
 check "a second apply does not add the parameter twice" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet amdgpu.dcdebugmask=0x610"'
 check "  nor regenerate grub.cfg" test ! -e "$T/log/grub"
@@ -134,6 +135,7 @@ check "i915 panel: no ABM drop-in" test ! -e "$D/etc/systemd/system/power-profil
 check "fprintd: restarted after resume" test -e "$D/etc/systemd/system/ergon-fprintd-resume.service"
 check "no light sensor: no illuminanced" not has "$T/log/pacman" "illuminanced"
 check "no profile matches: grub untouched" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"'
+check "power key: ignored by logind (no S3/hibernation dependency)" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 
 echo "== an AMD desktop"
 reset_logs; apply desk; D=$T/desk/dest
@@ -141,6 +143,7 @@ check "no lid config" test ! -e "$D/etc/systemd/logind.conf.d/10-lid.conf"
 check "amdgpu without a built-in panel: no ABM drop-in" test ! -e "$D/etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf"
 check "no fprintd: no resume unit" test ! -e "$D/etc/systemd/system/ergon-fprintd-resume.service"
 check "no sensor or backlight: no illuminanced" not has "$T/log/pacman" "illuminanced"
+check "power key: ignored by logind on a desktop with no laptop capabilities at all" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 
 echo "== a capability that goes away"
 R=$T/fw/root; D=$T/fw/dest
