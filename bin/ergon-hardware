@@ -137,37 +137,34 @@ EOF
     fi
   fi
 
-  # Battery: UPower's own CriticalPowerAction=Hibernate, when hibernation is
-  # actually ready. This is hardening, not a fix -- the default (Auto) already
-  # falls back through HybridSleep/Hibernate/PowerOff on its own at
-  # PercentageAction (2%), so a machine with nothing set here does not simply
-  # die. See ergon-battery for the real gap: a warning before that point.
-  #
-  # Written only when _hibernate_ready, for the same reason as the lid block
-  # above: forcing Hibernate on a machine with no resume= or no swap turns a
-  # critical-battery event into a hibernate attempt with nowhere to write the
-  # image, which fails closed at the worst possible time. Gated on
-  # upower.service existing at all, the same way the ABM block gates on
-  # power-profiles-daemon.service, rather than assuming it followed PPD onto
-  # every machine.
-  #
-  # UPower.conf.d IS read, confirmed by reading up-config.c's
-  # up_config_list_confd_files() rather than assumed: filenames must match
-  # ^([0-9][0-9])-([a-zA-Z0-9-_])*\.conf$, later files win field-by-field over
-  # the main UPower.conf and over earlier drop-ins. If a future upower drops
-  # that support this silently stops applying and _unput has nothing to do,
-  # which is why this is additive config rather than an edit to the vendor
-  # file -- see the card for why sedding UPower.conf itself was rejected.
-  if _hibernate_ready && _has_unit upower.service; then
-    _put /etc/UPower/UPower.conf.d/90-ergon-hibernate.conf <<EOF
-$MARK
-[UPower]
-CriticalPowerAction=Hibernate
-EOF
-    ok "battery: UPower CriticalPowerAction=Hibernate (hibernation ready)"
-  else
-    _unput /etc/UPower/UPower.conf.d/90-ergon-hibernate.conf
-  fi
+  # Battery: considered forcing UPower's own CriticalPowerAction=Hibernate
+  # here, as hardening for the gap after ergon-battery's own warnings but
+  # before UPower's PercentageAction (2%) kicks in. Reverted after checking
+  # upower's actual source (1.91.4, what Arch ships) rather than trusting the
+  # config file's own prose comment: UPower.conf's shipped default is already
+  # CriticalPowerAction=Auto, and up_backend_get_critical_action() in
+  # src/linux/up-backend.c maps "Auto" straight to logind's generic Sleep()
+  # -- a live call that picks suspend-then-hibernate, hybrid-sleep, hibernate
+  # or plain suspend itself, checking logind's own CanHibernate/CanSuspend at
+  # that moment. Naming "Hibernate" explicitly instead makes UPower walk its
+  # own fallback table STARTING at Hibernate and only forward to PowerOff --
+  # it never falls back to a plain suspend. Our _hibernate_ready is a static,
+  # install-time check (kernel offers `disk`, resume=, some swap active);
+  # logind's live CanHibernate additionally weighs free swap against resident
+  # memory right then. A long sampler run can fill swap between provisioning
+  # and an actual critical-battery event, so CanHibernate goes false exactly
+  # when it matters, and forcing Hibernate then means PowerOff -- the run is
+  # lost -- where Auto's Sleep() would have suspended instead and kept it in
+  # RAM. That makes this "hardening" strictly worse than doing nothing, so it
+  # is not implemented (the card marks it optional). UPower.conf.d itself IS
+  # read -- confirmed from up-config.c's up_config_list_confd_files() and
+  # from the vendor package shipping etc/UPower/UPower.conf.d/README.md --
+  # so if a case for an explicit value ever turns up, it belongs here as a
+  # marker-tagged drop-in, never a sed of the vendor UPower.conf. This call
+  # only cleans up a drop-in an earlier version of this script may have left
+  # behind; _unput's own marker check still leaves anything hand-written
+  # alone.
+  _unput /etc/UPower/UPower.conf.d/90-ergon-hibernate.conf
 
   # PPD >= 0.20 on kernel >= 6.9 turns on amdgpu Adaptive Backlight Management
   # on battery, which desaturates the panel. On a machine for reading spectra

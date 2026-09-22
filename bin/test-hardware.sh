@@ -9,11 +9,12 @@
 # notify-send are stubs that log, so the assertions are about exactly what
 # would have run.
 #
-# COVERS: every capability on and off (s2idle-only + hibernation,
-# amdgpu panel, fprintd, light sensor + backlight, UPower
-# CriticalPowerAction=Hibernate), removal of a config whose capability went
-# away (and never of a hand-written one), kernel parameters from a profile,
-# DMI matching, ergon-sleep check's readings, battery discovery by
+# COVERS: every capability on and off (s2idle-only + hibernation, amdgpu
+# panel, fprintd, light sensor + backlight, and that UPower's
+# CriticalPowerAction is never overridden -- see ergon-hardware for why),
+# removal of a config whose capability went away (and never of a
+# hand-written one), kernel parameters from a profile, DMI matching,
+# ergon-sleep check's readings, battery discovery by
 # /sys/class/power_supply/*/type rather than by name, and ergon-battery's
 # low/critical notification thresholds (once per crossing, only while
 # discharging).
@@ -128,8 +129,8 @@ reset_logs; apply fw; D=$T/fw/dest
 check "apply succeeds" test "$?" -eq 0
 check "lid: suspend-then-hibernate" hasx "$D/etc/systemd/logind.conf.d/10-lid.conf" "HandleLidSwitch=suspend-then-hibernate"
 check "  with the hibernate delay" hasx "$D/etc/systemd/sleep.conf.d/10-hibernate.conf" "HibernateDelaySec=45min"
-check "battery: UPower CriticalPowerAction=Hibernate (hibernation ready)" hasx "$D/etc/UPower/UPower.conf.d/90-ergon-hibernate.conf" "CriticalPowerAction=Hibernate"
-check "  as a NN-name.conf drop-in, the only filename shape UPower reads" test -e "$D/etc/UPower/UPower.conf.d/90-ergon-hibernate.conf"
+check "battery: no UPower CriticalPowerAction override -- Auto already does the right thing (see ergon-hardware)" \
+  test ! -e "$D/etc/UPower/UPower.conf.d/90-ergon-hibernate.conf"
 check "amdgpu panel: ABM blocked" has "$D/etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf" "--block-action=amdgpu_panel_power"
 check "fprintd: restarted after resume" hasx "$D/etc/systemd/system/ergon-fprintd-resume.service" "ExecStart=/usr/bin/systemctl try-restart fprintd.service"
 check "  and enabled" hasx "$T/log/systemctl" "enable ergon-fprintd-resume.service"
@@ -147,16 +148,12 @@ echo "== an Intel laptop"
 reset_logs; apply tp; D=$T/tp/dest
 check "lid: logind default, because the firmware offers S3" test ! -e "$D/etc/systemd/logind.conf.d/10-lid.conf"
 check "  and says why" has "$T/out" "firmware offers S3"
-check "battery: hibernation ready independently of the lid decision, so UPower still gets the drop-in" hasx "$D/etc/UPower/UPower.conf.d/90-ergon-hibernate.conf" "CriticalPowerAction=Hibernate"
+check "battery: still no UPower override, independently of the lid decision or upower.service being present" \
+  test ! -e "$D/etc/UPower/UPower.conf.d/90-ergon-hibernate.conf"
 check "i915 panel: no ABM drop-in" test ! -e "$D/etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf"
 check "fprintd: restarted after resume" test -e "$D/etc/systemd/system/ergon-fprintd-resume.service"
 check "no light sensor: no illuminanced" not has "$T/log/pacman" "illuminanced"
 check "no profile matches: grub untouched" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"'
-
-rm "$T/tp/root/usr/lib/systemd/system/upower.service"
-reset_logs; apply tp
-check "hibernation ready but no upower.service: no drop-in for a daemon that is not there" \
-  test ! -e "$D/etc/UPower/UPower.conf.d/90-ergon-hibernate.conf"
 
 echo "== an AMD desktop"
 reset_logs; apply desk; D=$T/desk/dest
