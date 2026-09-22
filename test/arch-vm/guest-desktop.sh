@@ -593,26 +593,51 @@ hq binds -j | grep -q '"description"' && ok "binds carry descriptions (ergon-key
 # fuzzel cannot draw over hyprlock, and on the Framework 13 that key IS the
 # fingerprint reader, so a locked bind there would queue an invisible menu
 # that pops up right after a fingerprint unlock. hyprctl cannot report WHAT a
-# Lua bind dispatches (every one shows dispatcher "__lua"), so this checks the
-# two things that do survive: the description hyprctl reports, and the config
-# source itself.
+# Lua bind dispatches (every one shows dispatcher "__lua"), so the wiring
+# itself (SUPER+SHIFT+E / XF86PowerOff -> ergon-session) is only checked in
+# source below; description, key and locked are real Hyprland-side bind
+# properties that DO survive and are checked against the live compositor.
 if grep -q 'hl\.dsp\.exit()' "$H/.config/hypr/common/binds.lua" 2>/dev/null; then
   bad "binds.lua still calls hl.dsp.exit() directly -- SUPER+SHIFT+E must open the session menu instead"
 else
   ok "no direct hl.dsp.exit() left in binds.lua"
 fi
-hq binds -j | grep -q '"description": *"Session menu"' \
-  && ok "a bind describes itself as the session menu (hyprctl sees it registered)" \
-  || bad "no registered bind describes itself as the session menu"
+# `key` and `locked` are real Hyprland bind properties (mods/key/flags handed
+# to the native bind API at registration), unlike `dispatcher`/`arg` which are
+# meaningless under the Lua closure -- so, paired with `description`, they can
+# be checked LIVE instead of only in source. A source grep alone would still
+# pass if one of the two binds silently failed to register (a key-name
+# mismatch, a Lua error after this line) -- exactly the parses-but-registers-
+# nothing class ergon explain desktop-config warns about, and the one failure
+# this block exists to catch.
+_binds=$(hq binds -j 2>/dev/null)
+_e_bind=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Session menu" and ((.key // "") | ascii_downcase) == "e")] | .[0] // empty' 2>/dev/null)
+_pwr_bind=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Session menu" and ((.key // "") | ascii_downcase) == "xf86poweroff")] | .[0] // empty' 2>/dev/null)
+
+[ -n "$_e_bind" ] \
+  && ok "hyprctl reports a live 'Session menu' bind on key E (SUPER+SHIFT+E registered)" \
+  || bad "no live bind on key E describes itself 'Session menu' -- SUPER+SHIFT+E may not have registered"
+[ -n "$_pwr_bind" ] \
+  && ok "hyprctl reports a live 'Session menu' bind on XF86PowerOff (registered)" \
+  || bad "no live bind on XF86PowerOff describes itself 'Session menu' -- it may not have registered"
+
+if [ -n "$_pwr_bind" ]; then
+  if printf '%s' "$_pwr_bind" | jq -e '.locked == true' >/dev/null 2>&1; then
+    bad "XF86PowerOff's live bind is locked=true -- fuzzel cannot draw over hyprlock, and this is the Framework fingerprint reader"
+  else
+    ok "XF86PowerOff's live bind is not locked (a queued menu cannot pop up right after an unlock)"
+  fi
+else
+  bad "XF86PowerOff's live bind was not found -- cannot check its locked flag"
+fi
+
+# Source-level wiring, kept as a second signal alongside the live checks above
+# (which prove registration but, like the rest of hyprctl under Lua, cannot
+# show WHAT a bind runs -- only description, key and locked survive).
 grep -qE '^bind\("SUPER \+ SHIFT \+ E".*ergon-session' "$H/.config/hypr/common/binds.lua" \
   && ok "SUPER+SHIFT+E runs ergon-session" || bad "SUPER+SHIFT+E is not wired to ergon-session"
 grep -qE '^bind\("XF86PowerOff".*ergon-session' "$H/.config/hypr/common/binds.lua" \
   && ok "XF86PowerOff runs ergon-session" || bad "XF86PowerOff is not wired to ergon-session"
-if grep -qE '^bind\("XF86PowerOff".*locked' "$H/.config/hypr/common/binds.lua" 2>/dev/null; then
-  bad "XF86PowerOff is bound locked -- fuzzel cannot draw over hyprlock, and this is the Framework fingerprint reader"
-else
-  ok "XF86PowerOff is not bound locked (a queued menu cannot pop up right after an unlock)"
-fi
 
 # Hibernate must appear in `ergon session --list` exactly when ergon-hardware
 # -- the one place that decision is made -- says hibernation is ready. This VM
