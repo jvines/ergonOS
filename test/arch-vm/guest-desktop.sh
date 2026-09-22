@@ -1016,6 +1016,12 @@ else
   echo "     --- hyprpaper diagnosis ---"
   pgrep -x hyprpaper >/dev/null && echo "     running: yes (pid $(pgrep -x hyprpaper | head -1))" \
                                 || echo "     running: NO — it exited"
+  echo "     render nodes: $(ls -m /dev/dri/renderD* 2>/dev/null || echo none)"
+  if [ -f /run/user/1000/hyprpaper.log ]; then
+    tail -20 /run/user/1000/hyprpaper.log | sed 's/^/     hyprpaper: /'
+  else
+    echo "     no /run/user/1000/hyprpaper.log — ergon-wallpaper never started it"
+  fi
   grep -iE 'hyprpaper|wallpaper' /run/user/1000/hypr/*/hyprland.log 2>/dev/null \
     | grep -viE 'exec_cmd' | tail -8 | sed 's/^/     log: /'
   for req in "listloaded" "listactive"; do

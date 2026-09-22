@@ -321,6 +321,9 @@ fi
 # Writing our own config removes both: the path is absolute, and it exists
 # before hyprpaper is started because this starts it.
 PAPER_CONF="$(dirname "$OUT")/hyprpaper.conf"
+# Per session, in the runtime dir, and truncated at every start: it holds what
+# the current (or the last) hyprpaper said, and does not pile up across switches.
+PAPER_LOG="${XDG_RUNTIME_DIR:-/tmp}/hyprpaper.log"
 cat > "$PAPER_CONF" <<CONF
 # Written by ergon-wallpaper. Absolute paths on purpose -- see that script.
 preload = $SHOWN
@@ -384,7 +387,12 @@ if [ "${applied:-0}" != 1 ]; then
   sleep 0.3
   # 9>&-: the daemon must not inherit the switch lock, or it holds it for
   # its whole life and every later switch waits out the timeout.
-  hyprpaper -c "$PAPER_CONF" 9>&- >/dev/null 2>&1 &
+  #
+  # Its output goes to a log rather than /dev/null. hyprpaper that cannot start
+  # says why on stderr and exits, and with that discarded the only symptom was
+  # a flat desktop and "did not accept the wallpaper" -- which is how the VM
+  # suite's background check stayed red for days with nothing to read.
+  hyprpaper -c "$PAPER_CONF" 9>&- >"$PAPER_LOG" 2>&1 &
   sleep 1
   if command -v hyprctl >/dev/null 2>&1; then
     for _ in $(seq 15); do
@@ -397,5 +405,9 @@ if [ "${applied:-0}" != 1 ]; then
 fi
 
 printf '%s\n' "$SHOWN" > "$BG_STATE.applied"
-[ "${applied:-0}" = 1 ] && echo "  wallpaper set on all outputs" \
-                        || echo "  hyprpaper did not accept the wallpaper; it is set at the next session" >&2
+if [ "${applied:-0}" = 1 ]; then
+  echo "  wallpaper set on all outputs"
+else
+  echo "  hyprpaper did not accept the wallpaper; it is set at the next session" >&2
+  pgrep -x hyprpaper >/dev/null 2>&1 || echo "  hyprpaper exited; its output is in $PAPER_LOG" >&2
+fi
