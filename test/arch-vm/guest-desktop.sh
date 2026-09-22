@@ -947,7 +947,10 @@ grep -q 'modprobe.blacklist=floppy' /proc/cmdline 2>/dev/null \
 # which is why this asserts a CLEAN start rather than a start.
 [ "$(getent passwd "$U" | cut -d: -f7)" = /bin/zsh ] \
   && ok "zsh is the login shell" || bad "login shell is not zsh"
-zerr=$(su - "$U" -c 'zsh -i -c "exit" 2>&1' 2>&1 | grep -vE '^\s*$' | head -3)
+# stdin a pipe ON PURPOSE: that is what made zplug warn once per plugin, and
+# this suite only reproduced it by accident, through the `echo pw | sudo -S`
+# that launches it.
+zerr=$(echo | su - "$U" -c 'zsh -i -c "exit" 2>&1' 2>&1 | grep -vE '^\s*$' | head -3)
 [ -z "$zerr" ] && ok "an interactive zsh starts with no output" \
                || bad "zsh prints on startup: $zerr"
 su - "$U" -c 'zsh -c "command -v ergon-wallpaper"' >/dev/null 2>&1 \

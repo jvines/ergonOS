@@ -40,23 +40,31 @@ if [ -f "$ZPLUG_HOME/init.zsh" ]; then
   path=("${(@)path/#%${(b)_zplug_bin}/$_zplug_hidden}")
 
   source "$ZPLUG_HOME/init.zsh"
-  zplug "mafredri/zsh-async", from:github
-  # on: rather than declaring these as two independent plugins. pure needs
-  # zsh-async loaded first; left implicit, zplug infers the dependency and
-  # prints
+  # The declarations read stdin from /dev/null, because zplug still refuses the
+  # pipe syntax it dropped years ago (`echo pkg | zplug`) and detects it by
+  # nothing more than [[ -p /dev/stdin ]] (base/core/add.zsh). Any interactive
+  # zsh whose stdin happens to be a pipe -- `echo | zsh -i`, an editor or an
+  # agent resolving the login environment, the VM suite -- therefore printed
   #   [zplug] WARNING: pipe syntax is deprecated! Please use 'on' tag instead.
-  # on EVERY shell start -- three times over, including every non-interactive
-  # `ssh host command`, where unexpected stdout corrupts whatever is parsing it.
-  zplug "sindresorhus/pure", use:pure.zsh, from:github, as:theme, on:"mafredri/zsh-async"
-  # zdharma-continuum, NOT zdharma: the original org was removed from GitHub in
-  # 2021 and the old path fails to install on any fresh machine.
-  zplug "zdharma-continuum/fast-syntax-highlighting", as:plugin, defer:2
-  zplug "zsh-users/zsh-autosuggestions", as:plugin, defer:2
+  # once per plugin, AND dropped the plugin, so the shell came up without them.
+  # The message names a syntax this file never used, which is why the first fix
+  # (on: below) went after the declarations rather than the shell's stdin.
+  {
+    zplug "mafredri/zsh-async", from:github
+    # pure needs zsh-async loaded first; on: says so.
+    zplug "sindresorhus/pure", use:pure.zsh, from:github, as:theme, on:"mafredri/zsh-async"
+    # zdharma-continuum, NOT zdharma: the original org was removed from GitHub
+    # in 2021 and the old path fails to install on any fresh machine.
+    zplug "zdharma-continuum/fast-syntax-highlighting", as:plugin, defer:2
+    zplug "zsh-users/zsh-autosuggestions", as:plugin, defer:2
+  } </dev/null
 
-  # Only ever prompt in an INTERACTIVE shell. A missing plugin otherwise makes
-  # zplug ask a question at a non-interactive ssh command, which then hangs
-  # forever waiting for an answer nobody is there to give.
-  if [[ -o interactive ]] && ! zplug check; then
+  # Only ever prompt with a person at a terminal. A missing plugin otherwise
+  # makes zplug ask a question at a non-interactive ssh command, which then
+  # hangs forever waiting for an answer nobody is there to give. -o interactive
+  # alone is not that test: `zsh -i` with a pipe on stdin is interactive and has
+  # nobody to answer, so it printed the question and then an error from read.
+  if [[ -o interactive && -t 0 ]] && ! zplug check; then
     printf "Install missing zsh plugins? [y/N]: "
     if read -q; then echo; zplug install; fi
   fi
