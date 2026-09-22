@@ -644,12 +644,16 @@ set_layout() {
 }
 key_of() { printf '%s\n' "$1" | awk -F'  +' -v d="$2" '$2 == d { sub(/^SUPER \+ /, "", $1); print $1 }'; }
 IFS=$'\t' read -r KB0 KV0 < <(kb_main)
-if printf '%s\n' "$KEYS_OUT" | grep -q 'code:'; then bad "ergon-keys shows a raw code:N"; else ok "ergon-keys shows no raw code:N"; fi
+if grep -q 'code:' <<<"$KEYS_OUT"; then bad "ergon-keys shows a raw code:N"; else ok "ergon-keys shows no raw code:N"; fi
 # Without this, a dead first source would pass below as "session" on the fallback.
-if usr "timeout 2 xkbcli dump-keymap-wayland" 2>/dev/null | grep -q 'xkb_symbols'; then
+# Captured, not piped into grep -q. Under pipefail, grep -q exits at the first
+# match, the dump (~70K) dies of SIGPIPE mid-write, and the pipeline reports a
+# failure for a keymap that arrived perfectly well.
+_km=$(usr "timeout 2 xkbcli dump-keymap-wayland" 2>&1); _km_rc=$?
+if [ "$_km_rc" = 0 ] && grep -q 'xkb_symbols' <<<"$_km"; then
   ok "the compositor hands clients its keymap (ergon-keys' first source)"
 else
-  bad "xkbcli dump-keymap-wayland got no keymap; ergon-keys can only compile one"
+  bad "xkbcli dump-keymap-wayland got no keymap (rc=$_km_rc: $(head -c 200 <<<"$_km" | tr '\n' ' '))"
 fi
 for want in 'us 1 `' 'latam 1 |' 'es 1 º' 'fr & ²'; do
   read -r L W1 SP <<<"$want"
@@ -681,7 +685,9 @@ if [ -z "$KEYS_DUPS" ]; then ok "no chord is bound twice"; else bad "chords boun
 # itself (SUPER+SHIFT+E / XF86PowerOff -> ergon-session) is only checked in
 # source below; description, key and locked are real Hyprland-side bind
 # properties that DO survive and are checked against the live compositor.
-if grep -q 'hl\.dsp\.exit()' "$H/.config/hypr/common/binds.lua" 2>/dev/null; then
+# Code lines only: binds.lua's own comment records what the bind USED to be.
+if grep -v '^[[:space:]]*--' "$H/.config/hypr/common/binds.lua" 2>/dev/null \
+     | grep 'hl\.dsp\.exit()' >/dev/null; then
   bad "binds.lua still calls hl.dsp.exit() directly -- SUPER+SHIFT+E must open the session menu instead"
 else
   ok "no direct hl.dsp.exit() left in binds.lua"
