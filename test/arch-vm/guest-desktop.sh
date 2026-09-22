@@ -586,7 +586,52 @@ fi
 NB=$(hq binds -j 2>/dev/null | grep -c '"key"' || true)
 NB=${NB:-0}
 if [ "$NB" -gt 20 ]; then ok "$NB keybindings registered"; else bad "only $NB keybindings registered"; fi
-hq binds -j | grep -q '"description"' && ok "binds carry descriptions (ergon-keys works)" || bad "binds have no descriptions"
+
+# The cheatsheet, through the real ergon-keys pipeline -- this used to grep the
+# JSON for the word "description", and passed while the screenshot, media and
+# night-light keys were registered, undescribed, and missing from the list.
+# Every bind a person can press must come out as a row; switch: binds (the
+# lid) are events rather than keys, and may be absent.
+KEYS_OUT=$(usr "ergon-keys --print" 2>/tmp/keys.err) || true
+KEYS_ROWS=$(printf '%s\n' "$KEYS_OUT" | grep -c . || true)
+KEYS_WANT=$(hq binds -j | jq '[.[] | select(.description != "" or (.key | startswith("switch:") | not))] | length' 2>/dev/null || echo "?")
+if [ "$KEYS_ROWS" -gt 20 ] && [ "$KEYS_ROWS" = "$KEYS_WANT" ]; then
+  ok "ergon-keys lists all $KEYS_ROWS pressable binds the compositor has"
+else
+  bad "ergon-keys lists $KEYS_ROWS rows; the compositor has $KEYS_WANT pressable binds"
+  hq binds -j | jq -r '.[] | select(.description == "" and (.key | startswith("switch:") | not))
+                      | "     undescribed: modmask \(.modmask), key \(.key)"' 2>/dev/null
+  sed 's/^/     /' /tmp/keys.err | head -5
+fi
+
+# Workspaces and the scratchpad are bound by KEYCODE, so they can be pressed on
+# any layout. The JSON cannot show that -- under Lua it reports such a bind as
+# key "" and keycode 0 -- so read the plain form, which prints the bind as it
+# was written, and check each sits on its physical key.
+if KC_OUT=$(hq binds | awk '
+    /^\tkey: /         { k = substr($0, 7) }
+    /^\tdescription: / { d = substr($0, 15); want = 0
+      if (d ~ /^(Move to w|W)orkspace [1-9]$/) want = 9 + substr(d, length(d))
+      if (d == "Toggle scratchpad" || d == "Send to scratchpad") want = 49
+      if (want) { n++; if (k !~ ("code:" want "$")) { wrong = 1; print "     " d ": " k } } }
+    END { exit (n == 20 && !wrong) ? 0 : 1 }'); then
+  ok "workspace and scratchpad binds are on keycodes 10-18 and 49"
+else
+  bad "workspace/scratchpad binds are not all on keycodes 10-18 and 49"
+  printf '%s\n' "$KC_OUT"
+fi
+# ...and the cheatsheet names those keys as this layout labels them, not code:N.
+if printf '%s\n' "$KEYS_OUT" | grep -qE '^SUPER \+ [^ ]+ +Workspace 1$' \
+   && ! printf '%s\n' "$KEYS_OUT" | grep -q 'code:'; then
+  ok "ergon-keys shows keycode binds by label ($(printf '%s\n' "$KEYS_OUT" | grep -E ' Workspace 1$' | awk '{print $3}'))"
+else
+  bad "ergon-keys shows a raw keycode, or no Workspace 1 row"
+fi
+# Hyprland fires EVERY bind that matches, so a chord bound twice is two actions
+# on one press. ergon-lint catches the literal ones; this catches the chords
+# built at runtime (the workspace loop, the help key chosen by layout).
+KEYS_DUPS=$(printf '%s\n' "$KEYS_OUT" | awk -F'  +' 'NF { print toupper($1) }' | sort | uniq -d)
+if [ -z "$KEYS_DUPS" ]; then ok "no chord is bound twice"; else bad "chords bound twice: ${KEYS_DUPS//$'\n'/, }"; fi
 
 # Window rules and monitors.
 hq monitors -j | grep -q '"name"' && ok "a monitor is present" || bad "no monitors"
