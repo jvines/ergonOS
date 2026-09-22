@@ -260,8 +260,14 @@ fi
 
 # --- what doctor says about the stamp ---------------------------------------
 doctor() {  # doctor <check> -> that check's JSON object
+  # `|| true`, because doctor exits 1 when ANY check on the fixture machine
+  # fails and this helper is only ever asked about one row. Under `set -o
+  # pipefail` that status propagated out of `doctor base-packages | grep -q`,
+  # so an assertion about packages/pacman was silently a verdict on every other
+  # check too -- and ERGON-20's firewall row, which a fixture with no nftables
+  # rightly fails, broke two assertions that have nothing to do with it.
   ERGON="$M" "$REPO/bin/ergon-doctor" --json 2>/dev/null \
-    | grep -o "{\"name\":\"$1\"[^}]*}"
+    | grep -o "{\"name\":\"$1\"[^}]*}" || true
 }
 HEAD_SHA=$(git -C "$M" rev-parse HEAD)
 OLD_SHA=$(git -C "$M" rev-parse HEAD~2)

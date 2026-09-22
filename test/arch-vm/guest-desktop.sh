@@ -198,6 +198,18 @@ fi
 
 echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-harness
 chmod 440 /etc/sudoers.d/99-harness
+# ERGON-20. The re-provision below is the only run in this suite that meets a
+# daemon.json already on the machine, so put a key in it that provisioning does
+# not write and assert further down that the merge kept it. On a real laptop
+# that key is "data-root" pointing at /home, and the stanza used to replace the
+# file whole and restart dockerd in the same breath -- the daemon came back on
+# /var/lib/docker, where none of the machine's images or volumes are.
+if jq -S '."insecure-registries" = ["registry.jvines.cl:5000"]' /etc/docker/daemon.json > /tmp/dj.staged 2>/dev/null \
+   && mv /tmp/dj.staged /etc/docker/daemon.json; then
+  ok "staged an operator key in daemon.json for the re-provision to keep"
+else
+  bad "could not stage an operator key in /etc/docker/daemon.json (harness)"
+fi
 rm -rf /tmp/ergon-origin.git /tmp/ergon-ahead
 # git clean: the 9p share is a working tree and can carry work in progress,
 # which this copy inherits. ergon-sync rightly refuses a dirty tree, and which
@@ -236,6 +248,114 @@ then
 else
   bad "could not stage a commit ahead of the guest's repo (harness)"
   tail -5 /tmp/sync-setup.log | sed 's/^/     /'
+fi
+
+# --- ERGON-20: the firewall, and where a published port binds --------------
+# bin/test-firewall.sh reads the ruleset provisioning WRITES. Only a booted
+# machine can say whether the kernel accepted it, and only a running dockerd
+# can say what `-p` actually binds -- which is the half a firewall cannot
+# cover, because a published port is DNAT'd past the input hook.
+echo "--- firewall ---"
+grep -q 'table inet ergon' /etc/nftables.conf 2>/dev/null \
+  && ok "/etc/nftables.conf is ours, not the nftables package's default" \
+  || bad "/etc/nftables.conf does not define the inet ergon table"
+if systemctl is-active --quiet nftables; then
+  ok "nftables.service is active"
+else
+  bad "nftables.service is not active — the ruleset provisioning wrote did not load"
+  nft -c -f /etc/nftables.conf 2>&1 | sed 's/^/     /'
+fi
+# policy drop in the KERNEL, not a string in the file. --verify-config passing
+# while nothing was registered is this repo's standing lesson.
+if nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+  ok "inet ergon input is loaded with policy drop"
+else
+  bad "the inet ergon input chain is not loaded with policy drop"
+  nft list ruleset 2>&1 | head -20 | sed 's/^/     /'
+fi
+
+# THE caveat this card turns on. Docker's rules live in the same nf_tables
+# backend through iptables-nft, so `flush ruleset` -- in the file, or in the
+# packaged unit's ExecStop, which is where it really is -- destroys the DOCKER
+# chains of a running daemon and every container silently loses its
+# networking. Both halves are asserted, because the drop-in is what makes the
+# scoped ruleset survive the verb people actually type.
+systemctl show nftables -p ExecStop 2>/dev/null | grep -q 'flush ruleset' \
+  && bad "nftables.service still stops with 'nft flush ruleset' — a restart would wipe docker's chains" \
+  || ok "nftables.service stops by destroying only the ergon table"
+if ! nft list chain ip nat DOCKER >/dev/null 2>&1; then
+  note "no ip nat DOCKER chain on this machine — nothing for a reload to wipe, so that claim is untested"
+elif systemctl restart nftables && nft list chain ip nat DOCKER >/dev/null 2>&1 \
+     && nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+  ok "restarting nftables keeps docker's nat chains and reloads our own"
+else
+  bad "restarting nftables destroyed docker's nat chains — every running container just lost its network"
+fi
+
+# The doctor row's dangerous state, and the one only a booted machine has: the
+# unit is Type=oneshot RemainAfterExit=yes, so `systemctl is-active` still says
+# active after someone types `nft flush ruleset` while debugging. doctor read a
+# failed `nft list` as "I am not root" and answered ok — as root, on a machine
+# with an empty ruleset. Asserted with root in hand, which is the only way to
+# reach that branch at all.
+if nft destroy table inet ergon 2>/dev/null; then
+  if ERGON="$G" "$G/bin/ergon-doctor" --json 2>/dev/null \
+     | grep -q '"name":"firewall","state":"fail"'; then
+    ok "as root and with no ergon table, doctor fails the firewall row"
+  else
+    bad "doctor did not fail the firewall row on a machine where nothing filters inbound"
+    ERGON="$G" "$G/bin/ergon-doctor" --json 2>/dev/null \
+      | grep -o '{"name":"firewall"[^}]*}' | sed 's/^/     /'
+  fi
+  # Put it back before anything else runs, and say whether that worked: the
+  # tests after this one must not be quietly running on an unfiltered machine.
+  if systemctl restart nftables >/dev/null 2>&1 \
+     && nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+    ok "and the ruleset is back after a restart"
+  else
+    bad "the ruleset did not come back — the rest of this run is unfiltered"
+  fi
+else
+  note "could not destroy the ergon table — doctor's root-with-no-table branch was not tested"
+fi
+
+echo "--- where docker publishes ---"
+grep -q '"ip"[[:space:]]*:[[:space:]]*"127\.0\.0\.1"' /etc/docker/daemon.json 2>/dev/null \
+  && ok "daemon.json binds published ports to 127.0.0.1" \
+  || bad "/etc/docker/daemon.json does not set \"ip\": \"127.0.0.1\""
+# The merge, end to end. The key above was staged into daemon.json before
+# ergon-sync re-provisioned this machine, so this says whether provisioning
+# keeps what a machine had or writes over it — and dockerd was restarted in
+# between, which is what makes losing it expensive rather than cosmetic.
+if [ "$(jq -r '."insecure-registries"[0] // ""' /etc/docker/daemon.json 2>/dev/null)" = registry.jvines.cl:5000 ]; then
+  ok "re-provisioning merged into daemon.json and kept the operator key"
+else
+  bad "re-provisioning discarded what was already in daemon.json"
+  sed 's/^/     /' /etc/docker/daemon.json 2>/dev/null
+fi
+# The binding itself, which is the acceptance criterion. busybox is ~4 MB and
+# the container never has to serve anything: what listens on the host is
+# dockerd's proxy for the published port, and that is the thing under test.
+# The harness has user-mode NAT so the pull works, but it can fail offline --
+# a missing image says nothing about where docker binds, so that is a note and
+# not a failure.
+if docker image inspect busybox >/dev/null 2>&1 \
+   || timeout 180 docker pull -q busybox >/dev/null 2>&1; then
+  docker rm -f ergon-fw-probe >/dev/null 2>&1 || true
+  if docker run -d --name ergon-fw-probe -p 8080:80 busybox sleep 60 >/dev/null 2>&1; then
+    sleep 1
+    _bound=$(ss -ltn 2>/dev/null | awk '{print $4}' | grep ':8080$' | sort | tr '\n' ' ' | sed 's/ $//')
+    case "$_bound" in
+      "127.0.0.1:8080") ok "docker run -p 8080:80 listens on 127.0.0.1:8080 and nowhere else" ;;
+      "")               bad "nothing listens on 8080 after publishing it — the probe did not come up, or userland-proxy is off and only the DNAT would show" ;;
+      *)                bad "a published port listens on '$_bound', not 127.0.0.1:8080 alone" ;;
+    esac
+    docker rm -f ergon-fw-probe >/dev/null 2>&1 || true
+  else
+    bad "the probe container would not start; where a published port binds was not tested"
+  fi
+else
+  note "no busybox image and the pull failed (offline?) — where a published port binds was not tested"
 fi
 rm -f /etc/sudoers.d/99-harness
 

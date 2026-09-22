@@ -104,6 +104,54 @@ else
   rec ok "docker-group" "not in the docker group — docker needs sudo"
 fi
 
+# --- the firewall --------------------------------------------------------------
+# Not "is nftables installed": a ruleset that fails to parse leaves the service
+# dead and the package present, which is the state this has to catch. The
+# question is whether the input chain provisioning wrote is loaded in the
+# kernel with a drop policy right now.
+#
+# The chain policy needs CAP_NET_ADMIN to read -- `nft list` over netlink is
+# root-only. Same answer as the snapper check: say so rather than invent one.
+# `systemctl is-active` needs no root, so an unfiltered machine is still caught
+# when doctor runs as the user, which is how it is normally run.
+#
+# Root is probed on its own, BEFORE the policy is asked for. Reading a non-zero
+# `nft list` as "I am not root" made those two facts one branch, and the state
+# it then got wrong is the dangerous one: nftables.service is Type=oneshot
+# RemainAfterExit=yes, so it stays active after someone types `nft flush
+# ruleset` or `nft destroy table inet ergon` while debugging. `sudo ergon
+# doctor` on that machine printed ok, with a note about needing root, as root,
+# while nothing at all filtered inbound.
+if ! systemctl is-active --quiet nftables 2>/dev/null; then
+  rec fail "firewall" "nftables.service is not active — nothing filters inbound on the next network this machine joins"
+elif ! sudo -n true 2>/dev/null; then
+  rec ok "firewall" "nftables.service is active; the chain policy cannot be checked without root (run: sudo ergon doctor)"
+elif pol=$(sudo -n nft list chain inet ergon input 2>/dev/null); then
+  case "$pol" in
+    *"policy drop"*) rec ok "firewall" "inet ergon input is loaded, policy drop" ;;
+    *) rec fail "firewall" "the inet ergon input chain is loaded but its policy is not drop — inbound is open" ;;
+  esac
+else
+  rec fail "firewall" "nftables.service is active but the inet ergon table is not loaded — nothing filters inbound"
+fi
+
+# --- what docker publishes to --------------------------------------------------
+# A file read, so this one answers for a user with no sudo at all, and it is
+# the half the firewall cannot cover: a published port is DNAT'd past the input
+# hook, so `docker run -p 8080:80` with docker's own default of 0.0.0.0 is open
+# to the room whatever the ruleset says.
+#
+# Read under ERGON_SYSROOT like the stamp above, so the hermetic test can point
+# it at a fixture.
+DJ="${ERGON_SYSROOT:-}/etc/docker/daemon.json"
+if [ ! -f "$DJ" ]; then
+  rec fail "docker-publish" "no $DJ — docker run -p binds 0.0.0.0, on every network this laptop joins"
+elif grep -q '"ip"[[:space:]]*:[[:space:]]*"127\.0\.0\.1"' "$DJ"; then
+  rec ok "docker-publish" "ports bind 127.0.0.1 — publish off-box on purpose: -p 0.0.0.0:PORT:PORT"
+else
+  rec fail "docker-publish" "$DJ does not set \"ip\": \"127.0.0.1\" — docker run -p binds every interface"
+fi
+
 # --- provisioning ------------------------------------------------------------
 # The system-level layer -- packages, systemd drop-ins, polkit rules, GRUB --
 # reaches a machine only through bin/provision-arch.sh. `ergon sync` re-runs it

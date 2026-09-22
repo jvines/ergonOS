@@ -207,6 +207,204 @@ sudo rmmod floppy 2>/dev/null || true
 [ -e /dev/fd0 ] && warn "/dev/fd0 is still present on this boot; it is gone after the next one" \
                 || ok "no floppy device"
 
+# ---------------------------------------------------------------------------
+say "firewall and container publishing"
+# ERGON-20. Nothing filtered inbound on this machine at all -- no ufw, no
+# nftables, no iptables anywhere in the repo -- and this is a laptop that joins
+# conference and observatory Wi-Fi, where every other host on the subnet is a
+# stranger.
+#
+# Two halves, because the ruleset alone does not cover the second one. A
+# published container port is DNAT'd in the nat hook and delivered through
+# FORWARD, so it never passes the input chain: `docker run -p 8080:80` on a
+# firewalled machine is still open to the room. The daemon binding it to
+# loopback is what closes that, and the two are written together here so
+# neither can be applied without the other.
+#
+# _changed rather than the unconditional `install` every other /etc file in
+# this script uses: applying daemon.json means restarting dockerd, which stops
+# every running container. A re-provision must not do that for bytes that did
+# not move.
+_changed() {  # _changed <path> < content -- true when the file now differs
+  local p=$1 t; t=$(mktemp)
+  cat > "$t"
+  if sudo cmp -s "$t" "$p" 2>/dev/null; then rm -f "$t"; return 1; fi
+  # set -e does not apply to a function called as an `if` condition, so a write
+  # that failed would otherwise return "unchanged" and the caller would report
+  # a policy it never applied.
+  sudo install -Dm644 "$t" "$p" || { rm -f "$t"; warn "could not write $p"; return 1; }
+  rm -f "$t"
+}
+
+if _changed /etc/nftables.conf <<'NFT'
+#!/usr/bin/nft -f
+# Written by provision-arch.sh. Loaded by nftables.service.
+#
+# There is no "flush ruleset" in this file and there must never be one.
+# nftables.service re-runs this file on every reload, and Docker's rules live
+# in the same nf_tables backend through iptables-nft -- so a flush wipes the
+# DOCKER and DOCKER-USER chains out from under a running daemon and every
+# container loses its networking until dockerd is restarted. This file owns one
+# table and destroys exactly that one. `destroy` rather than `delete` because
+# destroy does not fail when the table is not there yet, which is every first
+# boot.
+destroy table inet ergon
+
+table inet ergon {
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		iif "lo" accept
+		ct state established,related accept
+		ct state invalid drop
+
+		# Every ICMP type, not a hand-picked list. The list is where this goes
+		# wrong, and it goes wrong silently: without ICMPv6 neighbour
+		# discovery IPv6 does not work at all, and without packet-too-big the
+		# path MTU black-holes -- a connection that opens, moves a few KB and
+		# then hangs forever, which is the worst thing to debug from an
+		# observatory. Echo is in deliberately: a laptop nobody can ping is
+		# harder to diagnose than one they can.
+		meta l4proto icmp accept
+		meta l4proto ipv6-icmp accept
+
+		# DHCP, both families. Conntrack does not cover the v4 client:
+		# NetworkManager's internal client does DISCOVER/OFFER over AF_PACKET,
+		# which never reaches this hook, but a rebinding renewal is broadcast
+		# and its reply has no outbound entry to match -- so the lease renews
+		# for as long as the original server answers and the link then dies
+		# hours into a conference day. DNS needs nothing here; a reply to a
+		# query this machine sent is established.
+		udp dport 68 udp sport 67 accept
+		udp dport 546 udp sport 547 accept
+
+		# The tailnet is trusted -- the fleet reaches this machine over it.
+		# iifname, NOT iif: iif resolves the name to an interface index when
+		# the ruleset LOADS, so the whole file fails when tailscaled has not
+		# brought tailscale0 up yet, which is the boot order on every reboot.
+		iifname "tailscale0" accept
+		# Direct WireGuard. Without it tailscale still works, through a DERP
+		# relay, which is slower for no reason anyone can see.
+		udp dport 41641 accept
+		# ssh from the LAN is dropped with everything else. That is the intended
+		# answer: sshd is not enabled on a fresh install, and the fleet reaches
+		# this machine over the tailnet, which the rule above already trusts.
+
+		# mDNS stays CLOSED. It is what network printer discovery needs, and
+		# printing is card G22, which owns opening it -- to the LAN only, and
+		# only when printing is enabled:
+		#   udp dport 5353 ip daddr 224.0.0.251 accept
+		#   udp dport 5353 ip6 daddr ff02::fb accept
+		#
+		# Traffic from the docker bridges is dropped with everything else, so a
+		# container reaching back to the host gateway (host.docker.internal,
+		# --add-host ...:host-gateway) hangs. That is deliberate and it is in
+		# knowledge/security.md; opening it belongs in this file, not in a
+		# rule someone adds by hand that the next reload discards.
+	}
+
+	# No forward chain and no output chain, on purpose. Docker owns forwarding
+	# through DOCKER-USER and DOCKER-ISOLATION, and a second forward chain with
+	# a drop policy here would break container networking outright. Outbound is
+	# unrestricted; that trade is recorded in knowledge/security.md.
+}
+NFT
+then _nft_new=1; else _nft_new=0; fi
+
+# The packaged unit's ExecStop is `nft flush ruleset` -- the very thing this
+# file refuses to do. So `systemctl restart nftables`, which is what anyone
+# does after editing a ruleset, takes Docker's chains with it on the way down
+# even though the ruleset itself is scoped. Narrow the stop to our table too,
+# or the caveat this card exists for is one systemctl verb away from biting.
+if _changed /etc/systemd/system/nftables.service.d/10-ergon-scope.conf <<'UNIT'
+# Written by provision-arch.sh.
+#
+# The packaged nftables.service stops with `nft flush ruleset`, which destroys
+# Docker's iptables-nft chains along with ours. Empty ExecStop= first, because
+# systemd APPENDS to a list-valued directive otherwise and the upstream flush
+# would still run.
+[Service]
+ExecStop=
+ExecStop=/usr/bin/nft destroy table inet ergon
+UNIT
+then
+  sudo systemctl daemon-reload
+fi
+
+if sudo systemctl enable --now nftables >/dev/null 2>&1; then
+  # `enable --now` does nothing to a unit that is already running, so a changed
+  # ruleset on an installed machine reaches the kernel only through the reload.
+  if [ "$_nft_new" = 1 ] && ! sudo systemctl reload nftables >/dev/null 2>&1; then
+    warn "the new ruleset did not load; run sudo nft -c -f /etc/nftables.conf to see why. The machine is still filtered by the old one"
+  else
+    ok "nftables: input drops by default (lo, established, ICMP, DHCP, tailscale0)"
+  fi
+else
+  warn "nftables.service would not start -- NOTHING filters inbound on this machine"
+fi
+
+# "ip" is the address `docker run -p 8080:80` binds when the command does not
+# name one. Docker's default is 0.0.0.0, which on this machine means every
+# conference network it has ever joined, and the ruleset above cannot help
+# because the DNAT bypasses the input hook.
+#
+# The cost is real: a compose service another fleet host reaches today stops
+# answering. Publishing off-box is now a thing you say out loud --
+#   docker run -p 0.0.0.0:8080:80 ...      ports: ["0.0.0.0:8080:80"] in compose
+#
+# log-opts because json-file has no default cap at all: one chatty container
+# fills / and then everything on the machine fails at once, which reads as a
+# disk problem rather than as a container.
+#
+# MERGED into what is already there, not written over it. Every other /etc file
+# this script owns is ergon policy that nothing else writes, but daemon.json is
+# where a machine keeps its own state: "data-root" on /home because / is small,
+# the insecure-registries entry for the registry chiki hosts, a proxy stanza. A
+# whole-file heredoc discards all of it and the restart below then brings
+# dockerd up on the default data-root, where every image, container and volume
+# the machine had is simply not there -- and provisioning prints ok. So set
+# four keys and leave everything else alone.
+#
+# jq -S because the bytes have to be stable: unsorted, the merge would reorder
+# the file on every run and _changed would restart dockerd -- stopping every
+# container -- for content that did not move. A file someone hand-indented is
+# rewritten once, which is a real change and costs one restart.
+_dj_old=$(sudo cat /etc/docker/daemon.json 2>/dev/null || true)
+# Missing or empty carries no state worth preserving, and jq on empty input
+# prints nothing at all -- which the guard below would read as a refusal,
+# leaving the machine publishing to 0.0.0.0 forever.
+[ -n "${_dj_old//[[:space:]]/}" ] || _dj_old='{}'
+_dj_jq=$(cat <<'DOCKERD'
+.ip = "127.0.0.1"
+| ."log-driver" = "json-file"
+| ."log-opts"."max-size" = "10m"
+| ."log-opts"."max-file" = "5"
+DOCKERD
+)
+_dj_new=$(printf '%s\n' "$_dj_old" | jq -S "$_dj_jq" 2>/dev/null) || _dj_new=
+if ! command -v jq >/dev/null 2>&1; then
+  # jq is in packages/pacman and installed by the stage at the top of this
+  # script, so this is only reachable on a machine that never got the package
+  # list. Refusing beats falling back to a whole-file write.
+  warn "jq is missing, so daemon.json cannot be merged -- leaving it alone. Published ports still bind 0.0.0.0"
+elif [ -z "$_dj_new" ]; then
+  # jq fails, and prints nothing, on anything that is not an object: a
+  # truncated edit, a stray array, a file half-written by something else.
+  # dockerd is not running with that file either way, and overwriting it would
+  # destroy the only copy of whatever someone was in the middle of.
+  warn "/etc/docker/daemon.json is not a JSON object -- leaving it alone. Published ports still bind 0.0.0.0; fix the file and re-run"
+elif _changed /etc/docker/daemon.json <<<"$_dj_new"; then
+  if systemctl is-active --quiet docker; then
+    sudo systemctl restart docker \
+      && ok "docker publishes to 127.0.0.1 only (-p 0.0.0.0:PORT:PORT to publish off-box); dockerd restarted" \
+      || warn "daemon.json written but dockerd would not restart; it applies on the next boot"
+  else
+    ok "docker publishes to 127.0.0.1 only (-p 0.0.0.0:PORT:PORT to publish off-box)"
+  fi
+else
+  skip "docker publishing policy unchanged"
+fi
+
 say "services"
 # power-profiles-daemon belongs here and was missing: it is installed by
 # packages/pacman and was never enabled, so waybar's power-profiles-daemon

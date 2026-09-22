@@ -60,6 +60,9 @@ informant           # BLOCKS an upgrade until the Arch news item is read.
                     # announced before they land.
 docker
 docker-compose
+nftables            # the firewall provisioning writes. iptables-nft, which docker
+                    # depends on, is the iptables CLI over the same backend --
+                    # it ships neither the nft command nor nftables.service
 tailscale
 age
 sops
