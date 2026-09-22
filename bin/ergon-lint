@@ -277,4 +277,101 @@ if [ -d "$bg_dir" ]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Keybindings: every one described, and no chord bound twice.
+#
+# `ergon keys` is built from what the compositor reports, and it reports a
+# description only where the config gave one -- so an undescribed bind is a key
+# the cheatsheet silently does not have. The screenshot, media and night-light
+# binds were all missing that way, the capture key used most among them. And
+# Hyprland fires EVERY bind that matches, so a chord bound twice is two actions
+# on one press: SUPER+SHIFT+B changed the background and reset the colour
+# temperature at once, for as long as both files had it.
+#
+# A bind is described when its hl.bind call says description=, or when it goes
+# through a local helper whose body sets one (binds.lua's bind()). switch:
+# binds (the lid) are events rather than keys, so they are exempt.
+#
+# This reads what is written. A chord built at runtime -- the workspace loop,
+# the help key chosen by layout -- is not a literal, so it is skipped by the
+# duplicate check, which is also why the help key's two if/else branches do not
+# read as one chord bound twice. The session test checks the running
+# compositor's list for duplicates, which covers those.
+bind_awk=$(cat <<'AWK'
+function strip(s) {
+  gsub(/\[=*\[.*\]=*\]/, "\"\"", s)
+  gsub(/"([^"\\]|\\.)*"/, "\"\"", s)
+  gsub(/'([^'\\]|\\.)*'/, "''", s)
+  sub(/--.*/, "", s)
+  return s
+}
+function literal(line, name,   r) {
+  if (!match(line, name "[ \t]*\\([ \t]*\"[^\"]*\"[ \t]*,")) return ""
+  r = substr(line, RSTART, RLENGTH); sub(/^[^"]*"/, "", r); sub(/"[^"]*$/, "", r)
+  return r
+}
+# Modifier order and case do not matter to Hyprland, so they must not matter
+# here: SUPER + SHIFT + CTRL + D and SUPER + CTRL + SHIFT + D are one chord.
+function canon(c,   n, p, i, t, key, fl, out) {
+  n = split(c, p, "+"); fl = " "; key = ""; out = ""
+  for (i = 1; i <= n; i++) {
+    t = toupper(p[i]); gsub(/^[ \t]+|[ \t]+$/, "", t)
+    if (t == "WIN" || t == "LOGO" || t == "MOD4" || t == "META") t = "SUPER"
+    if (t == "CONTROL") t = "CTRL"
+    if (t == "MOD1") t = "ALT"
+    if (t ~ /^(SHIFT|CAPS|CTRL|ALT|MOD2|MOD3|SUPER|MOD5)$/) fl = fl t " "; else key = t
+  }
+  n = split("SUPER CTRL ALT SHIFT CAPS MOD2 MOD3 MOD5", p, " ")
+  for (i = 1; i <= n; i++) if (index(fl, " " p[i] " ")) out = out p[i] " + "
+  return out key
+}
+function chord(c, ln,   k) {
+  if (c == "") return
+  k = canon(c)
+  if (k in seen) print FILENAME "\t" ln "\t\"" c "\" is already bound at " seen[k] " -- both would fire on one press"
+  else seen[k] = FILENAME ":" ln
+}
+function finish(   msg) {
+  open = 0
+  if (acc !~ /description[ \t]*=/ && call !~ /^switch:/) {
+    msg = FILENAME "\t" at "\thl.bind without a description -- ergon keys will not list it"
+    if (infn) pend[++npend] = msg; else print msg
+  }
+  chord(call, at)
+}
+FNR == 1 { split("", helper); infn = 0; open = 0 }
+{
+  s = strip($0)
+  if (open) {
+    acc = acc " " s; depth += gsub(/\(/, "(", s) - gsub(/\)/, ")", s)
+    if (depth <= 0) finish()
+    next
+  }
+  def = (s ~ /^local[ \t]+function[ \t]/)
+  if (def) {
+    fn = s; sub(/^local[ \t]+function[ \t]+/, "", fn); sub(/[^A-Za-z0-9_].*/, "", fn)
+    infn = 1; fndesc = 0; npend = 0
+  }
+  if (infn && s ~ /description[ \t]*=/) fndesc = 1
+  if (match(s, /hl\.bind[ \t]*\(/)) {
+    acc = substr(s, RSTART); at = FNR; call = literal($0, "hl\\.bind")
+    depth = gsub(/\(/, "(", acc) - gsub(/\)/, ")", acc)
+    open = 1; if (depth <= 0) finish()
+  } else {
+    for (h in helper) if (match($0, "^[ \t]*" h "[ \t]*\\(")) chord(literal($0, "^[ \t]*" h), FNR)
+  }
+  # A top-level function ends at an unindented `end`, or on its own line.
+  if (infn && (s ~ /^end/ || (def && s ~ /[ \t;)]end[ \t]*$/))) {
+    if (fndesc) helper[fn] = 1; else for (i = 1; i <= npend; i++) print pend[i]
+    infn = 0
+  }
+}
+AWK
+)
+bind_out=$(cd "$ERGON" && awk "$bind_awk" hypr/common/*.lua)
+while IFS=$'\t' read -r f l m; do
+  [ -n "$f" ] && report "$f" "$l" "$m"
+done <<< "$bind_out"
+if [ -z "$bind_out" ]; then echo "  ok   every keybinding described, no chord bound twice"; fi
+
 exit $rc

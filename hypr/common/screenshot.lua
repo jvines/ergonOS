@@ -22,12 +22,18 @@ local function shot(grab)
          "- | tee " .. shotdir .. "/" .. stamp .. " | wl-copy --type image/png"
 end
 
+-- Descriptions only were added below: `ergon keys` lists only described binds,
+-- and the capture key used most was missing from it.
+
 -- Region select — the everyday one.
-hl.bind("SUPER + SHIFT + S", hl.dsp.exec_cmd(shot([==[-g "$(slurp)" ]==])))
+hl.bind("SUPER + SHIFT + S", hl.dsp.exec_cmd(shot([==[-g "$(slurp)" ]==])),
+  { description = "Screenshot region" })
 
 -- Whole output.
-hl.bind("SUPER + SHIFT + CTRL + S", hl.dsp.exec_cmd(shot("")))
+hl.bind("SUPER + SHIFT + CTRL + S", hl.dsp.exec_cmd(shot("")),
+  { description = "Screenshot whole screen" })
 
 -- Active window only.
 hl.bind("SUPER + ALT + S", hl.dsp.exec_cmd(shot(
-  [==[-g "$(hyprctl activewindow -j | jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"')" ]==])))
+  [==[-g "$(hyprctl activewindow -j | jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"')" ]==])),
+  { description = "Screenshot active window" })

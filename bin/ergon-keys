@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ergon:summary=Searchable list of every Hyprland keybinding
 # ergon:group=help
-# ergon:args=
+# ergon:args=[--print]
+# ergon:help=native
 #
 # Reads the bindings out of the RUNNING compositor rather than parsing the Lua.
 # That is the whole point: a cheatsheet maintained alongside the config is a
@@ -10,23 +11,130 @@
 # description= for exactly this.
 set -euo pipefail
 
+print=0
+case "${1:-}" in
+  -h|--help)
+    cat <<'EOF'
+usage: ergon-keys [--print]
+
+Every keybinding the running compositor has registered, with its description.
+Prints in a terminal; from a keybind, opens a searchable picker.
+
+  --print   always print to stdout, whatever it is (a pipe, a file, a test)
+EOF
+    exit 0 ;;
+  --print) print=1 ;;
+  '') ;;
+  *) echo "ergon-keys: unknown argument '$1' (see --help)" >&2; exit 2 ;;
+esac
+
 command -v hyprctl >/dev/null || { echo "not in a Hyprland session" >&2; exit 1; }
+
+# Workspaces and the scratchpad are bound by keycode ("SUPER + code:10"), so
+# they can be pressed on any layout. A cheatsheet row saying code:10 helps
+# nobody, and saying 1 is wrong on AZERTY, where that key types &. So each
+# code is shown as what the key types, unshifted, on THIS keyboard.
+#
+# The keymap is the one the compositor hands its clients, else one compiled
+# from the main keyboard's layout as hyprctl reports it. xkbcli comes with
+# libxkbcommon, which Hyprland itself depends on, so it is always present.
+keymap() {
+  local km kb=()
+  km=$(timeout 2 xkbcli dump-keymap-wayland 2>/dev/null) || km=""
+  if [ -z "$km" ]; then
+    # One field per line: read with a tab IFS, an empty variant would swallow
+    # the options into its place.
+    mapfile -t kb < <(hyprctl devices -j | jq -r '
+      ((.keyboards | map(select(.main)) + .)[0] // {}) | .layout, .variant, .options | . // ""')
+    km=$(xkbcli compile-keymap --layout "${kb[0]:-us}" --variant "${kb[1]:-}" \
+                               --options "${kb[2]:-}" 2>/dev/null) || km=""
+  fi
+  printf '%s\n' "$km"
+}
+
+# keycode -> label, as a JSON object. The keymap names keysyms ("ampersand",
+# "bar"); libxkbcommon's own header turns a name into a character: Latin-1
+# keysyms ARE their code point, and the rest carry a U+ comment there. A
+# keysym with no character (dead_circumflex) keeps its name.
+labels() {
+  local hdr=/usr/include/xkbcommon/xkbcommon-keysyms.h
+  [ -r "$hdr" ] || hdr=/dev/null
+  keymap | awk -v hdr="$hdr" '
+    function hex(s,   i, n) {
+      n = 0; s = tolower(s)
+      for (i = 1; i <= length(s); i++) n = n * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1
+      return n
+    }
+    /^[ \t]*xkb_/ { sec = $1 }
+    sec == "xkb_keycodes" && match($0, /<[^>]+>[ \t]*=[ \t]*[0-9]+/) {
+      split(substr($0, RSTART, RLENGTH), a, /[ \t]*=[ \t]*/); code[a[1]] = a[2]
+    }
+    sec == "xkb_symbols" && match($0, /key[ \t]+<[^>]+>/) {
+      k = substr($0, RSTART, RLENGTH); sub(/^key[ \t]+/, "", k)
+    }
+    # The first level of the first group, in each form libxkbcommon writes:
+    # "{ [ sym, ...", "symbols[1]= [ sym, ..." or "[ sym, ..." on its own line.
+    sec == "xkb_symbols" && k != "" && (match($0, /[{=][ \t]*\[[ \t]*[^], \t]+/) ||
+                                        match($0, /^[ \t]*\[[ \t]*[^], \t]+/)) {
+      s = substr($0, RSTART, RLENGTH); sub(/^.*\[[ \t]*/, "", s)
+      if ((k in code) && !(code[k] in sym)) sym[code[k]] = s
+      k = ""
+    }
+    END {
+      while ((getline line < hdr) > 0) {
+        split(line, f, /[ \t]+/)
+        if (f[1] != "#define" || substr(f[2], 1, 8) != "XKB_KEY_") continue
+        v = hex(substr(f[3], 3))
+        if (match(line, /U\+[0-9A-Fa-f]+/)) u = hex(substr(line, RSTART + 2, RLENGTH - 2))
+        else u = (v < 256) ? v : 0
+        # Printable only: a blank or a control character is no label.
+        if (u > 32 && (u < 127 || u > 160)) cp[substr(f[2], 9)] = u
+      }
+      for (c in sym) {
+        s = sym[c]
+        if (s ~ /^U[0-9A-Fa-f]+$/) print c "\t" hex(substr(s, 2)) "\t" s
+        else print c "\t" ((s in cp) ? cp[s] : "") "\t" s
+      }
+    }' | jq -Rn '[inputs | split("\t")
+                  | {key: .[0], value: (if .[1] != "" then [.[1] | tonumber] | implode else .[2] end)}]
+                 | from_entries'
+}
 
 # Hyprland reports modmask as an X11-style bitfield.
 render() {
-  hyprctl binds -j | jq -r '
+  local lab
+  lab=$(labels 2>/dev/null) || lab=""
+  hyprctl binds -j | jq -r --argjson lab "${lab:-"{}"}" --rawfile txt <(hyprctl binds) '
     def mods($m):
       [ if ($m / 64 | floor) % 2 == 1 then "SUPER" else empty end,
         if ($m /  4 | floor) % 2 == 1 then "CTRL"  else empty end,
         if ($m /  8 | floor) % 2 == 1 then "ALT"   else empty end,
         if ($m /  1 | floor) % 2 == 1 then "SHIFT" else empty end ] | join(" + ");
 
-    .[]
+    # With no keymap at all, the digit row still prints its digit on every
+    # Latin layout (AZERTY shows 1 beside the &), and 49 is described.
+    def fallback($c):
+      ($c | tonumber) as $n
+      | if $n >= 10 and $n <= 19 then "\(($n - 9) % 10)"
+        elif $n == 49 then "key left of 1" else "code:\($c)" end;
+
+    # The JSON cannot say which key a code:N bind is on: Hyprland 0.56 keeps
+    # that keycode only in its multi-key list and reports "key": "" and
+    # "keycode": 0. The plain form prints the bind as written ("SUPER +
+    # code:10") wherever key is empty, bind for bind in the same order.
+    [$txt | splits("\n") | select(startswith("\tkey: ")) | ltrimstr("\tkey: ")] as $written
+    | (if ($written | length) == length then $written else [] end) as $written
+    | to_entries[] | .key as $i | .value
     # Unnamed binds are the internal ones (submap escapes and the like) and are
     # noise in a cheatsheet.
     | select((.description // "") != "")
+    | (if .key != "" then .key
+       else ([($written[$i] // "") | capture("code:(?<c>[0-9]+)").c]
+             + (if .keycode > 0 then [.keycode | tostring] else [] end))[0] as $c
+            | if $c == null then "?" else ($lab[$c] // fallback($c)) end
+       end) as $key
     | (mods(.modmask) as $m
-       | if $m == "" then .key else $m + " + " + .key end) as $keys
+       | if $m == "" then $key else $m + " + " + $key end) as $keys
     | [$keys, .description]
     | @tsv
   ' | sort -t"$(printf '\t')" -k2,2 | column -t -s"$(printf '\t')"
@@ -43,8 +151,10 @@ render() {
 #
 # So: print when there is a terminal to print to, offer the picker when there
 # is a compositor to draw it on, and fall back to opening a terminal with the
-# list when the picker does not come up.
-if [ -t 1 ]; then
+# list when the picker does not come up. --print is for everything that reads
+# the list rather than a person: a pipe is not a tty either, and without it
+# `ergon keys | grep` opened a picker and waited for someone to close it.
+if [ "$print" = 1 ] || [ -t 1 ]; then
   render
 elif command -v fuzzel >/dev/null && [ -n "${WAYLAND_DISPLAY:-}" ] \
      && render | fuzzel --dmenu --prompt 'keys  ' --width 70 >/dev/null; then
