@@ -119,4 +119,14 @@ jobs:
           # The disk is ~20G and nothing reads it between runs: the next run
           # reinstalls from the ISO anyway. Keeping it would cost a fifth of
           # /home for nothing.
-          rm -rf "$CI_DIR" "$WORK"
+          #
+          # $WORK goes through a container because part of it is root's:
+          # test-arch-vm.sh pulls the kernel and initramfs out of the ISO inside
+          # docker, as root, and the runner's own rm cannot unlink them. That
+          # failed this step, and with it the job, on every run there has been,
+          # whatever the tests said.
+          rm -rf "$CI_DIR"
+          if [ -d "$WORK" ]; then
+            docker run --rm --label cl.jvines.owner=ergon-vm-ci \
+              -v "$(dirname "$WORK"):/p" fleet-qemu rm -rf "/p/$(basename "$WORK")"
+          fi
