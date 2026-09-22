@@ -132,9 +132,18 @@ bind("SUPER + mouse:273", "Resize window", hl.dsp.window.resize(), { mouse = tru
 
 -- ---------------------------------------------------------------------------
 -- Workspaces
+--
+-- Bound by KEYCODE, not by symbol, for the same reason as the help key above.
+-- "SUPER + 1" names the symbol 1, and on French AZERTY the key with 1 printed
+-- on it types & unless SHIFT is held -- so the bind could not be pressed there
+-- at all, silently. code:10..18 are the digit-row keys themselves (xkb keycode
+-- = evdev code + 8), whatever the layout makes them type. ergon-keys turns a
+-- code back into what that key types on the current layout, so the cheatsheet
+-- still reads "SUPER + 1" -- or "SUPER + &".
 for i = 1, 9 do
-  bind("SUPER + " .. i,         "Workspace " .. i,         hl.dsp.focus({ workspace = tostring(i) }))
-  bind("SUPER + SHIFT + " .. i, "Move to workspace " .. i, hl.dsp.window.move({ workspace = tostring(i), follow = false }))
+  local key = "code:" .. (9 + i)
+  bind("SUPER + " .. key,         "Workspace " .. i,         hl.dsp.focus({ workspace = tostring(i) }))
+  bind("SUPER + SHIFT + " .. key, "Move to workspace " .. i, hl.dsp.window.move({ workspace = tostring(i), follow = false }))
 end
 
 bind("SUPER + mouse_down", "Next workspace",     hl.dsp.focus({ workspace = "e+1" }))
@@ -142,8 +151,13 @@ bind("SUPER + mouse_up",   "Previous workspace", hl.dsp.focus({ workspace = "e-1
 
 -- Scratchpad. One toggle for the thing you keep pulling up and dismissing —
 -- a shell on the cluster, usually.
-bind("SUPER + grave",         "Toggle scratchpad",    hl.dsp.workspace.toggle_special("scratch"))
-bind("SUPER + SHIFT + grave", "Send to scratchpad",   hl.dsp.window.move({ workspace = "special:scratch", follow = false }))
+--
+-- code:49 is the key left of 1. Bound by symbol it was "grave", which that key
+-- types on a US layout and on almost nothing else: it is bar on latam,
+-- masculine on es, dead_circumflex on de and twosuperior on fr. On all of
+-- those the scratchpad could not be opened at all.
+bind("SUPER + code:49",         "Toggle scratchpad",  hl.dsp.workspace.toggle_special("scratch"))
+bind("SUPER + SHIFT + code:49", "Send to scratchpad", hl.dsp.window.move({ workspace = "special:scratch", follow = false }))
 
 -- ---------------------------------------------------------------------------
 -- Apps. Short list on purpose: everything that is not a GUI starts from a shell
