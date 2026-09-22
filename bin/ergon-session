@@ -38,9 +38,18 @@ _hardware_bin() {
 }
 
 _hibernate_ready() {
-  local hw; hw=$(_hardware_bin) || return 1
+  local hw out
+  hw=$(_hardware_bin) || return 1
   [ -n "$hw" ] || return 1
-  "$hw" detect 2>/dev/null | grep -Eq 'hibernation:[[:space:]]+yes'
+  # Capture first, THEN grep: under `set -o pipefail`, `detect | grep -q ...`
+  # lets grep exit the instant it matches the hibernation line, while detect
+  # still has several more lines to print (amdgpu panel, light sensor,
+  # backlight, profiles) behind their own `$(...)` forks. detect gets SIGPIPE,
+  # exits 141, and pipefail reports that instead of grep's 0 -- so this read
+  # `grep -Eq` on a live pipe and reported hibernation NOT ready on exactly the
+  # machines where it is.
+  out=$("$hw" detect 2>/dev/null) || return 1
+  grep -Eq 'hibernation:[[:space:]]+yes' <<<"$out"
 }
 
 # Only hibernate is gated here: it is the one entry that fails outright on a
@@ -60,9 +69,16 @@ _entries() {
 # running right now". The process itself is the only source: it blocks on the
 # command it wraps for exactly as long as that command runs, under either name
 # (bin/ergon-watch directly, or its erg-watch alias).
+#
+# Matched on ARGS, not `comm`: ergon-watch starts with `#!/usr/bin/env bash`,
+# so env re-execs bash and the running process's `comm` is just "bash" --
+# `$2 == "ergon-watch"` can never match a real run, which made this whole
+# check dead code. `args` still carries the interpreted script's path
+# (".../ergon-watch ..." or ".../erg-watch ..."). The `awk` filter is
+# itself a transient ps/awk process and must not match its own command line.
 _live_watches() {
-  ps -eo pid=,comm=,args= 2>/dev/null \
-    | awk '$2 == "ergon-watch" || $2 == "erg-watch" { $1 = $1; print }'
+  ps -eo pid=,args= 2>/dev/null \
+    | awk '/(^|[ \/])(ergon|erg)-watch([ \/]|$)/ && !/awk/ { $1 = $1; print }'
 }
 
 _inhibitors() {
