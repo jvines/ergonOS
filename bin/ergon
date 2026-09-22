@@ -56,4 +56,36 @@ if [ ! -x "$target" ]; then
   usage >&2
   exit 127
 fi
+
+# ERGON-30: `ergon <cmd> --help` used to just exec the target with --help as
+# an ordinary argument, and most commands have no idea what -h/--help means --
+# `ergon record --help` started a recording, `ergon ocr --help` opened the
+# region selector. `# ergon:help=native` is a command's proof, read by hand
+# into its header, that it already prints its own help for -h/--help and exits
+# without acting on anything else. Only that tag lets the router hand the
+# request through unchanged; everything else gets help synthesised here from
+# the header tags, and -- this is the fix -- the target is NEVER EXECUTED for
+# it, so a command that has not proven itself safe cannot act on --help no
+# matter what turns out to be inside it.
+#
+# Deliberately only ever looks at "$1", the ergon command's own first
+# argument, and nowhere else in "$@". A wrapper like `ergon term htop --help`
+# or `ergon launch-tui btop --help` must keep starting the named program with
+# ITS OWN --help; scanning past the first argument would swallow that. A
+# command whose own -h/--help can legitimately appear later (`ergon watch
+# --name x -- pytest --help`, where -- marks "everything past here is not
+# mine") has to recognise -- and -h/--help itself, which is exactly what
+# `# ergon:help=native` promises it does.
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  if [ "$(tag "$target" help)" != native ]; then
+    s=$(tag "$target" summary); s=${s:-(undocumented)}
+    g=$(tag "$target" group);   g=${g:-misc}
+    a=$(tag "$target" args)
+    printf '%s\n\n' "$s"
+    printf '  group   %s\n' "$g"
+    printf '  usage   ergon %s%s\n' "$cmd" "${a:+ $a}"
+    exit 0
+  fi
+fi
+
 exec "$target" "$@"
