@@ -620,13 +620,52 @@ else
   bad "workspace/scratchpad binds are not all on keycodes 10-18 and 49"
   printf '%s\n' "$KC_OUT"
 fi
-# ...and the cheatsheet names those keys as this layout labels them, not code:N.
-if printf '%s\n' "$KEYS_OUT" | grep -qE '^SUPER \+ [^ ]+ +Workspace 1$' \
-   && ! printf '%s\n' "$KEYS_OUT" | grep -q 'code:'; then
-  ok "ergon-keys shows keycode binds by label ($(printf '%s\n' "$KEYS_OUT" | grep -E ' Workspace 1$' | awk '{print $3}'))"
+# ...and the cheatsheet names those keys as each layout labels them.
+#
+# "A Workspace 1 row and no code: anywhere" proved nothing: on us, the fallback
+# ergon-keys uses when it has no keymap prints the same 1 a working keymap
+# does. So switch the compositor through the layouts the keys were moved for
+# and require what the key really types on each. The key left of 1 differs on
+# all four, and from the fallback's "key left of 1". Each layout is read twice:
+# through the compositor's own keymap, and with no Wayland display, which makes
+# ergon-keys compile one from the layout `hyprctl devices` reports.
+#
+# `hyprctl keyword` does not work on a Lua config; eval does. The keymap is
+# applied on the compositor's next loop iteration, so wait for the keyboard to
+# report it rather than sleeping.
+kb_main() { hq devices -j | jq -r '((.keyboards | map(select(.main)) + .)[0] // {}) | "\(.layout // "")\t\(.variant // "")"'; }
+set_layout() {
+  hq "eval 'hl.config({ input = { kb_layout = \"$1\", kb_variant = \"${2:-}\" } })'" >/dev/null
+  for _ in $(seq 1 20); do
+    [ "$(kb_main)" = "$1"$'\t'"${2:-}" ] && return 0
+    sleep 0.25
+  done
+  return 1
+}
+key_of() { printf '%s\n' "$1" | awk -F'  +' -v d="$2" '$2 == d { sub(/^SUPER \+ /, "", $1); print $1 }'; }
+IFS=$'\t' read -r KB0 KV0 < <(kb_main)
+if printf '%s\n' "$KEYS_OUT" | grep -q 'code:'; then bad "ergon-keys shows a raw code:N"; else ok "ergon-keys shows no raw code:N"; fi
+# Without this, a dead first source would pass below as "session" on the fallback.
+if usr "timeout 2 xkbcli dump-keymap-wayland" 2>/dev/null | grep -q 'xkb_symbols'; then
+  ok "the compositor hands clients its keymap (ergon-keys' first source)"
 else
-  bad "ergon-keys shows a raw keycode, or no Workspace 1 row"
+  bad "xkbcli dump-keymap-wayland got no keymap; ergon-keys can only compile one"
 fi
+for want in 'us 1 `' 'latam 1 |' 'es 1 º' 'fr & ²'; do
+  read -r L W1 SP <<<"$want"
+  if ! set_layout "$L"; then bad "could not switch the compositor to $L (it reports '$(kb_main | tr '\t' ' ')')"; continue; fi
+  for src in session compiled; do
+    if [ "$src" = session ]; then out=$(usr "ergon-keys --print" 2>/dev/null)
+    else out=$(usr "WAYLAND_DISPLAY=none ergon-keys --print" 2>/dev/null); fi
+    got="$(key_of "$out" "Workspace 1") $(key_of "$out" "Toggle scratchpad")"
+    if [ "$got" = "$W1 $SP" ]; then
+      ok "ergon-keys on $L, $src keymap: SUPER + $W1 is workspace 1, SUPER + $SP the scratchpad"
+    else
+      bad "ergon-keys on $L, $src keymap: workspace 1 and the scratchpad are on '$got', want '$W1 $SP'"
+    fi
+  done
+done
+set_layout "${KB0:-us}" "${KV0:-}" || bad "could not restore the layout to '${KB0:-us}'"
 # Hyprland fires EVERY bind that matches, so a chord bound twice is two actions
 # on one press. ergon-lint catches the literal ones; this catches the chords
 # built at runtime (the workspace loop, the help key chosen by layout).
@@ -870,6 +909,39 @@ else
       hq layers 2>/dev/null | grep -A3 waybar | sed 's/^/     /'
       echo "     --- input devices hyprland sees ---"
       hq devices 2>/dev/null | sed -n '/Mice:/,$p' | sed 's/^/     /'
+    fi
+
+    # The keycode binds, PRESSED, on each layout they were moved for. Above,
+    # they are only shown to be registered on code:10-18 and 49. Under Lua a
+    # code:N bind is matched by a different branch of Hyprland's keybind
+    # manager than a hyprlang one -- the branch hyprctl cannot even report (key
+    # "", keycode 0) -- and a bind that registers and never fires is exactly
+    # what nothing else here would notice. So the keys go in through uinput, as
+    # a keyboard's do, with the compositor set (set_layout, above) to layouts
+    # on which they type &, |, º or ² rather than 1 and grave. evdev codes:
+    # LEFTMETA 125, KEY_2 3, GRAVE 41; xkb keycode = evdev + 8, so these are
+    # code:11 and code:49.
+    super_key() { usr "YDOTOOL_SOCKET=$YSOCK ydotool key 125:1 $1:1 $1:0 125:0" >/tmp/ydotool.out 2>&1; sleep 0.6; }
+    special() { hq monitors -j 2>/dev/null | jq -r '[.[] | select(.focused)][0].specialWorkspace.name // ""'; }
+    if ! hq devices -j 2>/dev/null | jq -e '.keyboards[] | select(.name | test("ydotool"))' >/dev/null; then
+      bad "Hyprland has no ydotool keyboard, so the keycode binds cannot be pressed"
+    else
+      for L in us latam es fr; do
+        if ! set_layout "$L"; then bad "could not switch the compositor to $L"; continue; fi
+        hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1; sleep 0.5
+        ws0=$(hq activeworkspace -j 2>/dev/null | jq -r '.id // empty')
+        super_key 3;  ws=$(hq activeworkspace -j 2>/dev/null | jq -r '.id // empty')
+        super_key 41; sp_open=$(special)
+        super_key 41; sp_shut=$(special)
+        if [ "$ws0" = 1 ] && [ "$ws" = 2 ] && [ "$sp_open" = special:scratch ] && [ -z "$sp_shut" ]; then
+          ok "on $L, SUPER + the 2 key goes to workspace 2 and SUPER + the key left of 1 toggles the scratchpad"
+        else
+          bad "on $L: from workspace '$ws0', SUPER + the 2 key gave '$ws' (want 2); the key left of 1 opened '$sp_open' (want special:scratch), then left '$sp_shut' open (want nothing)"
+          echo "     ydotool said: $(cat /tmp/ydotool.out 2>/dev/null)"
+          [ "$sp_shut" != special:scratch ] || hq "dispatch 'hl.dsp.workspace.toggle_special(\"scratch\")'" >/dev/null 2>&1
+        fi
+      done
+      set_layout "${KB0:-us}" "${KV0:-}" || bad "could not restore the layout to '${KB0:-us}'"
     fi
 
     # A module whose on-click is a shell command. ergon-launch-tui is the one every
