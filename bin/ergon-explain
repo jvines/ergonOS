@@ -2,6 +2,7 @@
 # ergon:summary=Print what this system knows about a topic
 # ergon:group=help
 # ergon:args=[--list] [topic]
+# ergon:help=native
 #
 # The knowledge base, as a COMMAND rather than a file format.
 #
@@ -49,7 +50,7 @@ case "${1:---list}" in
       printf '  %-18s %s\n' "$t" "$(sed -n '3,6p' "$p" | tr '\n' ' ' | cut -c1-56)"
     done < <(_topics)
     ;;
-  -h|--help|help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
   *)
     p=$(_find "$1") || {
       printf 'no topic %s\n\n' "$1" >&2

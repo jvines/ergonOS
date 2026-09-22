@@ -2,6 +2,7 @@
 # ergon:summary=Detect this machine and apply what its hardware needs
 # ergon:group=system
 # ergon:args=detect|apply|list [--force NAME]
+# ergon:help=native
 #
 # Two layers, in this order:
 #
@@ -363,6 +364,6 @@ case "${1:-detect}" in
     for n in $d; do _apply_one "$n" || rc=1; done
     exit $rc
     ;;
-  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) warn "unknown command '$1' (detect|apply|list)"; exit 2 ;;
 esac

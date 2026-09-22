@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=OCR a screen region straight to the clipboard
 # ergon:group=capture
+# ergon:args=
 #
 # Select a region, run it through tesseract, put the text on the clipboard.
 # The case this exists for is a number in a figure or a table in a PDF that you

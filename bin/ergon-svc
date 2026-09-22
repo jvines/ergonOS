@@ -2,6 +2,7 @@
 # ergon:summary=Start and stop the optional background services
 # ergon:group=system
 # ergon:args=list|up|down|status|reap [name]
+# ergon:help=native
 #
 #   ergon svc list
 #   ergon svc up marimo
@@ -78,6 +79,6 @@ case "${1:-list}" in
       fi
     done
     ;;
-  -h|--help|help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ergon-svc: unknown command '$1' (list|up|down|status|reap)" >&2; exit 2 ;;
 esac

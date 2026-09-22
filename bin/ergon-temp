@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=CPU package temperature as waybar JSON
 # ergon:group=bar
+# ergon:args=
 #
 # The hwmon index is NOT stable across boots — k10temp can be hwmon2 today and
 # hwmon5 tomorrow depending on probe order, so a hardcoded /sys path in

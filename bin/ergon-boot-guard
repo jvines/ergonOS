@@ -2,6 +2,7 @@
 # ergon:summary=Boot the last known-good snapshot after repeated failed boots
 # ergon:group=system
 # ergon:args=install | ok | status | disable
+# ergon:help=native
 #
 # Snapshots are bootable already (grub-btrfs) and ergon-rollback can make one
 # permanent. Both need someone who knows that, at a GRUB menu, on a machine that
@@ -190,6 +191,6 @@ disable)
   ok "boot guard removed (the grubenv on the EFI partition is left alone)"
   ;;
 
--h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
+-h|--help|help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' ;;
 *) die "unknown command '$1' (install|ok|status|disable)" ;;
 esac

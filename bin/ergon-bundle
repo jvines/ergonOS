@@ -2,6 +2,7 @@
 # ergon:summary=Add, remove and list optional package bundles
 # ergon:group=system
 # ergon:args=list|info|add|remove|update|sync [--yes] [--as NAME] [name|source...]
+# ergon:help=native
 #
 # The base system is small on purpose: Arch, uv, and packages/python. A bundle
 # is a group of packages for one kind of work, chosen at install time and
@@ -677,6 +678,6 @@ case "$cmd" in
       _install_bundle "$b"
     done
     ;;
-  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$(printf '%s' "$cmd" | _clean)' (list|info|add|remove|update|sync)" ;;
 esac

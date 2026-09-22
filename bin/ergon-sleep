@@ -2,6 +2,7 @@
 # ergon:summary=Check how this machine sleeps, and measure whether it wakes
 # ergon:group=hardware
 # ergon:args=check | cycle N [--hibernate]
+# ergon:help=native
 #
 #   check           what the firmware offers (s2idle, S3), what the lid does,
 #                   whether hibernation can resume, whether the last suspend
@@ -138,6 +139,6 @@ cycle() {
 case "${1:-check}" in
   check) check ;;
   cycle) shift; cycle "$@" ;;
-  -h|--help|help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$1' (check|cycle)" ;;
 esac

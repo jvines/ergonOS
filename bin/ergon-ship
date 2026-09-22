@@ -2,6 +2,7 @@
 # ergon:summary=Run this project somewhere else, in the same environment
 # ergon:group=data
 # ergon:args=<target> -- <command>... [--backend ssh|slurm|container] [--fetch DIR]
+# ergon:help=native
 #
 #   ergon ship kira -- python fit.py
 #   ergon ship kira --fetch results -- python fit.py
@@ -32,7 +33,7 @@ while [ $# -gt 0 ]; do
     --backend) BACKEND="${2:?}"; shift 2 ;;
     --fetch)   FETCH="${2:?}"; shift 2 ;;
     --)        shift; break ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)        echo "ergon-ship: unknown flag $1" >&2; exit 2 ;;
     *)         TARGET="$1"; shift ;;
   esac
