@@ -68,24 +68,33 @@ fi
 # it, so a command that has not proven itself safe cannot act on --help no
 # matter what turns out to be inside it.
 #
-# Deliberately only ever looks at "$1", the ergon command's own first
-# argument, and nowhere else in "$@". A wrapper like `ergon term htop --help`
-# or `ergon launch-tui btop --help` must keep starting the named program with
-# ITS OWN --help; scanning past the first argument would swallow that. A
-# command whose own -h/--help can legitimately appear later (`ergon watch
-# --name x -- pytest --help`, where -- marks "everything past here is not
-# mine") has to recognise -- and -h/--help itself, which is exactly what
-# `# ergon:help=native` promises it does.
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  if [ "$(tag "$target" help)" != native ]; then
-    s=$(tag "$target" summary); s=${s:-(undocumented)}
-    g=$(tag "$target" group);   g=${g:-misc}
-    a=$(tag "$target" args)
-    printf '%s\n\n' "$s"
-    printf '  group   %s\n' "$g"
-    printf '  usage   ergon %s%s\n' "$cmd" "${a:+ $a}"
-    exit 0
-  fi
+# Scans "$@" up to the first literal "--", not just "$1": a first fix here
+# only ever looked at "$1", so `ergon record region --help` (or `power
+# performance --help`, `lid close --help`, `aur <pkg> --help`, `fingerprint
+# <finger> --help`) walked straight past the check and did the thing, because
+# none of those commands' own case arms look past their own $1 either. A
+# command that legitimately wants -h/--help to reach IT past a "--" (`ergon
+# watch --name x -- pytest --help`, where "--" marks "everything after this is
+# not mine") has to be `# ergon:help=native` and recognise that itself; a
+# wrapper that hands its whole tail to another program as-is (`ergon term
+# htop --help`, `ergon launch-tui btop --help`) is native for the same reason
+# -- it must never be intercepted here, since scanning its args would swallow
+# the wrapped program's own --help.
+if [ "$(tag "$target" help)" != native ]; then
+  for tok in "$@"; do
+    [ "$tok" = "--" ] && break
+    case "$tok" in
+      -h|--help)
+        s=$(tag "$target" summary); s=${s:-(undocumented)}
+        g=$(tag "$target" group);   g=${g:-misc}
+        a=$(tag "$target" args)
+        printf '%s\n\n' "$s"
+        printf '  group   %s\n' "$g"
+        printf '  usage   ergon %s%s\n' "$cmd" "${a:+ $a}"
+        exit 0
+        ;;
+    esac
+  done
 fi
 
 exec "$target" "$@"
