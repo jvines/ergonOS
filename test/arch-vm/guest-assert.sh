@@ -62,6 +62,13 @@ check "snap-pac installed"           'pacman -Q snap-pac'
 # Both kernels, so a bad one is a menu selection rather than a live USB.
 check "linux kernel present"         '[ -f /boot/vmlinuz-linux ]'
 check "linux-lts kernel present"     '[ -f /boot/vmlinuz-linux-lts ]'
+# ERGON-26: `ergon update` asks pacman who owns the RUNNING kernel's modules,
+# and reports a reboot when nobody does. This machine boots linux-lts, which is
+# exactly the case the version compare it replaced got wrong: `uname -r` against
+# `pacman -Q linux` never matches here, so every run claimed a reboot was due.
+# A stub can only answer from a fixture; whether the path is the one pacman
+# owns on a real Arch install is a question only this VM can settle.
+check "pacman owns the running kernel's modules" 'pacman -Qo "/usr/lib/modules/$(uname -r)/vmlinuz"'
 check "UEFI boot entry exists"       'efibootmgr | grep -qi grub'
 check "booted in UEFI mode"          '[ -d /sys/firmware/efi ]'
 
