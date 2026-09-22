@@ -1,0 +1,17 @@
+# A 60s poll, not a long-running `upower --monitor-detail` (or a homegrown
+# equivalent): a oneshot has nothing that can crash, leak, or need restarting
+# across suspend/resume, and the only thing that has to survive between runs
+# is one small state file (see ergon-battery), which systemd's own activation
+# already gives for free. Persistent=true so a warning still fires promptly
+# after a suspend that ran past the last tick, rather than waiting up to 60s
+# more on top of however late the timer already was.
+[Unit]
+Description=Poll the battery for low/critical warnings
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=60s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

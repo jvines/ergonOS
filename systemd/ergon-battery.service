@@ -1,0 +1,6 @@
+[Unit]
+Description=Warn before the battery gets low or critical
+
+[Service]
+Type=oneshot
+ExecStart=%h/ergonOS/bin/ergon-battery check
