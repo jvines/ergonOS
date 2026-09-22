@@ -69,9 +69,15 @@ label {
 # Host and battery. On a machine that hibernates rather than shuts down, coming
 # back to a locked screen at 4% is a real scenario, and you want to know before
 # you start typing a passphrase.
+#
+# `ergon battery --short` does the discovery (no BAT1 hardcode -- some
+# machines are BAT0, some have two) and prints AC on a desktop with no
+# battery at all. The previous inline `|| echo AC` never actually ran: a
+# pipeline's exit status is its last command's, sed's here, not the capacity
+# read's, so a missing BAT1 produced an empty label rather than "AC".
 label {
     monitor =
-    text = cmd[update:30000] printf '%s   %s' "$(hostname -s)" "$(cat /sys/class/power_supply/BAT1/capacity 2>/dev/null | sed 's/$/%/' || echo AC)"
+    text = cmd[update:30000] printf '%s   %s' "$(hostname -s)" "$(ergon battery --short 2>/dev/null)"
     color = rgb(@COOL_DIMMER:raw@)
     font_size = 13
     font_family = JetBrainsMono Nerd Font

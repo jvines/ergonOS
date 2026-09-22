@@ -1149,7 +1149,7 @@ su - "$U" -c 'zsh -c "command -v ergon-wallpaper"' >/dev/null 2>&1 \
 #
 # So assert the thing a login actually depends on: that the commands resolve for
 # a plain login shell, the way the greeter's session will find them.
-for c in ergon-launch-tui ergon-wallpaper ergon-brightness; do
+for c in ergon-launch-tui ergon-wallpaper ergon-brightness ergon ergon-battery; do
   if su - "$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)" -c "command -v $c" >/dev/null 2>&1; then
     ok "$c resolves on the login PATH"
   else

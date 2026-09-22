@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# ergon:summary=Battery discovery, status and low/critical warnings
+# ergon:group=power
+# ergon:args=[status] | --short | check | -h|--help
+# ergon:help=native
+#
+# Batteries are found by /sys/class/power_supply/*/type == Battery, never by
+# name. BAT1 on this machine, BAT0 on another, and a Dell with two cells
+# enumerates BAT0 and BAT1 -- a hardcoded name works on whichever machine it
+# was written on and silently sees nothing on the rest.
+#
+# `check` is meant to run from ergon-battery.timer every 60s, not as a
+# long-running `--watch`. upower --monitor-detail (or any daemon of our own)
+# is a process that has to survive suspend/resume and be restarted if it dies;
+# a oneshot has nothing to crash, and correctness here only needs one small
+# state file to persist between runs, which systemd's own timer activation
+# already gives for free. That state file is what makes a warning fire once
+# per crossing rather than once a minute for as long as the battery stays low.
+#
+# UPower already acts on its own at PercentageAction (2% by default) --
+# CriticalPowerAction=Auto, its shipped default, hands that off to logind's
+# Sleep(), which picks a live-checked suspend/hibernate. ergon-hardware
+# looked at forcing an explicit Hibernate there and rejected it (see its
+# comment) as strictly worse than Auto. This exists for the gap before that
+# action fires at all: the waybar blink is easy to miss under a fullscreen
+# window or on the lock screen, and nothing else here ever spoke up.
+set -euo pipefail
+
+ROOT="${ERGON_SYSROOT:-}"
+PSDIR="$ROOT/sys/class/power_supply"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"
+STATE_FILE="$STATE_DIR/battery-notify"
+
+# Percent thresholds for OUR warnings, distinct from UPower's own
+# PercentageLow/PercentageCritical/PercentageAction -- those are read from
+# /etc/UPower/UPower.conf(.d) and drive suspend/hibernate, not a toast.
+LOW=15
+CRIT=7
+
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# Every power_supply whose type is Battery AND whose scope is not Device,
+# sorted -- so a machine with more than one always sees them in the same
+# order. Peripherals (Bluetooth/USB mice, keyboards, game controllers --
+# hidpp_battery_N, hid-<addr>-battery, ...) register as type=Battery too, but
+# their driver tags them scope=Device; a laptop's own pack has no scope file
+# at all, or scope=System. Without this filter a mouse's charge gets averaged
+# into the machine's own reading, and a mouse that reports Discharging (as
+# they always do, on battery power) makes the whole machine look like it is
+# discharging -- on a desktop with no battery of its own, entirely so.
+_batteries() {
+  local d scope
+  for d in "$PSDIR"/*; do
+    [ -r "$d/type" ] || continue
+    [ "$(cat "$d/type" 2>/dev/null)" = Battery ] || continue
+    scope=$(cat "$d/scope" 2>/dev/null) || scope=""
+    [ "$scope" = Device ] && continue
+    printf '%s\n' "$d"
+  done | sort
+}
+
+# Prints "<capacity> <status>" on success, one line, or fails when there is no
+# battery at all (a desktop). Discharging on ANY battery means the machine is
+# running on stored energy, so it outranks Charging/Full/Unknown from the
+# others. Capacity is the energy-weighted percentage across batteries
+# (energy_now/energy_full, or charge_now/charge_full on a battery that
+# reports amp-hours instead) when every battery has that data; otherwise a
+# plain average of `capacity`, as before. A plain average is wrong whenever
+# packs differ in size: a 24 Wh internal cell at 30% and a 72 Wh external one
+# empty average to 15%, when only 7.5% of the machine's total energy is left.
+_read() {
+  local d cap sum=0 n=0 st status=Unknown disch=0 chg=0
+  local now full ewsum=0 efsum=0 have_energy=1
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    cap=$(cat "$d/capacity" 2>/dev/null) || continue
+    [ -n "$cap" ] || continue
+    sum=$((sum + cap)); n=$((n + 1))
+    now=$(cat "$d/energy_now" 2>/dev/null) || now=$(cat "$d/charge_now" 2>/dev/null) || now=""
+    full=$(cat "$d/energy_full" 2>/dev/null) || full=$(cat "$d/charge_full" 2>/dev/null) || full=""
+    if [ -n "$now" ] && [ -n "$full" ] && [ "$full" -gt 0 ]; then
+      ewsum=$((ewsum + now)); efsum=$((efsum + full))
+    else
+      have_energy=0
+    fi
+    st=$(cat "$d/status" 2>/dev/null) || st=""
+    case "$st" in
+      Discharging) disch=1 ;;
+      Charging)    chg=1 ;;
+    esac
+  done < <(_batteries)
+  [ "$n" -gt 0 ] || return 1
+  if [ "$disch" = 1 ]; then status=Discharging
+  elif [ "$chg" = 1 ]; then status=Charging
+  else status=Full
+  fi
+  if [ "$have_energy" = 1 ] && [ "$efsum" -gt 0 ]; then
+    cap=$(( (ewsum * 100 + efsum / 2) / efsum ))
+  else
+    cap=$(( sum / n ))
+  fi
+  printf '%s %s\n' "$cap" "$status"
+}
+
+_notify() {  # _notify <urgency|-> <summary> <body>
+  command -v notify-send >/dev/null 2>&1 || return 0
+  if [ "$1" = - ]; then
+    notify-send "$2" "$3" || true
+  else
+    notify-send -u "$1" "$2" "$3" || true
+  fi
+}
+
+case "${1:-status}" in
+  -h|--help|help) usage; exit 0 ;;
+
+  --short)
+    if read -r cap status < <(_read); then
+      printf '%s%%\n' "$cap"
+    else
+      # Something sensible on a desktop: it has no battery, so it is AC by
+      # definition. The old hyprlock label's `|| echo AC` never ran here --
+      # the pipeline's exit status was sed's, not the capacity read's -- so
+      # this is a real fallback where before there was a dead one.
+      printf 'AC\n'
+    fi
+    ;;
+
+  status)
+    if read -r cap status < <(_read); then
+      printf '%s%% (%s)\n' "$cap" "$status"
+    else
+      printf 'no battery (AC)\n'
+    fi
+    ;;
+
+  check)
+    read -r cap status < <(_read) || exit 0   # no battery: nothing to warn about
+    mkdir -p "$STATE_DIR"
+    last=none
+    [ -f "$STATE_FILE" ] && last=$(cat "$STATE_FILE")
+
+    if [ "$status" != Discharging ]; then
+      # Plugged in, full, or unknown: any past warning no longer applies, and
+      # the next discharge should be able to warn again from the top.
+      [ "$last" = none ] || printf 'none\n' > "$STATE_FILE"
+      exit 0
+    fi
+
+    if [ "$cap" -le "$CRIT" ]; then
+      if [ "$last" != critical ]; then
+        _notify critical "Battery critical: ${cap}%" \
+          "Plug in now. UPower suspends or hibernates on its own well before this runs out."
+        printf 'critical\n' > "$STATE_FILE"
+      fi
+    elif [ "$cap" -le "$LOW" ]; then
+      if [ "$last" = none ]; then
+        _notify - "Battery low: ${cap}%" "Plug in soon."
+        printf 'low\n' > "$STATE_FILE"
+      fi
+    else
+      [ "$last" = none ] || printf 'none\n' > "$STATE_FILE"
+    fi
+    ;;
+
+  *)
+    echo "unknown command '$1' (status|--short|check)" >&2
+    exit 2
+    ;;
+esac

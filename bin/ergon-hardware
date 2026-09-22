@@ -157,6 +157,35 @@ EOF
     fi
   fi
 
+  # Battery: considered forcing UPower's own CriticalPowerAction=Hibernate
+  # here, as hardening for the gap after ergon-battery's own warnings but
+  # before UPower's PercentageAction (2%) kicks in. Reverted after checking
+  # upower's actual source (1.91.4, what Arch ships) rather than trusting the
+  # config file's own prose comment: UPower.conf's shipped default is already
+  # CriticalPowerAction=Auto, and up_backend_get_critical_action() in
+  # src/linux/up-backend.c maps "Auto" straight to logind's generic Sleep()
+  # -- a live call that picks suspend-then-hibernate, hybrid-sleep, hibernate
+  # or plain suspend itself, checking logind's own CanHibernate/CanSuspend at
+  # that moment. Naming "Hibernate" explicitly instead makes UPower walk its
+  # own fallback table STARTING at Hibernate and only forward to PowerOff --
+  # it never falls back to a plain suspend. Our _hibernate_ready is a static,
+  # install-time check (kernel offers `disk`, resume=, some swap active);
+  # logind's live CanHibernate additionally weighs free swap against resident
+  # memory right then. A long sampler run can fill swap between provisioning
+  # and an actual critical-battery event, so CanHibernate goes false exactly
+  # when it matters, and forcing Hibernate then means PowerOff -- the run is
+  # lost -- where Auto's Sleep() would have suspended instead and kept it in
+  # RAM. That makes this "hardening" strictly worse than doing nothing, so it
+  # is not implemented (the card marks it optional). UPower.conf.d itself IS
+  # read -- confirmed from up-config.c's up_config_list_confd_files() and
+  # from the vendor package shipping etc/UPower/UPower.conf.d/README.md --
+  # so if a case for an explicit value ever turns up, it belongs here as a
+  # marker-tagged drop-in, never a sed of the vendor UPower.conf. This call
+  # only cleans up a drop-in an earlier version of this script may have left
+  # behind; _unput's own marker check still leaves anything hand-written
+  # alone.
+  _unput /etc/UPower/UPower.conf.d/90-ergon-hibernate.conf
+
   # PPD >= 0.20 on kernel >= 6.9 turns on amdgpu Adaptive Backlight Management
   # on battery, which desaturates the panel. On a machine for reading spectra
   # and colormapped plots that is a correctness problem, not a cosmetic one.

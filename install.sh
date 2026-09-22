@@ -134,6 +134,21 @@ else
     systemctl --user start ergon-reap.timer >/dev/null 2>&1 || true
     ok "ergon-reap.timer enabled"
   fi
+
+  # Same pattern as ergon-reap.timer above: a user timer, not a session
+  # service exec'd from Hyprland's autostart, so the low-battery warning still
+  # fires even if the desktop config that would have started a monitor is
+  # broken.
+  if [ "$CHECK" != 1 ]; then
+    mkdir -p "$HOME/.config/systemd/user"
+    cp "$ERGON/systemd/ergon-battery.service" "$ERGON/systemd/ergon-battery.timer" \
+       "$HOME/.config/systemd/user/" 2>/dev/null || true
+    systemctl --user daemon-reload 2>/dev/null || true
+    mkdir -p "$HOME/.config/systemd/user/timers.target.wants"
+    ln -sfn ../ergon-battery.timer "$HOME/.config/systemd/user/timers.target.wants/ergon-battery.timer"
+    systemctl --user start ergon-battery.timer >/dev/null 2>&1 || true
+    ok "ergon-battery.timer enabled"
+  fi
 fi
 
 # The shell. link() refuses to replace a real file, which is the behaviour
