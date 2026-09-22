@@ -47,6 +47,12 @@ man-pages
 inetutils           # hostname(1); arch-bootstrap writes /etc/hostname
 networkmanager      # nmtui is the network UI; waybar's network module reads it
 pacman-contrib      # paccache, checkupdates, pacdiff
+rebuild-detector    # checkrebuild: which installed packages link a shared
+                    # library that is no longer on disk. Nothing else on an
+                    # Arch machine ever rebuilds an AUR package after a soname
+                    # bump, and the failure is silent -- the binary dies at
+                    # exec, so waybar-git simply never appears and no log says
+                    # why. `ergon update` and `ergon doctor` both read it.
 reflector           # mirror ranking
 informant           # BLOCKS an upgrade until the Arch news item is read.
                     # On a rolling distro the manual-intervention notices are

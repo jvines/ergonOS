@@ -18,7 +18,10 @@
 # than assumed; --yes meaning only --noconfirm -- it
 # waives neither gate and never removes an orphan; nothing pending still
 # reporting orphans, firmware, .pacnew and what needs restarting; a replaced
-# kernel and a replaced compositor; --check writing nothing at all.
+# kernel and a replaced compositor; --check writing nothing at all; and
+# ERGON-29's rebuild step -- which foreign packages checkrebuild's output
+# actually names, that --yes rebuilds them without asking while it still
+# refuses to remove an orphan, and that --check rebuilds nothing.
 #
 # DOES NOT COVER: a real pacman transaction, real logind, or real firmware.
 set -uo pipefail
@@ -71,6 +74,9 @@ case "$1" in
   -Qtdq)
     [ -n "${STUB_ORPHANS:-}" ] || exit 1
     printf '%s\n' ${STUB_ORPHANS} ;;
+  -Qm)
+    [ -n "${STUB_FOREIGN:-}" ] || exit 1
+    for f in ${STUB_FOREIGN}; do echo "$f 1.0-1"; done ;;
   -Qo)
     [ -e "$2" ] || exit 1
     echo "$2 is owned by linux-lts 6.12.0-1" ;;
@@ -123,6 +129,15 @@ cat > "$T/stub/pgrep" <<'EOF'
 [ -n "${STUB_HYPR_PID:-}" ] || exit 1
 echo "${STUB_HYPR_PID}"
 EOF
+# checkrebuild is the local half of the rebuild question -- it reads ELF
+# headers, never the network -- so the stub answers from a variable and logs
+# that it was asked at all.
+cat > "$T/stub/checkrebuild" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/checkrebuild"
+[ -n "${STUB_REBUILD:-}" ] || exit 0
+printf '%s\n' ${STUB_REBUILD}
+EOF
 cat > "$T/stub/df" <<'EOF'
 #!/usr/bin/env bash
 printf 'Avail\n%sG\n' "${STUB_FREE_GIB:-100}"
@@ -139,7 +154,16 @@ EOF
 done
 chmod +x "$T/stub"/*
 
-export TEST_ROOT=$T ERGON_SYSROOT=$S PATH="$T/stub:$PATH"
+# ergon-update reaches its sibling by $ERGON/bin, the way ergon-bundle does, so
+# the seam is a throwaway repo rather than PATH.
+mkdir -p "$T/ergon/bin"
+cat > "$T/ergon/bin/ergon-aur" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/aur"
+EOF
+chmod +x "$T/ergon/bin/ergon-aur"
+
+export TEST_ROOT=$T ERGON_SYSROOT=$S ERGON=$T/ergon PATH="$T/stub:$PATH"
 [ "$(command -v sudo)" = "$T/stub/sudo" ] && [ "$(command -v pacman)" = "$T/stub/pacman" ] \
   || { echo "stubs are not first on PATH; refusing to run anything"; exit 1; }
 
@@ -263,6 +287,43 @@ check "  trims no cache and refreshes no firmware" test ! -e "$L/paccache" -a ! 
 check "  removes no orphan" not grep -q -- '-Rns' "$L/pacman"
 check "  but still reports them" has "$T/out" "libfoo"
 check "  and says nothing was applied" has "$T/out" "--check: nothing applied"
+
+echo "== foreign packages left linked against a library that is gone"
+# checkrebuild names repo packages too; those are pacman's problem. Only the
+# foreign ones are nobody's, and mistaking one for the other would hand a repo
+# package to a command that builds from the AUR.
+update STUB_PENDING=vim STUB_FOREIGN="waybar-git claude-code" STUB_REBUILD="foreign/waybar-git extra/vim" -- --yes
+check "checkrebuild is asked, after the transaction" test -e "$L/checkrebuild"
+check "  the broken foreign package is named" has "$T/out" "waybar-git"
+check "  and rebuilt through ergon-aur, one package at a time" hasx "$L/aur" "--rebuild waybar-git"
+check "  a REPO package needing a rebuild is not ours to rebuild" not has "$L/aur" "vim"
+check "  a foreign package that is fine is left alone" not has "$L/aur" "claude-code"
+# The orphan prompt exists because -Rns cascades; a rebuild reinstalls the same
+# package from the pinned PKGBUILD, so --yes proceeds. These two must not drift
+# into each other.
+check "  --yes rebuilds without asking" not has "$T/out" "rebuild them now?"
+update STUB_PENDING=vim STUB_ORPHANS=libfoo STUB_FOREIGN=waybar-git STUB_REBUILD=foreign/waybar-git -- --yes
+check "  while the same --yes still refuses to remove an orphan" not grep -q -- '-Rns' "$L/pacman"
+
+update STUB_PENDING=vim STUB_FOREIGN="waybar-git" -- --yes
+check "nothing broken: nothing is rebuilt" test ! -e "$L/aur"
+check "  and it says so" has "$T/out" "no foreign package links a library that is gone"
+
+update STUB_FOREIGN=waybar-git STUB_REBUILD=foreign/waybar-git -- --yes
+check "a machine with nothing pending is still checked for rebuilds" hasx "$L/aur" "--rebuild waybar-git"
+
+update STUB_PENDING=vim STUB_FOREIGN=waybar-git STUB_REBUILD=foreign/waybar-git -- --check
+check "--check rebuilds nothing" test ! -e "$L/aur"
+check "  and prints the command instead" has "$T/out" "ergon aur --rebuild"
+
+update STUB_PENDING=vim STUB_FOREIGN=waybar-git STUB_REBUILD=foreign/waybar-git --
+check "no --yes and no terminal: nothing is rebuilt unasked" test ! -e "$L/aur"
+
+mv "$T/stub/checkrebuild" "$T/checkrebuild.off"
+update STUB_PENDING=vim STUB_FOREIGN=waybar-git -- --yes
+check "no rebuild-detector: it says nothing is watching, rather than 'none'" \
+  has "$T/out" "rebuild-detector not installed"
+mv "$T/checkrebuild.off" "$T/stub/checkrebuild"
 
 echo
 check "no stub saw a command it did not expect" test ! -e "$L/violations"

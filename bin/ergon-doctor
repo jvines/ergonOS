@@ -129,6 +129,78 @@ if command -v pacman >/dev/null 2>&1 && [ -f "$ERGON/packages/pacman" ]; then
   fi
 fi
 
+# --- foreign packages --------------------------------------------------------
+# Nothing on an Arch machine rebuilds an AUR package. One is linked against the
+# shared libraries of the day it was built, and after -Syu moves a soname the
+# binary dies at exec with "cannot open shared object file" and nothing else
+# says why -- waybar-git that way is a bar that simply never appears.
+#
+# checkrebuild reads the ELF headers of installed files, so this is local and
+# works offline. Deliberately NOT a query to the AUR: doctor runs every time
+# someone is already annoyed, and a check that waits on a network is a check
+# people stop running. `ergon aur --outdated` is where the network question
+# lives.
+if command -v pacman >/dev/null 2>&1; then
+  mapfile -t fgn < <(pacman -Qm 2>/dev/null | awk '{print $1}')
+  if [ "${#fgn[@]}" -eq 0 ]; then
+    rec ok "aur" "no foreign packages"
+  elif ! command -v checkrebuild >/dev/null 2>&1; then
+    rec warn "aur" "${#fgn[@]} foreign package(s), and no rebuild-detector — nothing notices one linked against a library that moved"
+  else
+    # checkrebuild has printed both `repo/name` and `repo name` across versions,
+    # so take the name off the end and let `pacman -Qm` say which are foreign.
+    brk=$(checkrebuild 2>/dev/null | awk '{ n = $NF; sub(/^.*\//, "", n); print n }' \
+          | grep -xF -f <(printf '%s\n' "${fgn[@]}") | tr '\n' ' ')
+    brk="${brk% }"
+    if [ -n "$brk" ]; then
+      rec warn "aur" "$brk link a library that is gone — ergon aur --rebuild PKG"
+    else
+      rec ok "aur" "${#fgn[@]} foreign package(s), none linked against a library that is gone"
+    fi
+  fi
+
+  # The conservative, offline half of "outdated": whether what is installed was
+  # built from the PKGBUILD commit packages/aur reviewed. A pin moved forward in
+  # the repo and never rebuilt here is a machine running a recipe nobody on it
+  # ever ran -- and that is the failure that makes a pin worth having.
+  #
+  # Read from what ergon-aur recorded, because a -git pkgver names the UPSTREAM
+  # commit and cannot answer this.
+  BUILT="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/aur-builds"
+  # Only the pinned packages this machine actually has. A pin for something
+  # installed nowhere here is the repo's business, not this machine's.
+  have=" ${fgn[*]} "
+  drift=""; unbuilt=""; pinned=0
+  while read -r p pin; do
+    case "$have" in *" $p "*) ;; *) continue ;; esac
+    pinned=$((pinned + 1))
+    was=$(awk -v p="$p" '$1 == p { print $2 }' "$BUILT" 2>/dev/null)
+    if [ -z "$was" ]; then
+      # Installed, pinned, and nothing here ever recorded building it. That is
+      # every machine provisioned before the pins existed: the package was built
+      # once from whatever the AUR had that day, and the shortcut for an
+      # already-installed package means re-provisioning never rebuilds it. It
+      # was reported "ok" for exactly as long as nobody had checked -- which is
+      # the opposite of what this check is for, so it is a warning until a
+      # rebuild here makes it an answer.
+      unbuilt="${unbuilt:+$unbuilt }$p"
+    elif [ "${was:0:${#pin}}" != "$pin" ]; then
+      drift="${drift:+$drift }$p"
+    fi
+  done < <(awk '$1 !~ /^#/ && match($0, /pin=[0-9a-f]{7,40}/) {
+                  print $1, substr($0, RSTART + 4, RLENGTH - 4) }' \
+              "$ERGON/packages/aur" 2>/dev/null)
+  if [ "$pinned" -gt 0 ]; then
+    if [ -n "$drift" ] || [ -n "$unbuilt" ]; then
+      note="${drift:+$drift not built from the commit packages/aur pins}"
+      note="${note:+$note; }${unbuilt:+$unbuilt never built here, so nothing has compared what is installed to the pin}"
+      rec warn "aur-pins" "$note — ergon aur --rebuild PKG"
+    else
+      rec ok "aur-pins" "all $pinned pinned PKGBUILD(s) built from the reviewed commit"
+    fi
+  fi
+fi
+
 # --- rollback ----------------------------------------------------------------
 # Checks what ergon-rollback needs, NOT what `snapper rollback` needs. The
 # first version of this check conflated them and reported a hard FAIL on a

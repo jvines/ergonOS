@@ -59,6 +59,7 @@ ok()   { printf '   ok   %s\n' "$*"; }
 warn() { printf '   !!   %s\n' "$*" >&2; }
 die()  { printf '   FAIL %s\n' "$*" >&2; exit 1; }
 
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 MIN_ROOT_GIB="${ERGON_UPDATE_MIN_ROOT_GIB:-8}"
 # ERGON_SYSROOT is the seam bin/test-update.sh uses, the same one ergon-hardware
 # and ergon-sync read: the paths that say whether the running kernel and
@@ -164,6 +165,59 @@ report_orphans() {
   esac
 }
 
+# An AUR package is linked against the shared libraries that existed the day it
+# was built, and nothing on an Arch machine ever rebuilds one. -Syu moves a
+# soname, the binary keeps its DT_NEEDED for the old one, and the next exec
+# fails with "cannot open shared object file" -- which for waybar-git is a
+# desktop with no bar and no error anywhere a person would look. That is the
+# whole failure mode of running -git packages on a rolling distro.
+#
+# checkrebuild (rebuild-detector) reads the ELF headers of what is installed
+# against the packages that own the libraries, so this is entirely local: no
+# network, and nothing can be called broken because a mirror was down.
+#
+# Rebuilding is NOT destructive the way removing an orphan is -- it reinstalls
+# the same package, from the PKGBUILD commit packages/aur pins -- so --yes may
+# proceed here without asking, and does. The prompt is for the interactive case,
+# where an AUR build is long enough that being asked first is worth something.
+report_rebuild() {
+  say "rebuilds"
+  local broken reply p pkgs
+  if ! command -v checkrebuild >/dev/null; then
+    warn "rebuild-detector not installed — nothing notices an AUR package left linked against a library that moved"
+    return 0
+  fi
+  # checkrebuild has printed both `repo/name` and `repo name` across versions,
+  # so take the name off the end and let `pacman -Qm` say which of those are
+  # foreign. A repo package needing a rebuild is the mirrors' problem and
+  # pacman's; a foreign one is nobody's.
+  broken=$(checkrebuild 2>/dev/null | awk '{ n = $NF; sub(/^.*\//, "", n); print n }' \
+           | grep -xF -f <(pacman -Qm 2>/dev/null | awk '{print $1}') || true)
+  [ -n "$broken" ] || { ok "no foreign package links a library that is gone"; return 0; }
+  printf '%s\n' "$broken" | sed 's/^/     /'
+  if [ "$CHECK_ONLY" = 1 ] || { [ "$ASSUME_YES" = 0 ] && [ ! -t 0 ]; }; then
+    printf '   rebuild them with: ergon aur --rebuild PKG\n'
+    return 0
+  fi
+  if [ "$ASSUME_YES" = 0 ]; then
+    printf '   rebuild them now? [y/N] '
+    read -r reply || true
+    case "$reply" in
+      y|Y|yes) ;;
+      *) printf '   kept. Rebuild them with: ergon aur --rebuild PKG\n'; return 0 ;;
+    esac
+  fi
+  # Read the whole list first, then loop. `while read ... <<< "$broken"` hands
+  # its stdin to every command inside it, so the first makepkg or sudo that
+  # wants a password would eat the remaining package names and rebuild none of
+  # them -- the same shape as a nested ssh inside a heredoc.
+  mapfile -t pkgs <<< "$broken"
+  for p in "${pkgs[@]}"; do
+    [ -n "$p" ] || continue
+    "$ERGON/bin/ergon-aur" --rebuild "$p" || warn "$p failed to rebuild"
+  done
+}
+
 # .pacnew files are the quiet half of an Arch upgrade: pacman never merges a
 # config you edited, it writes the new one beside yours and moves on, so a file
 # you changed once keeps running against defaults that have moved on without it.
@@ -266,6 +320,7 @@ upgrade() {
 
 if [ "$CHECK_ONLY" = 1 ]; then
   report_orphans
+  report_rebuild
   report_pacnew
   report_restart
   printf '\n   --check: nothing applied\n'
@@ -284,6 +339,7 @@ if [ "$PENDING" = 1 ]; then
 fi
 
 report_orphans
+report_rebuild
 
 say "firmware"
 # Reported, never applied automatically. A firmware update is the one thing here

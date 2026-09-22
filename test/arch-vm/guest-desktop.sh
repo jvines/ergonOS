@@ -458,6 +458,57 @@ else
   sed -n '/AUR packages/,$p' /tmp/prov.log 2>/dev/null | tail -20 | sed 's/^/       /'
 fi
 
+# ERGON-29: a pin in packages/aur is only worth having if the build actually
+# used it. ergon-aur detaches the clone onto that commit before makepkg and
+# records what it built from -- and provisioning has just run, so both of those
+# are this machine's own answer rather than a claim in a file. Stubs can prove
+# the checkout; only a real provision proves the pin survives the path
+# provisioning actually takes.
+PIN=$(awk '$1 == "waybar-git" && match($0, /pin=[0-9a-f]{7,40}/) {
+             print substr($0, RSTART + 4, RLENGTH - 4) }' "$H/ergonOS/packages/aur")
+if [ -z "$PIN" ]; then
+  note "waybar-git carries no pin in packages/aur; nothing to honour"
+else
+  BUILT_FROM=$(awk '$1 == "waybar-git" { print $2 }' "$H/.local/state/ergon/aur-builds" 2>/dev/null)
+  [ "$BUILT_FROM" = "$PIN" ] \
+    && ok "waybar-git was built from the PKGBUILD commit packages/aur pins" \
+    || bad "waybar-git was built from '${BUILT_FROM:-nothing recorded}', not the pinned $PIN"
+  AT=$(git -C "$H/.cache/aur/waybar-git" rev-parse HEAD 2>/dev/null)
+  [ "$AT" = "$PIN" ] \
+    && ok "  and the clone it builds in is checked out at exactly that commit" \
+    || bad "  but the clone sits at '${AT:-nothing}', not $PIN"
+fi
+
+# ERGON-29: the rebuild `ergon update` performs builds the SAME commit again --
+# only the libraries under it moved -- into the clone the previous build already
+# left a package in, and makepkg REFUSES to overwrite one ("A package has
+# already been built") rather than rebuilding it. No stub can show that:
+# bin/test-aur.sh's makepkg is a script that writes a file, so it reproduces the
+# refusal only because it was told to. This is the real makepkg, over a package
+# provisioning built minutes ago.
+#
+# openai-codex-bin rather than waybar-git: it is a downloaded static binary, so
+# the rebuild costs a fetch instead of a compile, and the collision is the same
+# one.
+AURD=$H/.cache/aur/openai-codex-bin
+PREV=$(ls -- "$AURD"/*.pkg.tar.* 2>/dev/null | head -1)
+if [ -z "$PREV" ]; then
+  note "no built package under $AURD; a rebuild there would collide with nothing"
+else
+  # makepkg -i installs through sudo, and the harness password-less rule was
+  # removed after provisioning. Back for this one command only.
+  echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-harness
+  chmod 440 /etc/sudoers.d/99-harness
+  if su - "$U" -c "ERGON=$H/ergonOS $H/ergonOS/bin/ergon-aur --rebuild openai-codex-bin" \
+       > /tmp/rebuild.log 2>&1; then
+    ok "a rebuild builds over the package the previous build left in the clone"
+  else
+    bad "ergon aur --rebuild failed where a package of its own was already built"
+    tail -5 /tmp/rebuild.log | sed 's/^/       /'
+  fi
+  rm -f /etc/sudoers.d/99-harness
+fi
+
 # Any DRM card, not card0 specifically: with virtio-vga-gl the guest can
 # enumerate the device under a different index, and gating on card0 aborted the
 # whole desktop phase on a VM that demonstrably had a working GPU.
@@ -871,6 +922,16 @@ else
   bad "ergon-doctor --json is not valid JSON"
   head -3 /tmp/doctor.json | sed 's/^/     /'
 fi
+# ERGON-29: a check that silently never runs is the same as one never written,
+# and both of these depend on rebuild-detector and packages/aur being reachable
+# from a real installed machine.
+for row in aur aur-pins; do
+  if python3 -c "import json,sys; d=json.load(open('/tmp/doctor.json')); sys.exit(0 if any(c['name']=='$row' for c in d['checks']) else 1)" 2>/dev/null; then
+    ok "ergon-doctor reports a '$row' row"
+  else
+    bad "ergon-doctor has no '$row' row — the foreign-package check did not run"
+  fi
+done
 printf '   --   doctor says:\n'
 usr ergon-doctor 2>&1 | sed 's/^/        /'
 

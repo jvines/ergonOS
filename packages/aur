@@ -1,6 +1,6 @@
 # AUR packages. Few enough that provision-arch.sh clones and runs makepkg
 # directly — no helper is installed or needed. Review each PKGBUILD once and
-# record the reviewed version here.
+# record the reviewed commit here, as pin=.
 #
 # Install paru or yay by hand if you want interactive AUR searching; do not
 # build machinery around it.
@@ -9,13 +9,32 @@
 # Everything else builds even then, because the difference between a package
 # that is merely convenient and one the desktop does not work without is the
 # whole reason that flag needs to be selective.
+#
+# pin=<commit> names the AUR REPOSITORY commit that was reviewed, and ergon-aur
+# checks exactly that out before it builds. It is the commit of the PKGBUILD,
+# not of the upstream source: the pkgver of a -git package (…r822.g4e76d73)
+# names the latter and says nothing about which recipe ran as you. Without a
+# pin, "review each PKGBUILD once" described the first build and no other —
+# every later one pulled whatever the packager had pushed since.
+#
+# To move a pin forward: `ergon aur --outdated` prints the log command for what
+# has changed since it; read that, put the new commit here, and
+# `ergon aur --rebuild <pkg>`. `ergon doctor` warns while the two disagree.
+#
+# Binary packages that track upstream releases are deliberately NOT pinned: a
+# pin there freezes the updates they exist to deliver.
+#
+# The name must stay the first token on its own line and everything else must
+# stay inside the comment — _aurlist() in bin/provision-arch.sh reads the first
+# field, and _list() in bin/ergon-bundle reads up to the first "#".
 
 claude-code       # native Bun binary from downloads.claude.ai. depends=bash only,
                   # no node. Note its wrapper sets DISABLE_UPDATES=1, so hotfixes
                   # wait on the packager — the tradeoff against Anthropic's own
                   # installer, which is always current but invisible to this file.
 openai-codex-bin  # static musl binary from GitHub releases
-waybar-git        # NOT extra/waybar. A Lua-configured Hyprland evaluates the
+waybar-git        # pin=f29c0731c4e15a95f56b56f92b6221c5b6d3eb35
+                  # NOT extra/waybar. A Lua-configured Hyprland evaluates the
                   # dispatch IPC payload as Lua, and waybar 0.15.0 sends the
                   # classic string — so `dispatch workspace 3` arrives as
                   # `return hl.dispatch(workspace 3)` and dies on a syntax
@@ -26,7 +45,8 @@ waybar-git        # NOT extra/waybar. A Lua-configured Hyprland evaluates the
                   # tagged release. Drop this the moment extra/waybar is past
                   # 0.15.0 and carries that PR.
 
-wezterm-git       # (slow build) NOT extra/wezterm. The packaged snapshot predates the fix for
+wezterm-git       # (slow build) pin=33286bd9f22ed09224308d81991090a49185d175
+                  # NOT extra/wezterm. The packaged snapshot predates the fix for
                   # wezterm#8001: SendKeys terminates with CR, tmux >=3.7b reads
                   # control commands with EVBUFFER_EOL_LF, and the first keystroke
                   # into any `tmux -CC` pane freezes it permanently. Arch ships
