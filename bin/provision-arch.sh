@@ -217,7 +217,10 @@ for u in NetworkManager docker tailscaled bluetooth fwupd power-profiles-daemon;
     sudo systemctl enable --now "$u" >/dev/null 2>&1 && ok "$u" || skip "$u (not installed)"
   fi
 done
-groups | grep -qw docker || { sudo usermod -aG docker "$USER"; ok "added $USER to docker (re-login required)"; }
+# Group membership, NOT the daemon, is gated on DOCKER_GROUP (see "docker
+# group" below, after hosts/$HOST/host.env exists to read it from) -- the
+# daemon enables unconditionally because sudo docker needs it running either
+# way, and that is the documented path when the knob is off.
 
 # ---------------------------------------------------------------------------
 say "graphics"
@@ -479,6 +482,34 @@ HYPRHOST
 -- hl.monitor("eDP-1", { mode = "2880x1920@120", position = "0x0", scale = 2 })
 HYPRHOST
   ok "scaffolded hosts/$HOST (untracked — commit it)"
+fi
+
+# ---------------------------------------------------------------------------
+say "docker group"
+# usermod -aG docker used to be unconditional in "services" above. That group
+# is effectively passwordless root -- anything that can reach the socket can
+# bind-mount / and chroot into it -- so it is opt-in per host now, read the
+# same way GRAPHICAL is: from hosts/<host>/host.env, default 0. This is the
+# first stage that can ask, because the file did not necessarily exist until
+# the "per-host directory" stage just above scaffolded it.
+DOCKER_GROUP=0
+HOSTENV="$ERGON/hosts/$HOST/host.env"
+# shellcheck disable=SC1090
+[ -f "$HOSTENV" ] && . "$HOSTENV"
+# $(id -un), not $USER: `groups` with no argument answers for THIS PROCESS's
+# cached supplementary groups, not a live /etc/group lookup -- coreutils says
+# so in its own --help. Naming the user forces the live read here too, same
+# reason bin/ergon-doctor's docker-group check does.
+ME="$(id -un)"
+if [ "${DOCKER_GROUP:-0}" = 1 ]; then
+  groups "$ME" | grep -qw docker || { sudo usermod -aG docker "$ME"; ok "added $ME to docker (re-login required) -- DOCKER_GROUP=1 in $HOSTENV"; }
+else
+  # Never REMOVE membership: a reprovision that silently drops your own
+  # session's docker access is a worse surprise than the one this knob fixes.
+  # If it is 0 and you are in the group anyway, that is ergon doctor's
+  # business to report, not this script's to undo.
+  groups "$ME" | grep -qw docker && skip "in the docker group despite DOCKER_GROUP=0 -- ergon doctor" \
+                                  || skip "DOCKER_GROUP=0 -- docker needs sudo"
 fi
 
 # ---------------------------------------------------------------------------

@@ -75,6 +75,35 @@ else
   rec warn "bundles" "no $HOSTENV — this machine is not described anywhere"
 fi
 
+# --- docker group ------------------------------------------------------------
+# `groups`, not host.env's opinion of it: DOCKER_GROUP says what provisioning
+# was told, membership is what is actually true, and the two can disagree --
+# a machine provisioned before this knob existed, or one someone usermod'd by
+# hand. Either way the group is real root for any process in the session, so
+# this reports the fact even where host.env doesn't claim it.
+#
+# `groups` with no argument answers for the CALLING PROCESS's cached
+# supplementary groups, not a live /etc/group lookup -- coreutils' own --help
+# says so. A terminal, tmux pane or ssh master left open across a `usermod`
+# would then have doctor echo its own stale answer back at it: "not in the
+# group" from the one place meant to catch that. Same reason line 66 already
+# uses $(id -un) instead of $USER, which is also unset in plenty of contexts
+# doctor runs in -- ssh non-interactive exec, a cron/timer wrapper, `sudo -u`.
+DG=0
+if [ -f "$HOSTENV" ]; then
+  # shellcheck disable=SC1090
+  DG=$( . "$HOSTENV" 2>/dev/null; printf '%s' "${DOCKER_GROUP:-0}" )
+fi
+if groups "$(id -un)" | grep -qw docker; then
+  if [ "$DG" = 1 ]; then
+    rec warn "docker-group" "any process in this session can become root -- the trade-off DOCKER_GROUP=1 chose for this host"
+  else
+    rec warn "docker-group" "any process in this session can become root, and host.env does not declare it (DOCKER_GROUP=$DG) -- set DOCKER_GROUP=1 if that's intended, otherwise sudo gpasswd -d $(id -un) docker"
+  fi
+else
+  rec ok "docker-group" "not in the docker group — docker needs sudo"
+fi
+
 # --- provisioning ------------------------------------------------------------
 # The system-level layer -- packages, systemd drop-ins, polkit rules, GRUB --
 # reaches a machine only through bin/provision-arch.sh. `ergon sync` re-runs it

@@ -115,7 +115,26 @@ cat > "$T/stub/pacman" <<'EOF'
 printf '%s\n' $MISSING
 exit 127
 EOF
-chmod +x "$T/stub/ergon-bundle" "$T/stub/pacman"
+# hostname, so doctor's hosts/<host>/host.env lookup lands on a fixture path
+# rather than whatever machine happens to run this test. groups, controlled by
+# $STUB_IN_DOCKER, for the docker-group check below -- the real `groups` can't
+# be made to say "docker" on demand.
+cat > "$T/stub/hostname" <<'EOF'
+#!/usr/bin/env bash
+echo testhost
+EOF
+cat > "$T/stub/groups" <<'EOF'
+#!/usr/bin/env bash
+# Bare `groups` (no argument) answers for the CALLING PROCESS's cached
+# supplementary groups, not a live /etc/group lookup -- see ergon-doctor's
+# docker-group check. Requiring an argument here is what would catch a
+# regression back to the bare form: doctor only sees $STUB_IN_DOCKER when it
+# names a user, exactly as a real stale session only sees a live answer that
+# way too.
+[ $# -ge 1 ] || { echo "t wheel"; exit 0; }
+[ "${STUB_IN_DOCKER:-0}" = 1 ] && echo "t docker wheel" || echo "t wheel"
+EOF
+chmod +x "$T/stub/ergon-bundle" "$T/stub/pacman" "$T/stub/hostname" "$T/stub/groups"
 export PATH="$T/stub:$PATH"
 
 # The same digests provisioning writes, so the fixture can be stamped as
@@ -289,6 +308,43 @@ MISSING="tmux" doctor base-packages | grep -q '"state":"warn"' \
 doctor base-packages | grep -q '"state":"ok"' \
   && ok "nothing missing reads as ok" \
   || bad "with nothing missing, doctor said: $(doctor base-packages)"
+
+# --- ERGON-21: the docker group is opt-in, and doctor reports what is real --
+# `groups` decides the state, not host.env's opinion of it -- see ergon-doctor.
+mkdir -p "$M/hosts/testhost"
+printf 'DOCKER_GROUP=0\n' > "$M/hosts/testhost/host.env"
+case "$(doctor docker-group)" in
+  *'"state":"ok"'*) ok "DOCKER_GROUP=0 and out of the group reads as ok" ;;
+  *) bad "DOCKER_GROUP=0, out of the group: doctor said $(doctor docker-group)" ;;
+esac
+
+printf 'DOCKER_GROUP=1\n' > "$M/hosts/testhost/host.env"
+case "$(STUB_IN_DOCKER=1 doctor docker-group)" in
+  *'"state":"warn"'*root*DOCKER_GROUP=1*) ok "DOCKER_GROUP=1 and in the group warns, naming the knob that chose it" ;;
+  *) bad "DOCKER_GROUP=1, in the group: doctor said $(STUB_IN_DOCKER=1 doctor docker-group)" ;;
+esac
+
+# Drift: host.env says 0 but the machine disagrees (provisioned before this
+# knob existed, or usermod run by hand). Still root, so still a warning --
+# provisioning's job is to never remove it, doctor's is to say so.
+printf 'DOCKER_GROUP=0\n' > "$M/hosts/testhost/host.env"
+case "$(STUB_IN_DOCKER=1 doctor docker-group)" in
+  *'"state":"warn"'*"DOCKER_GROUP=0"*) ok "in the group despite DOCKER_GROUP=0 is reported as drift, not silently accepted" ;;
+  *) bad "DOCKER_GROUP=0, in the group anyway: doctor said $(STUB_IN_DOCKER=1 doctor docker-group)" ;;
+esac
+
+# Regression: this warn message used to interpolate bare $USER under
+# `set -uo pipefail`. $USER is unset in plenty of contexts doctor actually
+# runs in -- ssh non-interactive command exec, a cron/timer wrapper, `sudo -u
+# user ergon-doctor` -- and an unbound var there killed the WHOLE script
+# before it reached the report section: no JSON at all, not just a blank
+# docker-group line. This is exactly the drift case above, which is the one
+# that reaches the interpolation, with $USER and $LOGNAME both gone.
+out=$(env -u USER -u LOGNAME STUB_IN_DOCKER=1 ERGON="$M" "$REPO/bin/ergon-doctor" --json 2>&1)
+case "$out" in
+  *'"name":"docker-group"'*'"state":"warn"'*) ok "doctor survives \$USER and \$LOGNAME being unset" ;;
+  *) bad "with \$USER/\$LOGNAME unset, doctor said: $out" ;;
+esac
 
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

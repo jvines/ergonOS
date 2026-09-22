@@ -142,6 +142,21 @@ else
   sed 's/^/     /' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null | head -10
 fi
 
+# --- ERGON-21: the docker group is opt-in, not a provisioning default ------
+# host.env was scaffolded above with the template's default, DOCKER_GROUP=0,
+# so THIS run must not have added the user -- sudoless docker is a choice per
+# host, not something every install gets for free. usermod's effect on real
+# /etc/group is exactly what the hermetic doctor test cannot prove.
+if id -nG "$U" | grep -qw docker; then
+  bad "DOCKER_GROUP=0 (the default) and provisioning added $U to the docker group anyway"
+else
+  ok "DOCKER_GROUP=0 (the default): $U was not added to the docker group"
+fi
+# Flip it for the ERGON-22 re-provision below, which is about to happen anyway
+# -- proving the other half (1 DOES add the group) without a fourth full
+# provisioning run just for this knob.
+sed -i 's/^DOCKER_GROUP=0/DOCKER_GROUP=1/' "$H/ergonOS/hosts/$(hostname -s)/host.env"
+
 # --- ERGON-22: a system change reaching a machine already installed --------
 # provision-arch.sh is the only thing that writes system-level state, and
 # `ergon sync` used to re-run install.sh alone -- so packages, systemd
@@ -210,6 +225,13 @@ then
     bad "doctor does not call the machine current after a sync"
     su - "$U" -c "$G/bin/ergon-doctor" 2>/dev/null \
       | grep -E 'provisioned|base-packages' | sed 's/^/     /'
+  fi
+  # ERGON-21, other half: this re-provision ran with DOCKER_GROUP=1 (flipped
+  # above), so it must have added the group this time.
+  if id -nG "$U" | grep -qw docker; then
+    ok "DOCKER_GROUP=1: the re-provision above added $U to the docker group"
+  else
+    bad "DOCKER_GROUP=1 but $U is not in the docker group after re-provisioning"
   fi
 else
   bad "could not stage a commit ahead of the guest's repo (harness)"
