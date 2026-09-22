@@ -2,6 +2,7 @@
 # ergon:summary=Back up /home off this disk, and restore from it
 # ergon:group=system
 # ergon:args=init REPO [--key FILE] | now | check | status | restore PATH... [--to DIR] | key | restic ARGS
+# ergon:help=native
 #
 # Every snapper snapshot lives on the same disk as the data it protects, so
 # they cover a bad update and nothing else. A dead SSD takes the snapshots with
@@ -338,6 +339,6 @@ UNIT
   [ -f "$CONF" ] || warn "nothing is backed up until: ergon backup init REPO"
   ;;
 
--h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//' ;;
+-h|--help) sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//' ;;
 *) die "unknown command $cmd (ergon backup --help)" ;;
 esac

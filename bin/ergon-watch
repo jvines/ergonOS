@@ -2,6 +2,7 @@
 # ergon:summary=Run something long: keep the machine awake, journal it, say when it ends
 # ergon:group=data
 # ergon:args=[--name N] [--quiet] -- <command>...
+# ergon:help=native
 #
 #   ergon watch --name fit-toi5205 -- python fit.py
 #
@@ -27,7 +28,7 @@ while [ $# -gt 0 ]; do
     --name)  NAME="${2:?--name needs a value}"; shift 2 ;;
     --quiet) QUIET=1; shift ;;
     --)      shift; break ;;
-    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)       break ;;
   esac
 done

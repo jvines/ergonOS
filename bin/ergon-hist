@@ -2,6 +2,7 @@
 # ergon:summary=What you have run, when, for how long, and whether it worked
 # ergon:group=data
 # ergon:args=[N] [--failed] [--name PATTERN] [--json]
+# ergon:help=native
 #
 #   ergon hist                 the last 20 runs
 #   ergon hist 100 --failed    what broke
@@ -22,7 +23,7 @@ while [ $# -gt 0 ]; do
     --failed) ONLY_FAILED=1; shift ;;
     --name)   PATTERN="${2:?--name needs a pattern}"; shift 2 ;;
     --json)   JSON=1; shift ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *[0-9]*)  N="$1"; shift ;;
     *) echo "ergon-hist: unknown argument $1" >&2; exit 2 ;;
   esac

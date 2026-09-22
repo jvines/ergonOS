@@ -2,6 +2,7 @@
 # ergon:summary=Open the terminal, whichever one this machine actually has
 # ergon:group=launch
 # ergon:args=[--class NAME] [command [args...]]
+# ergon:help=native
 #
 # wezterm is the daily terminal and an AUR git build (see packages/aur), which
 # makes it the one package most likely to be absent or mid-rebuild. binds.lua
@@ -17,6 +18,14 @@ set -euo pipefail
 
 CLASS=""
 if [ "${1:-}" = "--class" ]; then CLASS="${2:?--class needs a name}"; shift 2; fi
+
+# ERGON-30: -h/--help is ours only when it is what's LEFT to launch, i.e. no
+# command was given at all -- `ergon term --help`. Once a real command is
+# there (`ergon term htop --help`), it is that command's own argument and must
+# reach it untouched, so this never looks past "$1" here either.
+case "${1:-}" in
+  -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
 
 # Each terminal spells the app-id flag differently, and gets the command in a
 # different position. Keep the mapping here rather than at every call site.

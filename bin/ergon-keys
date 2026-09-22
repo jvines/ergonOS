@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Searchable list of every Hyprland keybinding
 # ergon:group=help
+# ergon:args=
 #
 # Reads the bindings out of the RUNNING compositor rather than parsing the Lua.
 # That is the whole point: a cheatsheet maintained alongside the config is a

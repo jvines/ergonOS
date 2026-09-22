@@ -2,6 +2,7 @@
 # ergon:summary=Pre-cache everything before a week without network
 # ergon:group=data
 # ergon:args=prep [--project DIR] | status
+# ergon:help=native
 #
 #   ergon offline prep          before you leave
 #   ergon offline status        what is cached and how stale
@@ -88,6 +89,6 @@ PY
     [ -d "$LIB" ] && printf '   %-22s %s PDFs\n' "paper library" \
       "$(find "$LIB" -name '*.pdf' | wc -l)" || true
     ;;
-  -h|--help|help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ergon-offline: unknown command '$1' (prep|status)" >&2; exit 2 ;;
 esac

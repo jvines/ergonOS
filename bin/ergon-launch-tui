@@ -2,11 +2,20 @@
 # ergon:summary=Focus a TUI if it is already open, otherwise start one
 # ergon:group=launch
 # ergon:args=<command> [args...]
+# ergon:help=native
 #
 # btop, wiremix and nmtui are all things you open, glance at and leave running.
 # Without focus-or-launch you end up with six btop windows across six
 # workspaces, which is how the waybar click handlers behave by default.
 set -euo pipefail
+
+# ERGON-30: caught before the hyprctl lookup below, which is real work this
+# command always does for a real target -- `ergon launch-tui btop --help`
+# means "look for/launch btop, with --help as btop's own argument", and must
+# still do that lookup. Only the bare "no command given" case is ours.
+case "${1:-}" in
+  -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
 
 cmd="${1:?usage: ergon-launch-tui <command> [args...]}"; shift || true
 # app_id has to be stable and distinct per tool; the command name is both.

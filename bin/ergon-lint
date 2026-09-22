@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Check the repo's shell scripts for heredoc expansion hazards
 # ergon:group=dev
+# ergon:args=
 #
 # Heredocs are a blind spot: shellcheck does not look inside them, so an
 # UNQUOTED heredoc is a place where ordinary-looking prose becomes code. A
@@ -154,6 +155,27 @@ while IFS= read -r f; do
   grep -q 'readlink -f "\${BASH_SOURCE\[0\]}"' "$f" \
     || report "${f#"$ERGON"/}" 1 "derives \$ERGON from BASH_SOURCE without readlink -f; breaks when run via /usr/local/bin"
 done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
+
+# ---------------------------------------------------------------------------
+# ERGON-30: every command declares how it takes --help.
+#
+# bin/ergon only lets -h/--help reach a command when its header carries
+# `# ergon:help=native` -- that command's own proof that it prints help and
+# exits rather than acting on whatever it does not recognise (`ergon record
+# --help` used to start a recording; `ergon ocr --help` opened the region
+# selector). Every other command gets help synthesised by the router from
+# `# ergon:args=`, so a command with neither tag is one the router cannot
+# build --help for at all, silently or otherwise -- catch that here rather
+# than at the moment someone types --help and gets nothing useful.
+help_bad=0
+while IFS= read -r f; do
+  head -20 "$f" | grep -qE '^# ergon:(help=native|args=)' || {
+    report "${f#"$ERGON"/}" 1 \
+      "no # ergon:help=native and no # ergon:args= -- bin/ergon cannot build --help for this command"
+    help_bad=$((help_bad + 1))
+  }
+done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
+[ "$help_bad" = 0 ] && echo "  ok   every command carries ergon:help=native or ergon:args"
 
 # ---------------------------------------------------------------------------
 # One SKILL.md, two harnesses.

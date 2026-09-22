@@ -2,6 +2,7 @@
 # ergon:summary=Register this project's environment as a notebook kernel
 # ergon:group=data
 # ergon:args=[register|list|remove] [--name NAME]
+# ergon:help=native
 #
 # uv environments are invisible to Jupyter. You make a project, install its
 # deps, open a notebook from the shared jupyterlab, and none of them are there --
@@ -82,6 +83,6 @@ JSON
     rm -rf "${KDIR:?}/$SLUG"
     printf '   ok  removed %s\n' "$SLUG"
     ;;
-  -h|--help|help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ergon-kernel: unknown command '$CMD' (register|list|remove)" >&2; exit 2 ;;
 esac
