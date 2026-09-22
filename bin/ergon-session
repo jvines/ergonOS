@@ -105,17 +105,38 @@ _confirm() {
   [ "$sel" = "Yes, $action" ]
 }
 
+# Run it, and if it fails SAY SO. This is reached from a keybind, a bar button
+# and a fuzzel selection -- none of which has a terminal, so a refusal printed
+# on stderr goes nowhere and the menu reads as a dead button. That is the
+# "bind fires and the command fails silently" trap in knowledge/troubleshooting.md,
+# and the likeliest refusal here is a real one: under uwsm this process is in no
+# logind session, so an action polkit gates on session activeness comes back as
+# "Interactive authentication required" unless an agent answers it.
+#
+# Not `exec`: exec replaces this process, and there is then nothing left to
+# notice the failure.
+_run() {
+  local out
+  if out=$("$@" 2>&1); then
+    return 0
+  fi
+  command -v notify-send >/dev/null 2>&1 \
+    && notify-send -u critical "$1 ${2:-} failed" "${out:-no output}" \
+    || printf '%s\n' "$out" >&2
+  return 1
+}
+
 _dispatch() {
   case "$1" in
-    lock)      exec loginctl lock-session ;;
-    suspend)   exec systemctl suspend ;;
-    hibernate) exec systemctl hibernate ;;
-    # Explicit `|| exit 0` rather than `_confirm x && exec ...`: a declined
+    lock)      _run loginctl lock-session ;;
+    suspend)   _run systemctl suspend ;;
+    hibernate) _run systemctl hibernate ;;
+    # Explicit `|| exit 0` rather than `_confirm x && ...`: a declined
     # confirmation is a deliberate no-op, not a script error, and the two read
     # the same under `set -e` unless this is spelled out.
-    logout)    _confirm logout   || exit 0; exec uwsm stop ;;
-    reboot)    _confirm reboot   || exit 0; exec systemctl reboot ;;
-    shutdown)  _confirm shutdown || exit 0; exec systemctl poweroff ;;
+    logout)    _confirm logout   || exit 0; _run uwsm stop ;;
+    reboot)    _confirm reboot   || exit 0; _run systemctl reboot ;;
+    shutdown)  _confirm shutdown || exit 0; _run systemctl poweroff ;;
   esac
 }
 
