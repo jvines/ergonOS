@@ -105,10 +105,13 @@ send "echo '$USERPASS' | sudo -S poweroff\r"
 expect eof
 EXPECT
 
+# The "   --   " lines are shown too: they are the checks the VM could not make,
+# each with its evidence, and a skip that only lands in session.log reads in
+# the job log as a pass.
 docker run --rm --device /dev/kvm $GPU_DOCKER \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/session.exp 2>&1 | tee "$WORK/session.log" \
-  | grep -E '^(   ok|   FAIL|--- |!! )' || true
+  | grep -E '^(   ok|   FAIL|   --   |--- |!! )' || true
 
 say "result"
 if ! grep -q 'DESKTOP_RESULT=' "$WORK/session.log"; then

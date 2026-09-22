@@ -995,6 +995,13 @@ for _ in $(seq 15); do
   fi
   sleep 1
 done
+# The evidence the GPU-less VM branch below needs, gathered up front. Tested for
+# being non-empty, never by exit status: under pipefail, grep leaving early
+# kills dmesg with SIGPIPE and a match reads as a miss.
+_hp=$(sed 's/\x1b\[[0-9;]*m//g' /run/user/1000/hyprpaper.log 2>/dev/null)
+_k=$({ dmesg; journalctl -k -b --no-pager; } 2>/dev/null | grep -oE 'features: [-+]virgl.*' | head -1)
+_egl=$(grep -m1 'failed to create dri2 screen' <<<"$_hp")
+_gbm=$(grep -m1 'Failed to allocate a GBM buffer' <<<"$_hp")
 if [ "$_bg" = 1 ]; then
   ok "hyprpaper mapped a background layer"
 elif grep -q "createImageFromDmaBufs failed" /run/user/1000/hypr/*/hyprland.log 2>/dev/null; then
@@ -1007,16 +1014,32 @@ elif grep -q "createImageFromDmaBufs failed" /run/user/1000/hypr/*/hyprland.log 
   # otherwise -- a wallpaper regression on a machine that can render must still
   # fail rather than hide behind a VM excuse. Same rule as the grim check above.
   note "wallpaper cannot be composited: no dmabuf path in the VM (see docs/testing-the-desktop.md)"
+elif ! pgrep -x hyprpaper >/dev/null && [[ $_k == *-virgl* ]] && [ -n "$_egl" ] && [ -n "$_gbm" ]; then
+  # The GPU-less VM (checo's runner has no render node, so the guest gets a
+  # virtio-gpu with 3D off). hyprpaper draws with GL through hyprtoolkit; there
+  # is no hardware driver for EGL to load, Mesa falls back to kms_swrast, and
+  # kms_swrast needs dumb buffers, which the device hyprpaper opened refuses
+  # (DRM_IOCTL_MODE_CREATE_DUMB: Permission denied, as a render node does). It
+  # cannot allocate a single buffer and exits. The compositor draws on the same
+  # device because it holds the primary node.
+  #
+  # A SKIP only when all three are in evidence: the kernel says this virtio-gpu
+  # has no virgl, and hyprpaper's own log shows EGL failing and the allocation
+  # failing. On hardware there is no virtio-gpu line; on the render-node VM it
+  # reads +virgl. Either way a hyprpaper that exits is a failure there.
+  note "hyprpaper cannot draw: the VM's GPU has no 3D and hyprpaper needs GL"
+  note "  kernel:    $_k"
+  note "  hyprpaper: $_egl"
+  note "  hyprpaper: $_gbm"
 else
   bad "background layer is empty — the wallpaper is not actually on screen"
-  # hyprpaper is exec'd by the compositor, so its stderr lands in the Hyprland
-  # log and nothing here was saving it -- which is why this failure has been
-  # diagnosed by guesswork so far. Capture what it actually says, and what it
-  # actually accepts over IPC, in the run that fails.
+  # What hyprpaper said is in the log ergon-wallpaper keeps for it; what it
+  # accepts over IPC is asked below. Both are printed in the run that fails,
+  # because this failure was diagnosed by guesswork for as long as neither was.
   echo "     --- hyprpaper diagnosis ---"
   pgrep -x hyprpaper >/dev/null && echo "     running: yes (pid $(pgrep -x hyprpaper | head -1))" \
                                 || echo "     running: NO — it exited"
-  echo "     render nodes: $(ls -m /dev/dri/renderD* 2>/dev/null || echo none)"
+  echo "     kernel: ${_k:-no virtio-gpu feature line}"
   if [ -f /run/user/1000/hyprpaper.log ]; then
     tail -20 /run/user/1000/hyprpaper.log | sed 's/^/     hyprpaper: /'
   else
