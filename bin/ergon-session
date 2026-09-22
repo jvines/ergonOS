@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# ergon:summary=Lock, suspend, hibernate, log out, reboot or shut down
+# ergon:group=power
+# ergon:args=[--list | lock|suspend|hibernate|logout|reboot|shutdown]
+# ergon:help=native
+#
+# Until this existed, SUPER+SHIFT+E called hl.dsp.exit() with no confirmation,
+# and reboot, shutdown, suspend and hibernate were not reachable from the
+# desktop at all -- one slip on E ended every terminal job, and a newcomer had
+# no way to shut down without a shell. This is the menu that replaces both
+# problems at once (SUPER+SHIFT+E, XF86PowerOff, a waybar button).
+#
+#   ergon session              fuzzel menu of what this machine can do
+#   ergon session --list       the entries available HERE, one per line
+#   ergon session lock         run one entry directly, no menu (binds, tests)
+#
+# Hibernate is offered only when ergon-hardware says it is actually ready --
+# kernel support, resume= on the cmdline, active swap. That check lives in
+# exactly one place (bin/ergon-hardware); asking it rather than re-deriving
+# the same three sysfs reads here is the point, because two copies of "is
+# hibernation ready" drift, and the weaker one is the one that lies.
+#
+# logout/reboot/shutdown end every job on the machine, so each first lists any
+# `ergon watch` run still going and any systemd-inhibit holder, then asks
+# again. lock/suspend/hibernate do not touch a running job and skip that step.
+set -euo pipefail
+
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# ergon-hardware may be a sibling in this checkout (not yet on PATH) or the
+# installed system command -- readlink -f, same reason as every other command
+# here: reached through /usr/local/bin, BASH_SOURCE without it resolves to the
+# symlink's own directory.
+_hardware_bin() {
+  command -v ergon-hardware 2>/dev/null && return 0
+  local d; d="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ergon-hardware"
+  [ -x "$d" ] && printf '%s\n' "$d"
+}
+
+_hibernate_ready() {
+  local hw out
+  hw=$(_hardware_bin) || return 1
+  [ -n "$hw" ] || return 1
+  # Capture first, THEN grep: under `set -o pipefail`, `detect | grep -q ...`
+  # lets grep exit the instant it matches the hibernation line, while detect
+  # still has several more lines to print (amdgpu panel, light sensor,
+  # backlight, profiles) behind their own `$(...)` forks. detect gets SIGPIPE,
+  # exits 141, and pipefail reports that instead of grep's 0 -- so this read
+  # `grep -Eq` on a live pipe and reported hibernation NOT ready on exactly the
+  # machines where it is.
+  out=$("$hw" detect 2>/dev/null) || return 1
+  grep -Eq 'hibernation:[[:space:]]+yes' <<<"$out"
+}
+
+# Only hibernate is gated here: it is the one entry that fails outright on a
+# machine without the kernel/cmdline/swap for it. lock, suspend, logout,
+# reboot and shutdown all work everywhere ergonOS runs.
+_entries() {
+  printf 'lock\n'
+  printf 'suspend\n'
+  _hibernate_ready && printf 'hibernate\n'
+  printf 'logout\n'
+  printf 'reboot\n'
+  printf 'shutdown\n'
+}
+
+# ergon-watch (bin/ergon-watch) writes its journal entry only when a run ENDS
+# -- bin/ergon-hist reads that journal, so it has no answer for "what is
+# running right now". The process itself is the only source: it blocks on the
+# command it wraps for exactly as long as that command runs, under either name
+# (bin/ergon-watch directly, or its erg-watch alias).
+#
+# Matched on ARGS, not `comm`: ergon-watch starts with `#!/usr/bin/env bash`,
+# so env re-execs bash and the running process's `comm` is just "bash" --
+# `$2 == "ergon-watch"` can never match a real run, which made this whole
+# check dead code. `args` still carries the interpreted script's path
+# (".../ergon-watch ..." or ".../erg-watch ..."). The `awk` filter is
+# itself a transient ps/awk process and must not match its own command line.
+_live_watches() {
+  ps -eo pid=,args= 2>/dev/null \
+    | awk '/(^|[ \/])(ergon|erg)-watch([ \/]|$)/ && !/awk/ { $1 = $1; print }'
+}
+
+_inhibitors() {
+  command -v systemd-inhibit >/dev/null 2>&1 || return 0
+  # `|| true`: this is read back through `info=$(...)`, a plain assignment, and
+  # under `set -e` that aborts the whole script on the LAST command's status --
+  # unlike an internal failure earlier in a pipeline or a `{ ...; }` group,
+  # which `$(...)` swallows. No systemd session (a container, a bare TTY) must
+  # read as "nothing to report", not as ergon-session crashing on its way to
+  # asking about a shutdown.
+  systemd-inhibit --list --no-pager 2>/dev/null || true
+}
+
+# Cancel first, so the default highlighted row is never the destructive one.
+_confirm() {
+  local action="$1" info menu sel
+  info=$({ _live_watches; _inhibitors; } 2>/dev/null)
+  menu=$(
+    printf 'Cancel\n'
+    [ -n "$info" ] && printf '%s\n' "$info"
+    printf 'Yes, %s\n' "$action"
+  )
+  sel=$(printf '%s\n' "$menu" | fuzzel --dmenu --prompt "$action, really?  ") || return 1
+  [ "$sel" = "Yes, $action" ]
+}
+
+_dispatch() {
+  case "$1" in
+    lock)      exec loginctl lock-session ;;
+    suspend)   exec systemctl suspend ;;
+    hibernate) exec systemctl hibernate ;;
+    # Explicit `|| exit 0` rather than `_confirm x && exec ...`: a declined
+    # confirmation is a deliberate no-op, not a script error, and the two read
+    # the same under `set -e` unless this is spelled out.
+    logout)    _confirm logout   || exit 0; exec uwsm stop ;;
+    reboot)    _confirm reboot   || exit 0; exec systemctl reboot ;;
+    shutdown)  _confirm shutdown || exit 0; exec systemctl poweroff ;;
+  esac
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  --list)    _entries; exit 0 ;;
+  lock|suspend|hibernate|logout|reboot|shutdown)
+    if [ "$1" = hibernate ] && ! _hibernate_ready; then
+      echo "ergon-session: hibernation is not ready on this machine (ergon-hardware detect)" >&2
+      exit 1
+    fi
+    _dispatch "$1"
+    ;;
+  '')
+    command -v fuzzel >/dev/null 2>&1 || { echo "ergon-session: fuzzel is not installed" >&2; exit 1; }
+    sel=$(_entries | fuzzel --dmenu --prompt 'session  ') || exit 0
+    _dispatch "$sel"
+    ;;
+  *)
+    echo "ergon-session: unknown entry '$1' (lock|suspend|hibernate|logout|reboot|shutdown|--list)" >&2
+    exit 2
+    ;;
+esac

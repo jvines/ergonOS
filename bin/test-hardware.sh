@@ -122,6 +122,7 @@ check "  reading the sensor by glob, not a device number" hasx "$D/etc/illuminan
 check "  and started" hasx "$T/log/systemctl" "enable --now illuminanced.service"
 check "profile matched by DMI: kernel parameter added" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet amdgpu.dcdebugmask=0x610"'
 check "  and grub.cfg regenerated" hasx "$T/log/grub" "-o $D/boot/grub/grub.cfg"
+check "power key: ignored by logind (ergon-session owns it)" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 reset_logs; apply fw
 check "a second apply does not add the parameter twice" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet amdgpu.dcdebugmask=0x610"'
 check "  nor regenerate grub.cfg" test ! -e "$T/log/grub"
@@ -134,6 +135,7 @@ check "i915 panel: no ABM drop-in" test ! -e "$D/etc/systemd/system/power-profil
 check "fprintd: restarted after resume" test -e "$D/etc/systemd/system/ergon-fprintd-resume.service"
 check "no light sensor: no illuminanced" not has "$T/log/pacman" "illuminanced"
 check "no profile matches: grub untouched" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"'
+check "power key: ignored by logind (no S3/hibernation dependency)" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 
 echo "== an AMD desktop"
 reset_logs; apply desk; D=$T/desk/dest
@@ -141,6 +143,31 @@ check "no lid config" test ! -e "$D/etc/systemd/logind.conf.d/10-lid.conf"
 check "amdgpu without a built-in panel: no ABM drop-in" test ! -e "$D/etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf"
 check "no fprintd: no resume unit" test ! -e "$D/etc/systemd/system/ergon-fprintd-resume.service"
 check "no sensor or backlight: no illuminanced" not has "$T/log/pacman" "illuminanced"
+check "power key: ignored by logind on a desktop with no laptop capabilities at all" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
+
+echo "== a pacman failure elsewhere in _capabilities must not skip the power key"
+# Regression for an ordering bug: the power-key drop-in used to be the LAST
+# thing _capabilities() wrote, after the illuminanced block -- which returns
+# early (rc=0, no error surfaced beyond its own warn) when `pacman -S
+# illuminanced` fails. On the Framework 13 (sensor + backlight, so it always
+# takes that branch) a mirror hiccup, a held pacman lock or no network during
+# provisioning silently left the power key at logind's default: poweroff. The
+# fix moved the power-key _put to the top of the function, before anything
+# that can return early; this fails if that ever regresses.
+D=$T/fw/dest
+rm -f "$D/etc/systemd/logind.conf.d/10-power-key.conf"
+cp "$T/stub/pacman" "$T/stub/pacman.ok"
+cat > "$T/stub/pacman" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/pacman"
+case "$*" in *illuminanced*) exit 1 ;; esac
+EOF
+chmod +x "$T/stub/pacman"
+reset_logs; apply fw
+check "illuminanced install failing is still reported" has "$T/out" "illuminanced failed to install"
+check "  but the power key is ignored anyway (fw has a sensor + backlight, so it always hits this path)" \
+  hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
+mv "$T/stub/pacman.ok" "$T/stub/pacman"
 
 echo "== a capability that goes away"
 R=$T/fw/root; D=$T/fw/dest

@@ -672,6 +672,74 @@ set_layout "${KB0:-us}" "${KV0:-}" || bad "could not restore the layout to '${KB
 KEYS_DUPS=$(printf '%s\n' "$KEYS_OUT" | awk -F'  +' 'NF { print toupper($1) }' | sort | uniq -d)
 if [ -z "$KEYS_DUPS" ]; then ok "no chord is bound twice"; else bad "chords bound twice: ${KEYS_DUPS//$'\n'/, }"; fi
 
+# ERGON-24/23: SUPER+SHIFT+E must open the session menu now, not exit
+# instantly, and XF86PowerOff must reach it too but NOT as a `locked` bind --
+# fuzzel cannot draw over hyprlock, and on the Framework 13 that key IS the
+# fingerprint reader, so a locked bind there would queue an invisible menu
+# that pops up right after a fingerprint unlock. hyprctl cannot report WHAT a
+# Lua bind dispatches (every one shows dispatcher "__lua"), so the wiring
+# itself (SUPER+SHIFT+E / XF86PowerOff -> ergon-session) is only checked in
+# source below; description, key and locked are real Hyprland-side bind
+# properties that DO survive and are checked against the live compositor.
+if grep -q 'hl\.dsp\.exit()' "$H/.config/hypr/common/binds.lua" 2>/dev/null; then
+  bad "binds.lua still calls hl.dsp.exit() directly -- SUPER+SHIFT+E must open the session menu instead"
+else
+  ok "no direct hl.dsp.exit() left in binds.lua"
+fi
+# `key` and `locked` are real Hyprland bind properties (mods/key/flags handed
+# to the native bind API at registration), unlike `dispatcher`/`arg` which are
+# meaningless under the Lua closure -- so, paired with `description`, they can
+# be checked LIVE instead of only in source. A source grep alone would still
+# pass if one of the two binds silently failed to register (a key-name
+# mismatch, a Lua error after this line) -- exactly the parses-but-registers-
+# nothing class ergon explain desktop-config warns about, and the one failure
+# this block exists to catch.
+_binds=$(hq binds -j 2>/dev/null)
+_e_bind=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Session menu" and ((.key // "") | ascii_downcase) == "e")] | .[0] // empty' 2>/dev/null)
+_pwr_bind=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Session menu" and ((.key // "") | ascii_downcase) == "xf86poweroff")] | .[0] // empty' 2>/dev/null)
+
+[ -n "$_e_bind" ] \
+  && ok "hyprctl reports a live 'Session menu' bind on key E (SUPER+SHIFT+E registered)" \
+  || bad "no live bind on key E describes itself 'Session menu' -- SUPER+SHIFT+E may not have registered"
+[ -n "$_pwr_bind" ] \
+  && ok "hyprctl reports a live 'Session menu' bind on XF86PowerOff (registered)" \
+  || bad "no live bind on XF86PowerOff describes itself 'Session menu' -- it may not have registered"
+
+if [ -n "$_pwr_bind" ]; then
+  if printf '%s' "$_pwr_bind" | jq -e '.locked == true' >/dev/null 2>&1; then
+    bad "XF86PowerOff's live bind is locked=true -- fuzzel cannot draw over hyprlock, and this is the Framework fingerprint reader"
+  else
+    ok "XF86PowerOff's live bind is not locked (a queued menu cannot pop up right after an unlock)"
+  fi
+else
+  bad "XF86PowerOff's live bind was not found -- cannot check its locked flag"
+fi
+
+# Source-level wiring, kept as a second signal alongside the live checks above
+# (which prove registration but, like the rest of hyprctl under Lua, cannot
+# show WHAT a bind runs -- only description, key and locked survive).
+grep -qE '^bind\("SUPER \+ SHIFT \+ E".*ergon-session' "$H/.config/hypr/common/binds.lua" \
+  && ok "SUPER+SHIFT+E runs ergon-session" || bad "SUPER+SHIFT+E is not wired to ergon-session"
+grep -qE '^bind\("XF86PowerOff".*ergon-session' "$H/.config/hypr/common/binds.lua" \
+  && ok "XF86PowerOff runs ergon-session" || bad "XF86PowerOff is not wired to ergon-session"
+
+# Hibernate must appear in `ergon session --list` exactly when ergon-hardware
+# -- the one place that decision is made -- says hibernation is ready. This VM
+# is s2idle-only with working hibernation (see the lid assertions above), so
+# it must appear here; a machine without that must not offer an entry that
+# would fail the moment it is chosen.
+_hwd=$(usr "ergon-hardware detect" 2>&1)
+_sl=$(usr "ergon-session --list" 2>&1)
+if printf '%s\n' "$_hwd" | grep -Eq 'hibernation:[[:space:]]+yes'; then
+  printf '%s\n' "$_sl" | grep -qx hibernate \
+    && ok "ergon session --list offers hibernate (ergon-hardware says it is ready)" \
+    || bad "hibernation is ready but ergon session --list does not offer it"
+else
+  printf '%s\n' "$_sl" | grep -qx hibernate \
+    && bad "ergon session --list offers hibernate but ergon-hardware says it is not ready" \
+    || ok "ergon session --list correctly omits hibernate (not ready)"
+fi
+
 # Window rules and monitors.
 hq monitors -j | grep -q '"name"' && ok "a monitor is present" || bad "no monitors"
 
