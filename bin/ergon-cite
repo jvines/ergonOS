@@ -2,6 +2,7 @@
 # ergon:summary=Fetch BibTeX for a DOI, arXiv id or ADS bibcode into this project's .bib
 # ergon:group=data
 # ergon:args=<id>... | --software [pkg...] [--bib FILE] [--stdout]
+# ergon:help=native
 #
 #   ergon cite 10.1086/670067          DOI       (Crossref, no account)
 #   ergon cite arXiv:1202.3665         arXiv     (published version if there is one)
@@ -10,6 +11,20 @@
 #
 # Appends to the project's .bib, skipping anything already there.
 set -euo pipefail
+
+# ERGON-30: answered here, ahead of the pyfleet-venv check below, for two
+# reasons -- lib/ergon_cite.py already prints its own help (its module
+# docstring, on argv[0] only), but only once pyfleet is synced, and this
+# command needs `# ergon:help=native` to be honest, which means --help must
+# work even when it is not. Scans the whole argument list, not just $1: the
+# router's own fix for the same bug does the same, because `ergon cite <id>
+# --help` fetching that id instead of printing help is exactly the failure
+# this card is about.
+for a in "$@"; do
+  case "$a" in
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  esac
+done
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"

@@ -2,6 +2,7 @@
 # ergon:summary=Look at a data file without caring what it is
 # ergon:group=data
 # ergon:args=<file>|-
+# ergon:help=native
 #
 # parquet, CSV, FITS, HDF5, npy/npz, netCDF, JSON -- schema, null counts,
 # per-column summaries and the first rows, from one command. The alternative is
@@ -15,6 +16,14 @@
 # environment guaranteed to have pandas and numpy on every machine in the fleet,
 # and it is the same one on Debian, macOS and Arch.
 set -euo pipefail
+
+# ERGON-30: answered here, ahead of the pyfleet-venv check -- see ergon-cite
+# for the fuller reasoning.
+for a in "$@"; do
+  case "$a" in
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  esac
+done
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"

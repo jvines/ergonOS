@@ -2,6 +2,7 @@
 # ergon:summary=Everything about a target, from any identifier, in one card
 # ergon:group=data
 # ergon:args=<name|TOI|TIC|HD|Gaia>
+# ergon:help=native
 #
 #   ergon target TOI-5205
 #   ergon target "HD 209458"
@@ -11,6 +12,16 @@
 #
 # Needs the astronomy bundle: ergon bundle add astronomy
 set -euo pipefail
+
+# ERGON-30: answered here, ahead of the pyfleet-venv check, so --help works
+# without the venv and never queries the network for the id given -- see
+# ergon-cite for the fuller reasoning.
+for a in "$@"; do
+  case "$a" in
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  esac
+done
+
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
 [ -x "$VENV/bin/python" ] || { echo "ergon-target: run: pyfleet sync" >&2; exit 1; }
