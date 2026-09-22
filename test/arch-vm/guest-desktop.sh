@@ -142,6 +142,81 @@ else
   sed 's/^/     /' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null | head -10
 fi
 
+# --- ERGON-22: a system change reaching a machine already installed --------
+# provision-arch.sh is the only thing that writes system-level state, and
+# `ergon sync` used to re-run install.sh alone -- so packages, systemd
+# drop-ins, polkit rules and GRUB settings reached fresh installs and nothing
+# else. The claim here is the whole round trip on a real machine: provisioned,
+# a commit lands upstream that touches a provisioning input, sync notices and
+# re-provisions, and doctor then calls the machine current.
+#
+# The older commit is manufactured by pushing one FORWARD instead of checking
+# one out. Every commit older than the one that introduced this carries an
+# ergon-sync that cannot detect anything, so rewinding would test the old code;
+# going forward exercises the new code over the same range.
+G="$H/ergonOS"
+STAMP=/var/lib/ergon/provisioned
+if grep -qx "commit=$(su - "$U" -c "git -C $G rev-parse HEAD")" "$STAMP" 2>/dev/null; then
+  ok "provisioning recorded the commit it ran from in $STAMP"
+else
+  bad "$STAMP does not record the commit provisioning ran from"
+  sed 's/^/     /' "$STAMP" 2>/dev/null
+fi
+
+# How the packages arrived, from pacman's own log rather than from the script.
+# -Sy WITHOUT -u points the database at today's versions while the installed
+# packages stay behind, so the next package pulled in links against a
+# libfoo.so.N the old libfoo does not provide -- and `ergon sync` now re-runs
+# this on machines that have not been upgraded in months, which is exactly the
+# state that bites. Nothing else catches a revert to the -Sy/-S pair: the
+# hermetic test stubs provision-arch.sh out, and the stamp says a run happened,
+# not how. `pacman -r <root> -Sy` from pacstrap does not match either pattern,
+# and the later bare `-S --needed` fallbacks (waybar, graphics) are correct --
+# it is the refresh without the upgrade that must never appear.
+if grep -q "Running 'pacman -Syu" /var/log/pacman.log 2>/dev/null \
+   && ! grep -qE "Running 'pacman -Sy[^u]" /var/log/pacman.log 2>/dev/null; then
+  ok "packages were installed in one -Syu transaction, with no bare -Sy refresh"
+else
+  bad "provisioning did not install in a single -Syu transaction"
+  grep -o "Running 'pacman -S[^']*" /var/log/pacman.log 2>/dev/null | sed 's/^/     /' | head -5
+fi
+
+echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-harness
+chmod 440 /etc/sudoers.d/99-harness
+rm -rf /tmp/ergon-origin.git /tmp/ergon-ahead
+# git clean: the 9p share is a working tree and can carry work in progress,
+# which this copy inherits. ergon-sync rightly refuses a dirty tree, and which
+# tree the disk was built from is not what is under test.
+if su - "$U" -c "set -e
+    git -C $G clean -qfd
+    git clone -q --bare $G /tmp/ergon-origin.git
+    git -C $G remote set-url origin /tmp/ergon-origin.git
+    git clone -q /tmp/ergon-origin.git /tmp/ergon-ahead
+    printf '\n# ERGON-22: a provisioning input changes upstream.\n' >> /tmp/ergon-ahead/packages/pacman
+    git -C /tmp/ergon-ahead -c user.email=vm@ergon.invalid -c user.name=vm commit -qam 'packages: a provisioning input changes'
+    git -C /tmp/ergon-ahead push -q origin HEAD" > /tmp/sync-setup.log 2>&1
+then
+  su - "$U" -c "ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 $G/bin/ergon-sync --yes" > /tmp/sync.log 2>&1
+  ahead=$(su - "$U" -c "git -C $G rev-parse HEAD")
+  if grep -qx "commit=$ahead" "$STAMP" 2>/dev/null; then
+    ok "ergon sync re-provisioned for an incoming change to packages/pacman"
+  else
+    bad "sync did not re-provision — the stamp is still $(sed -n 's/^commit=//p' "$STAMP" 2>/dev/null), the repo is at $ahead"
+    tail -15 /tmp/sync.log | sed 's/^/     /'
+  fi
+  if su - "$U" -c "$G/bin/ergon-doctor --json" 2>/dev/null | grep -q '"name":"provisioned","state":"ok"'; then
+    ok "ergon doctor reports the machine as provisioned at the current commit"
+  else
+    bad "doctor does not call the machine current after a sync"
+    su - "$U" -c "$G/bin/ergon-doctor" 2>/dev/null \
+      | grep -E 'provisioned|base-packages' | sed 's/^/     /'
+  fi
+else
+  bad "could not stage a commit ahead of the guest's repo (harness)"
+  tail -5 /tmp/sync-setup.log | sed 's/^/     /'
+fi
+rm -f /etc/sudoers.d/99-harness
+
 # --- a bundle from a real forge, over ssh on a non-standard port ------------
 # test-bundles.sh fetches from a local repository through stubs. This is the
 # path a private overlay actually takes: sshd on 2222, the user's own key,

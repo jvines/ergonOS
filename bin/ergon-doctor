@@ -75,6 +75,60 @@ else
   rec warn "bundles" "no $HOSTENV — this machine is not described anywhere"
 fi
 
+# --- provisioning ------------------------------------------------------------
+# The system-level layer -- packages, systemd drop-ins, polkit rules, GRUB --
+# reaches a machine only through bin/provision-arch.sh. `ergon sync` re-runs it
+# when the incoming commits touch what it reads, and this is how you find out
+# that it did: whether what is ON this machine is what the repo says now, or
+# what the repo said the day it was installed.
+#
+# Read under ERGON_SYSROOT, like the DMI below, so bin/test-provisioning.sh can
+# point it at a fixture. Provisioning itself always writes the real path.
+#
+# Over the same input list ergon-sync uses, from the same file. This checked
+# two of the paths sync watched, so it was answering a strictly smaller
+# question: a commit touching only grub/ left sync saying "not applied yet" and
+# doctor saying "provisioning inputs unchanged", about the same machine.
+# shellcheck source=../lib/provision-inputs.sh
+. "$ERGON/lib/provision-inputs.sh"
+STAMP="${ERGON_SYSROOT:-}/var/lib/ergon/provisioned"
+_st()  { sed -n "s/^$1=//p" "$STAMP" 2>/dev/null | tail -1; }
+repo_at=$(git -C "$ERGON" rev-parse --short HEAD 2>/dev/null)
+if [ ! -f "$STAMP" ]; then
+  rec warn "provisioned" "never recorded — this machine predates the stamp, or was never provisioned. Run bin/provision-arch.sh"
+else
+  # Recorded in full, shown short -- except that a machine provisioned from a
+  # copy with no .git records "unknown", and truncating that reads as a
+  # mangled sha rather than as the absence of one.
+  prov_at=$(_st commit); [ "${#prov_at}" -eq 40 ] && prov_at=${prov_at:0:7}
+  stale=$(ergon_stale_inputs "$ERGON" "$STAMP" | tr '\n' ' ')
+  stale="${stale% }"
+  if [ -n "$stale" ]; then
+    rec warn "provisioned" "at $prov_at, repo at ${repo_at:-unknown} — $stale changed since. Run bin/provision-arch.sh"
+  else
+    rec ok "provisioned" "at $prov_at, repo at ${repo_at:-unknown}; provisioning inputs unchanged"
+  fi
+fi
+
+# This is "is the package installed", which the header above rejects -- and it
+# is the one place the question is not a proxy for anything. Everywhere else it
+# stood in for a behaviour and was wrong; here the manifest reaching this
+# machine IS the claim, and a name in packages/pacman that pacman does not have
+# is a package provisioning never installed.
+if command -v pacman >/dev/null 2>&1 && [ -f "$ERGON/packages/pacman" ]; then
+  mapfile -t want < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/[[:space:]]*$//' "$ERGON/packages/pacman")
+  # -T takes its targets as arguments and reads STDIN when there are none, so
+  # an empty manifest here would hang doctor rather than report nothing.
+  if [ "${#want[@]}" -gt 0 ]; then
+    mapfile -t miss < <(pacman -T "${want[@]}" 2>/dev/null)
+    if [ "${#miss[@]}" -gt 0 ]; then
+      rec warn "base-packages" "${#miss[@]} of ${#want[@]} in packages/pacman not installed: ${miss[*]}"
+    else
+      rec ok "base-packages" "all ${#want[@]} in packages/pacman are installed"
+    fi
+  fi
+fi
+
 # --- rollback ----------------------------------------------------------------
 # Checks what ergon-rollback needs, NOT what `snapper rollback` needs. The
 # first version of this check conflated them and reported a hard FAIL on a

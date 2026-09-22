@@ -41,6 +41,12 @@ warn() { printf '   !!  %s\n' "$*" >&2; }
 # Same helper install.sh uses: strip comments, blank lines and trailing space.
 _pkglist() { sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/[[:space:]]*$//' "$1"; }
 
+# The list of paths this script reads, shared with ergon-sync and ergon-doctor
+# so all three ask the same question. See the file for why it is not written
+# out here.
+# shellcheck source=../lib/provision-inputs.sh
+. "$ERGON/lib/provision-inputs.sh"
+
 # ---------------------------------------------------------------------------
 say "system packages"
 # informant, once installed, hooks pacman and ABORTS any transaction while there
@@ -81,12 +87,37 @@ if command -v informant >/dev/null && ! informant check >/dev/null 2>&1; then
   fi
 fi
 
-# --needed makes this a no-op for anything already present. No -y: refreshing
-# the db and installing in one transaction is the partial-upgrade footgun.
-sudo pacman -Sy --noconfirm >/dev/null
+# -Syu, in ONE transaction -- and only on a run that actually has something to
+# install.
+#
+# The comment that stood here argued that refreshing the database and
+# installing together is the partial-upgrade footgun, and had it backwards. The
+# footgun is -Sy WITHOUT -u: it points the database at today's versions while
+# the installed packages stay at whatever day they were installed, so the next
+# package pulled in links against a libfoo.so.N that the old, unupgraded libfoo
+# does not provide. Installing anything at all therefore means -Syu.
+#
+# Which is exactly why this asks first whether anything is missing. `ergon
+# sync` now re-runs provisioning for a change to grub/ or a hardware profile,
+# and a machine that already has every package does not need a transaction for
+# that -- least of all a months-deep unattended upgrade under a live session,
+# where the linux package takes /usr/lib/modules/$(uname -r) with it and mesa
+# is replaced under the running compositor. Upgrading is `ergon update`, which
+# checks the four preconditions this script does not.
 mapfile -t PKGS < <(_pkglist "$ERGON/packages/pacman")
-sudo pacman -S --needed --noconfirm "${PKGS[@]}"
-ok "${#PKGS[@]} packages"
+# Also guards the -T below: with no targets it reads STDIN, so an empty
+# manifest would hang provisioning rather than report anything.
+[ "${#PKGS[@]}" -gt 0 ] || { echo "packages/pacman is empty" >&2; exit 1; }
+# -T prints the targets that are NOT satisfied and exits 127 when there are
+# any, which set -e would otherwise take as fatal.
+mapfile -t MISSING < <(pacman -T "${PKGS[@]}" 2>/dev/null || true)
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  warn "${#MISSING[@]} package(s) missing — installing them upgrades the system (pacman -Syu)"
+  sudo pacman -Syu --needed --noconfirm "${PKGS[@]}"
+  ok "${#PKGS[@]} packages"
+else
+  ok "${#PKGS[@]} packages already installed; nothing to upgrade here (use: ergon update)"
+fi
 
 # ---------------------------------------------------------------------------
 say "snapshots"
@@ -676,6 +707,33 @@ else
     && ok "claude code: $CLAUDE_POLICY -> /usr/share/ergon/AGENTS.md" \
     || warn "could not link $CLAUDE_POLICY"
 fi
+
+say "provisioning record"
+# What this machine was provisioned FROM, so that something can later ask
+# whether it still matches the repo. Nothing could, before: `ergon sync`
+# fast-forwards the checkout and re-runs install.sh, which is the USER-level
+# layer, so a package added to packages/pacman, a polkit rule or a GRUB setting
+# reached fresh installs and nothing else -- machines drifted apart by the date
+# each happened to be installed.
+#
+# Every input gets a digest, not just this script and packages/pacman: with two
+# of them recorded, doctor was answering a strictly smaller question than sync
+# asked, and called a machine current while sync was saying it was not.
+#
+# Written last, because it claims every stage above it ran; this script is
+# set -e, so reaching here is that claim.
+#
+# /var/lib/ergon and world-readable, like ergon-backup's status file, because
+# `ergon doctor` runs as the user and "cannot check without root" is no answer
+# to "is this machine current".
+_prov_commit=$(git -C "$ERGON" rev-parse HEAD 2>/dev/null || echo unknown)
+{
+  echo "# Written by provision-arch.sh; read by ergon sync and ergon doctor."
+  echo "commit=$_prov_commit"
+  echo "at=$(date +%s)"
+  ergon_input_digests "$ERGON"
+} | sudo install -Dm644 /dev/stdin /var/lib/ergon/provisioned
+ok "provisioned at ${_prov_commit:0:7}, recorded in /var/lib/ergon/provisioned"
 
 say "done"
 cat <<'EOF'

@@ -1,4 +1,4 @@
-# Packages installed by provision-arch.sh with `pacman -S --needed`.
+# Packages installed by provision-arch.sh with `pacman -Syu --needed`.
 #
 # One per line, comments and blank lines stripped. This is the laptop's manifest
 # and NOT a fleet list — the Debian boxes have packages/apt, and the overlap is

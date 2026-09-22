@@ -54,6 +54,9 @@ jobs:
       - name: CLI --help never runs a command
         run: cd "$CI_DIR" && ./bin/test-cli.sh
 
+      - name: Provisioning reaches installed machines
+        run: cd "$CI_DIR" && ./bin/test-provisioning.sh
+
       # The public mirror is worse than useless when it is stale: someone clones
       # a tree that is weeks behind and hits bugs that were fixed. Pushing it
       # here means it can only ever be behind by a run that FAILED.
