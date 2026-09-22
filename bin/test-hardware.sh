@@ -15,9 +15,10 @@
 # removal of a config whose capability went away (and never of a
 # hand-written one), kernel parameters from a profile, DMI matching,
 # ergon-sleep check's readings, battery discovery by
-# /sys/class/power_supply/*/type rather than by name, and ergon-battery's
-# low/critical notification thresholds (once per crossing, only while
-# discharging).
+# /sys/class/power_supply/*/type rather than by name (excluding scope=Device
+# peripherals), energy-weighted capacity across differently sized packs, and
+# ergon-battery's low/critical notification thresholds (once per crossing,
+# only while discharging).
 #
 # DOES NOT COVER: real sysfs, logind, fprintd, illuminanced or upowerd itself,
 # or an actual suspend. test-hypr-session.sh covers the lid on a VM made
@@ -217,6 +218,42 @@ check "  and equally via BAT0 on another machine" \
   test "$(ERGON_SYSROOT=$T/tp/root "$EB" --short)" = "63%"
 check "no battery at all (a desktop): --short says AC, not empty" \
   test "$(ERGON_SYSROOT=$T/desk/root "$EB" --short)" = "AC"
+
+# A Logitech-style peripheral (hidpp_battery_N) is type=Battery too, but
+# scope=Device -- it must never be blended into the system reading, nor let
+# its own Discharging flip the machine's status.
+put "$T/fw/root/sys/class/power_supply/hidpp_battery_0/type" "Battery"
+put "$T/fw/root/sys/class/power_supply/hidpp_battery_0/scope" "Device"
+put "$T/fw/root/sys/class/power_supply/hidpp_battery_0/capacity" "12"
+put "$T/fw/root/sys/class/power_supply/hidpp_battery_0/status" "Discharging"
+check "a scope=Device peripheral (mouse) at 12% Discharging is ignored -- still 84%, not blended" \
+  test "$(ERGON_SYSROOT=$T/fw/root "$EB" --short)" = "84%"
+check "  and status stays Full, not the mouse's Discharging" \
+  test "$(ERGON_SYSROOT=$T/fw/root "$EB" status)" = "84% (Full)"
+
+put "$T/desk/root/sys/class/power_supply/hidpp_battery_0/type" "Battery"
+put "$T/desk/root/sys/class/power_supply/hidpp_battery_0/scope" "Device"
+put "$T/desk/root/sys/class/power_supply/hidpp_battery_0/capacity" "12"
+put "$T/desk/root/sys/class/power_supply/hidpp_battery_0/status" "Discharging"
+check "a desktop with only a peripheral battery is still AC, not the mouse's 12%" \
+  test "$(ERGON_SYSROOT=$T/desk/root "$EB" --short)" = "AC"
+
+# Two real packs of different size (a 24 Wh internal cell at 30%, a 72 Wh
+# external one empty): capacity must be energy-weighted (7.5%, rounding to
+# 8%), not a plain per-battery average (which would read 15%).
+PR=$T/pack/root
+put "$PR/sys/class/power_supply/BAT0/type" "Battery"
+put "$PR/sys/class/power_supply/BAT0/capacity" "30"
+put "$PR/sys/class/power_supply/BAT0/status" "Discharging"
+put "$PR/sys/class/power_supply/BAT0/energy_full" "24000000"
+put "$PR/sys/class/power_supply/BAT0/energy_now" "7200000"
+put "$PR/sys/class/power_supply/BAT1/type" "Battery"
+put "$PR/sys/class/power_supply/BAT1/capacity" "0"
+put "$PR/sys/class/power_supply/BAT1/status" "Discharging"
+put "$PR/sys/class/power_supply/BAT1/energy_full" "72000000"
+put "$PR/sys/class/power_supply/BAT1/energy_now" "0"
+check "differently sized packs: energy-weighted (8%), not a plain 15% average" \
+  test "$(ERGON_SYSROOT=$PR "$EB" --short)" = "8%"
 
 echo "== ergon-battery: notification thresholds"
 BR=$T/batt/root
