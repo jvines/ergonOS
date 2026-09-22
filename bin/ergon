@@ -38,13 +38,19 @@ usage() {
 }
 
 case "${1:-}" in
-  ''|-h|--help)
-    # Picker in a graphical session, plain list in a pipe or a TTY.
+  '')
+    # Picker in a graphical session, plain list in a pipe or a TTY. Only the
+    # true no-argument invocation reaches this -- ERGON-30 found `ergon --help`
+    # falling in here too and popping fuzzel instead of printing text, which is
+    # its own bug (an agent's `ergon --help` in a Wayland session with
+    # non-tty stdout, e.g. piped or captured by a tool, blocks on a menu no
+    # one asked for). -h/--help gets its own arm below that always just prints.
     if [ ! -t 1 ] && command -v fuzzel >/dev/null && [ -n "${WAYLAND_DISPLAY:-}" ]; then
       sel=$(entries | awk -F'\t' '{printf "%-16s %s\n", $2, $3}' | fuzzel --dmenu --prompt 'ergon  ' --width 76) || exit 0
       exec "$BINDIR/ergon-${sel%% *}"
     fi
     usage; exit 0 ;;
+  -h|--help) usage; exit 0 ;;
   --list)  entries | awk -F'\t' '{print $2}'; exit 0 ;;
   --group) entries | awk -F'\t' -v g="${2:?--group needs a name}" '$1==g{printf "%-16s %s\n", $2, $3}'; exit 0 ;;
 esac
