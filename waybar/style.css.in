@@ -84,7 +84,7 @@ window#waybar.empty #window { background: transparent; }
 #custom-temperature,
 #cpu, #memory, #wireplumber, #backlight,
 #network, #bluetooth, #battery, #power-profiles-daemon,
-#clock, #tray {
+#clock, #tray, #custom-session {
   padding: 0 8px;
   color: @COOL_FG0@;
 }
@@ -158,6 +158,17 @@ window#waybar.empty #window { background: transparent; }
 #tray { padding-right: 10px; }
 #tray > .passive { -gtk-icon-effect: dim; }
 #tray > .needs-attention { -gtk-icon-effect: highlight; }
+
+/* Quiet until touched -- this is the exit for the whole session, not a
+ * reading, and it does not need to compete with the load trio for attention.
+ * The hover colour is the same one battery.critical blinks with: the one
+ * warm accent on an otherwise cool bar, here meaning "this click matters". */
+#custom-session {
+  color: @COOL_DIM@;
+  padding-left: 4px;
+  padding-right: 12px;
+}
+#custom-session:hover { color: @COOL_URGENT@; }
 
 tooltip {
   background: @COOL_BG1@;

@@ -44,7 +44,19 @@ bind("SUPER + SHIFT + RETURN", "Floating terminal",  "ergon-term --class ergon-f
 bind("SUPER + SHIFT + ALT + RETURN", "Terminal (fallback)", "foot")
 bind("SUPER + SPACE",        "Launcher",            "fuzzel")
 bind("SUPER + ESCAPE",       "Lock",                "loginctl lock-session")
-bind("SUPER + SHIFT + E",    "Exit Hyprland",       hl.dsp.exit())
+-- Used to be hl.dsp.exit() with no confirmation, right next to record (R) and
+-- OCR (T) -- one slip on E ended every terminal job. ergon-session asks first,
+-- and can lock, suspend, hibernate, log out, reboot or shut down.
+bind("SUPER + SHIFT + E",    "Session menu",        "ergon-session")
+-- The physical power key opens the same menu. Deliberately NOT `locked = true`
+-- (contrast lid.lua and media.lua, where it is): fuzzel cannot draw over
+-- hyprlock, so a locked bind here would not show a menu at all -- it would
+-- queue one, invisibly, to pop up right after the screen unlocks. On the
+-- Framework 13 this key IS the fingerprint reader, so that is not a corner
+-- case: it is what happens on every successful unlock. logind ignores the raw
+-- keypress everywhere (bin/ergon-hardware), so leaving this unlocked costs
+-- nothing while the session is locked.
+bind("XF86PowerOff",         "Session menu",        "ergon-session")
 -- The help binding ADAPTS to the keyboard, because a fixed one is wrong for
 -- half the world. '/' is its own key on a US layout and SHIFT+7 on the Latin
 -- American, Spanish, German and French ones -- and a bind on SLASH cannot be

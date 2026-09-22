@@ -21,7 +21,7 @@
     "custom/temperature", "cpu", "memory",
     "wireplumber", "backlight",
     "network", "bluetooth", "battery", "power-profiles-daemon",
-    "clock", "tray"
+    "clock", "tray", "custom/session"
   ],
 
   "hyprland/workspaces": {
@@ -174,5 +174,16 @@
   "tray": {
     "icon-size": 16,
     "spacing": 8
+  },
+
+  // Lock, suspend, hibernate, logout, reboot, shutdown -- see bin/ergon-session
+  // and hypr/common/binds.lua (SUPER+SHIFT+E, XF86PowerOff). Clickable for the
+  // same reason custom/palette is: a keybind is not reachable from every seat,
+  // and this is the one action that must still be reachable when it is not.
+  "custom/session": {
+    "format": "󰐥",
+    "tooltip": true,
+    "tooltip-format": "Session menu — lock, suspend, hibernate, logout, reboot, shutdown",
+    "on-click": "ergon-session"
   }
 }
