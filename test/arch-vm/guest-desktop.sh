@@ -1118,6 +1118,34 @@ if systemctl is-active --quiet power-profiles-daemon; then
 else
   bad "power-profiles-daemon is not running — clicking the profile icon does nothing"
 fi
+# The rule provisioning writes (bin/provision-arch.sh, 49-ergon-desktop.rules)
+# grants suspend and hibernate to wheel regardless of session, and
+# deliberately stops there. BOTH halves are asserted: a rule that quietly
+# widened to the two actions that end every job on the machine must fail here.
+#
+# `su -` has no seat, which is exactly the session-less caller the rule exists
+# for -- the same shape as anything the compositor launches under uwsm.
+# pkcheck exits 0 only when the action is authorized outright; a challenge
+# ("authentication required") or a refusal is non-zero, which is what reboot
+# and power-off must still be.
+if ! command -v pkcheck >/dev/null 2>&1; then
+  note "pkcheck missing — cannot check what the desktop may do without a session"
+else
+  for _act in suspend hibernate; do
+    if usr "pkcheck --action-id org.freedesktop.login1.$_act --process \$\$" >/dev/null 2>&1; then
+      ok "polkit: a session-less wheel process may $_act"
+    else
+      bad "polkit refuses $_act from a session-less process — the session menu cannot $_act"
+    fi
+  done
+  for _act in reboot power-off; do
+    if usr "pkcheck --action-id org.freedesktop.login1.$_act --process \$\$" >/dev/null 2>&1; then
+      bad "polkit grants $_act unauthenticated — the rule was meant to stop at suspend/hibernate"
+    else
+      ok "polkit still asks before $_act"
+    fi
+  done
+fi
 # Assert the thing that survives a REBOOT, not the rmmod we just did. The first
 # version of this checked /dev/fd0 in the same boot that removed the module by
 # hand: it passed, and the prompt was still there on the next boot, because the

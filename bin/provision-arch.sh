@@ -527,6 +527,10 @@ say "polkit for the desktop"
 #   pkcheck --action-id ...switch-profile --process $$  ->  Not authorized.
 # The bar's profile button did nothing for that reason and no other.
 #
+# Not every action here is a hard refusal: the login1 ones below come back as
+# "authentication required" instead, and an agent does prompt for them. They
+# are granted for a different reason, spelled out in the rule itself.
+#
 # The trade: this grants wheel members the action regardless of session, which
 # includes over ssh. On a single-user laptop that is the difference between a
 # working button and a broken one; on a shared machine, narrow it.
@@ -538,16 +542,34 @@ sudo install -Dm644 /dev/stdin /etc/polkit-1/rules.d/49-ergon-desktop.rules <<'E
 // logind session scope, so polkit's implicit-active rules never match them.
 //
 // Deliberately a short list. Every entry here is one a person sitting at this
-// machine would otherwise be refused silently, with no prompt to explain why.
+// machine would otherwise be refused silently, or asked for a password to do
+// something the hardware already does unauthenticated.
+//
+// suspend and hibernate, but NOT reboot or power-off. Those two read
+// auth_admin_keep for a session-less caller, so the session menu gets a PROMPT
+// rather than a silent refusal -- measured on 2026-09-22 with
+//   pkcheck --action-id org.freedesktop.login1.power-off --process $$ -u
+// from a SUPER+RETURN terminal, and the dialog does appear. Closing the lid
+// already suspends with no authentication at all (logind handles
+// HandleLidSwitch itself; polkit never sees it), so demanding an admin
+// password to press the menu entry for that same act protects nothing. Reboot
+// and shutdown are different: they end every job on the machine, they happen
+// once a day at most, and a prompt is a reasonable last check. They stay
+// behind it, and test/arch-vm/guest-desktop.sh asserts that they do.
 polkit.addRule(function(action, subject) {
-    if (subject.isInGroup("wheel") &&
-        action.id == "org.freedesktop.UPower.PowerProfiles.switch-profile") {
-        return polkit.Result.YES;
+    if (!subject.isInGroup("wheel")) {
+        return null;
+    }
+    switch (action.id) {
+        case "org.freedesktop.UPower.PowerProfiles.switch-profile":
+        case "org.freedesktop.login1.suspend":
+        case "org.freedesktop.login1.hibernate":
+            return polkit.Result.YES;
     }
 });
 EOF
 if sudo systemctl reload polkit 2>/dev/null || sudo systemctl restart polkit 2>/dev/null; then
-  ok "polkit: wheel may switch power profiles"
+  ok "polkit: wheel may switch power profiles, suspend and hibernate"
 else
   warn "polkit rule written but the daemon was not reloaded; it applies after a reboot"
 fi
