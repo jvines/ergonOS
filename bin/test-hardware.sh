@@ -145,6 +145,30 @@ check "no fprintd: no resume unit" test ! -e "$D/etc/systemd/system/ergon-fprint
 check "no sensor or backlight: no illuminanced" not has "$T/log/pacman" "illuminanced"
 check "power key: ignored by logind on a desktop with no laptop capabilities at all" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 
+echo "== a pacman failure elsewhere in _capabilities must not skip the power key"
+# Regression for an ordering bug: the power-key drop-in used to be the LAST
+# thing _capabilities() wrote, after the illuminanced block -- which returns
+# early (rc=0, no error surfaced beyond its own warn) when `pacman -S
+# illuminanced` fails. On the Framework 13 (sensor + backlight, so it always
+# takes that branch) a mirror hiccup, a held pacman lock or no network during
+# provisioning silently left the power key at logind's default: poweroff. The
+# fix moved the power-key _put to the top of the function, before anything
+# that can return early; this fails if that ever regresses.
+D=$T/fw/dest
+rm -f "$D/etc/systemd/logind.conf.d/10-power-key.conf"
+cp "$T/stub/pacman" "$T/stub/pacman.ok"
+cat > "$T/stub/pacman" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/pacman"
+case "$*" in *illuminanced*) exit 1 ;; esac
+EOF
+chmod +x "$T/stub/pacman"
+reset_logs; apply fw
+check "illuminanced install failing is still reported" has "$T/out" "illuminanced failed to install"
+check "  but the power key is ignored anyway (fw has a sensor + backlight, so it always hits this path)" \
+  hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
+mv "$T/stub/pacman.ok" "$T/stub/pacman"
+
 echo "== a capability that goes away"
 R=$T/fw/root; D=$T/fw/dest
 put "$R/proc/cmdline" "root=/dev/mapper/cryptroot quiet"           # resume= dropped

@@ -110,6 +110,25 @@ _has_unit() { [ -e "$ROOT/usr/lib/systemd/system/$1" ]; }
 _capabilities() {
   local als bl
 
+  # Power key. logind's own default is poweroff on a bare press, and on the
+  # Framework 13 that key IS the fingerprint reader (bin/ergon-fingerprint) --
+  # a stray touch while unlocking would kill the machine outright, not just
+  # misfire. ergon-session (SUPER+SHIFT+E, XF86PowerOff, a waybar button) is
+  # meant to own this key everywhere, which only holds if the raw keypress
+  # cannot bypass it -- so this applies on EVERY machine, not only ones with a
+  # reader on the button, unconditionally rather than behind a capability
+  # check.
+  #
+  # Deliberately FIRST in this function, before anything that can `return`
+  # early (the illuminanced block below does, on a pacman failure): a
+  # capability check bailing out must never take the power key with it.
+  _put /etc/systemd/logind.conf.d/10-power-key.conf <<EOF
+$MARK
+[Login]
+HandlePowerKey=ignore
+EOF
+  ok "power key: ignored by logind (ergon-session owns it)"
+
   # Lid. s2idle-only firmware plus working hibernation: fall through to
   # hibernate. Anything else keeps logind's default, which is right for S3.
   if _s2idle_only && _hibernate_ready; then
@@ -231,21 +250,6 @@ EOF
     sudo systemctl disable --now illuminanced.service >/dev/null 2>&1 || true
     _unput /etc/illuminanced.toml
   fi
-
-  # Power key. logind's own default is poweroff on a bare press, and on the
-  # Framework 13 that key IS the fingerprint reader (bin/ergon-fingerprint) --
-  # a stray touch while unlocking would kill the machine outright, not just
-  # misfire. ergon-session (SUPER+SHIFT+E, XF86PowerOff, a waybar button) is
-  # meant to own this key everywhere, which only holds if the raw keypress
-  # cannot bypass it -- so this applies on EVERY machine, not only ones with a
-  # reader on the button, unconditionally rather than behind a capability
-  # check.
-  _put /etc/systemd/logind.conf.d/10-power-key.conf <<EOF
-$MARK
-[Login]
-HandlePowerKey=ignore
-EOF
-  ok "power key: ignored by logind (ergon-session owns it)"
 }
 
 # --- profiles ----------------------------------------------------------------------
