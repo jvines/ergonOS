@@ -88,6 +88,30 @@ jobs:
       - name: Provision it and prove the desktop works
         run: cd "$CI_DIR" && ./bin/test-hypr-session.sh
 
+      # The steps above show only the ok/FAIL lines. What a failing check prints
+      # to explain itself goes to the console log under $WORK, and the next step
+      # deletes $WORK -- so the hyprpaper diagnosis written for exactly this was
+      # printed, saved, and thrown away, run after run. Print it here first.
+      - name: Show what the failing checks said
+        if: failure()
+        run: |
+          s="$WORK/session.log"
+          if [ -f "$s" ] && grep -q 'DESKTOP_RESULT=' "$s"; then
+            # Each FAIL with the lines it printed under itself, then the
+            # compositor log the suite dumps whenever anything failed.
+            tr -d '\r' < "$s" | awk '
+              /^   FAIL /             { show = 1; print; next }
+              /^   --- hyprland\.log/ { show = 1 }
+              /^(   ok |   --   |--- )/ { show = 0 }
+              show'
+          elif [ -f "$s" ]; then
+            echo "the desktop test never finished; the end of its console:"
+            tr -d '\r' < "$s" | tail -60
+          else
+            for f in "$WORK/phase1.log" "$WORK/phase2.log"; do
+              if [ -f "$f" ]; then echo "--- the end of $f"; tr -d '\r' < "$f" | tail -60; fi
+            done
+          fi
 
       - name: Clean up
         if: always()
