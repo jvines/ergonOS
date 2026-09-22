@@ -81,22 +81,61 @@ jobs:
           echo "testing $(git rev-parse --short HEAD)"
 
       # --keep leaves the disk behind, because the session suite provisions
-      # that same disk rather than installing its own.
+      # that same disk rather than installing its own. The old logs go first:
+      # WORK is a fixed path, and a run that never reached Clean up (a cancel,
+      # a watchdog reset) leaves its own, to be read below as this run's.
       - name: Install from the ISO and assert against the booted system
-        run: cd "$CI_DIR" && ./bin/test-arch-vm.sh --keep
+        id: install
+        run: |
+          rm -f "$WORK"/phase[123].log "$WORK"/session.log
+          cd "$CI_DIR" && ./bin/test-arch-vm.sh --keep
 
       - name: Provision it and prove the desktop works
+        id: session
         run: cd "$CI_DIR" && ./bin/test-hypr-session.sh
 
       # The steps above show only the ok/FAIL lines. What a failing check prints
       # to explain itself goes to the console log under $WORK, and the next step
       # deletes $WORK -- so the hyprpaper diagnosis written for exactly this was
-      # printed, saved, and thrown away, run after run. Print it here first.
+      # printed, saved, and thrown away, run after run. Print it here first,
+      # from the log of the step that failed, not whichever log happens to exist.
       - name: Show what the failing checks said
         if: failure()
+        env:
+          INSTALL: ${{ steps.install.outcome }}
+          SESSION: ${{ steps.session.outcome }}
         run: |
           s="$WORK/session.log"
-          if [ -f "$s" ] && grep -q 'DESKTOP_RESULT=' "$s"; then
+          if [ "$INSTALL" = failure ]; then
+            # A phase is read by its verdict line, never by its end: the end of
+            # every phase that got that far is its poweroff. Where the guest's
+            # checks ran and failed, show what the guest printed from its
+            # script's launch to the verdict -- the cmdline and the default
+            # subvolume are printed there to read a FAIL against. Where no
+            # verdict came, the end is where it stopped. The runner's bash has
+            # -e and pipefail, hence the || true.
+            for n in 1 2 3; do
+              f="$WORK/phase$n.log"
+              [ -f "$f" ] || continue
+              v=$(grep -aoE '(SERIAL_RC|ASSERT_RESULT|ROLLBACK_RESULT)=[0-9]+' "$f" | tail -1 || true)
+              case "$v" in
+                *=0) ;;
+                *_RESULT=*)
+                  echo "--- phase $n said $v:"
+                  awk '{ gsub(/\r/, "") }
+                    /guest-(assert|rollback-verify)\.sh/ { b = ""; next }
+                    { b = b $0 "\n" }
+                    /_RESULT=[0-9]/ { printf "%s", b; b = "" }' "$f" | tail -80 ;;
+                *)
+                  echo "--- phase $n never reached its verdict; the end of $f:"
+                  tr -d '\r' < "$f" | tail -40 ;;
+              esac
+            done
+            ls "$WORK"/phase?.log >/dev/null 2>&1 \
+              || echo "no phase log: it failed before the first boot, and says why above"
+          elif [ "$SESSION" != failure ]; then
+            echo "neither test step failed: the step that did says why, above"
+          elif [ -f "$s" ] && grep -q 'DESKTOP_RESULT=' "$s"; then
             # Each FAIL with the lines it printed under itself, then the
             # compositor log the suite dumps whenever anything failed.
             tr -d '\r' < "$s" | awk '
@@ -108,9 +147,7 @@ jobs:
             echo "the desktop test never finished; the end of its console:"
             tr -d '\r' < "$s" | tail -60
           else
-            for f in "$WORK/phase1.log" "$WORK/phase2.log"; do
-              if [ -f "$f" ]; then echo "--- the end of $f"; tr -d '\r' < "$f" | tail -60; fi
-            done
+            echo "the desktop test failed before it wrote $s; its output is above"
           fi
 
       - name: Clean up
