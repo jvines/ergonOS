@@ -1,6 +1,14 @@
 hosts/*/
 !hosts/_template/
 !hosts/README.md
+
+# install.sh:118 links hosts/<host>/hyprland.lua to .config/hypr/hosts/<host>.lua
+# -- and .config/hypr IS this directory, because install.sh links hypr/ whole.
+# So that symlink lands at hypr/hosts/<host>.lua, INSIDE the checkout. hosts/*/
+# above does not match it (it is root-anchored), so every graphical machine has
+# carried an untracked file in its own repo since the per-host seam was added,
+# and reported itself dirty forever.
+hypr/hosts/
 __pycache__/
 *.pyc
 
