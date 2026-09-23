@@ -1165,39 +1165,6 @@ hq monitors -j | grep -q '"name"' && ok "a monitor is present" || bad "no monito
 # while the real one worked, and the assertion passed on the real one -- so the
 # log carried a fatal-looking waybar error that meant nothing. Wait for the one
 # the session started; only start one here if the session did not.
-# btop was sent SIGUSR2 by the apply step. Upstream #860 aborts on the redraw
-# that follows a reload when the GPU box is shown; ergon-theme reads btop.conf
-# to avoid that, and the config this machine installs has no shown_boxes line
-# at all, so the signal really was delivered here. Whether the process survived
-# it is a thing only a live btop can say, and this is the only one there is.
-if [ -z "$_pal_before_btop" ]; then
-  note "no btop was open across the switch, so the SIGUSR2 path is unobserved here"
-elif usr "pgrep -x btop" >/dev/null 2>&1; then
-  ok "btop survived being signalled for the new palette"
-else
-  bad "btop is gone after the palette switch — SIGUSR2 killed it (btop#860)"
-fi
-
-# The bar is asserted by PID, not by presence. A layer surface outlives the
-# client that owns it for as long as teardown takes, so "waybar is in hq
-# layers" a second after the kill can be the DYING bar, still drawn with the
-# old stylesheet -- which is the staleness this section exists to disprove.
-_pal_after_bar=""
-for _ in $(seq 1 20); do
-  _pal_after_bar=$(usr "pgrep -x waybar" 2>/dev/null | head -1)
-  [ -n "$_pal_after_bar" ] && [ "$_pal_after_bar" != "$_pal_before_bar" ] && break
-  sleep 1
-done
-if [ -z "$_pal_before_bar" ]; then
-  bad "waybar was not running before the switch — the session never had a bar"
-elif [ -z "$_pal_after_bar" ]; then
-  bad "waybar is gone after the palette switch — the desktop has no bar"
-elif [ "$_pal_after_bar" = "$_pal_before_bar" ]; then
-  bad "waybar kept pid $_pal_after_bar, so it is still drawing the old stylesheet"
-else
-  ok "waybar was restarted, which is the only thing that recolours the bar"
-fi
-
 for _ in $(seq 1 20); do hq layers | grep -q waybar && break; sleep 1; done
 if ! hq layers | grep -q waybar; then
   echo "     autostart did not bring up waybar; starting one by hand"
@@ -2110,6 +2077,39 @@ elif [ "$_pal_after_osd" != "$_pal_before_osd" ]; then
   ok "swayosd-server was restarted, which is the only way it re-reads its CSS"
 else
   bad "swayosd-server kept pid $_pal_after_osd, so it is still drawing the old palette"
+fi
+
+# btop was sent SIGUSR2 by the apply step. Upstream #860 aborts on the redraw
+# that follows a reload when the GPU box is shown; ergon-theme reads btop.conf
+# to avoid that, and the config this machine installs has no shown_boxes line
+# at all, so the signal really was delivered here. Whether the process survived
+# it is a thing only a live btop can say, and this is the only one there is.
+if [ -z "$_pal_before_btop" ]; then
+  note "no btop was open across the switch, so the SIGUSR2 path is unobserved here"
+elif usr "pgrep -x btop" >/dev/null 2>&1; then
+  ok "btop survived being signalled for the new palette"
+else
+  bad "btop is gone after the palette switch — SIGUSR2 killed it (btop#860)"
+fi
+
+# The bar is asserted by PID, not by presence. A layer surface outlives the
+# client that owns it for as long as teardown takes, so "waybar is in hq
+# layers" a second after the kill can be the DYING bar, still drawn with the
+# old stylesheet -- which is the staleness this section exists to disprove.
+_pal_after_bar=""
+for _ in $(seq 1 20); do
+  _pal_after_bar=$(usr "pgrep -x waybar" 2>/dev/null | head -1)
+  [ -n "$_pal_after_bar" ] && [ "$_pal_after_bar" != "$_pal_before_bar" ] && break
+  sleep 1
+done
+if [ -z "$_pal_before_bar" ]; then
+  bad "waybar was not running before the switch — the session never had a bar"
+elif [ -z "$_pal_after_bar" ]; then
+  bad "waybar is gone after the palette switch — the desktop has no bar"
+elif [ "$_pal_after_bar" = "$_pal_before_bar" ]; then
+  bad "waybar kept pid $_pal_after_bar, so it is still drawing the old stylesheet"
+else
+  ok "waybar was restarted, which is the only thing that recolours the bar"
 fi
 
 for _ in $(seq 1 20); do hq layers | grep -q waybar && break; sleep 1; done
