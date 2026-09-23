@@ -12,6 +12,16 @@
 #
 # The mapping mirrors wezterm/wezterm.lua.in exactly. Two terminals disagreeing
 # about what "red" means is worse than either choice on its own.
+#
+# SCHEMA NOTE. This file targeted a foot that no longer exists, and had done
+# for a while. foot renamed [colors] to [colors-dark]/[colors-light], moved the
+# cursor's colour out of [cursor] into the colour section, and moved
+# scrollback-lines into its own [scrollback] section. An unknown SECTION name
+# takes the whole section with it, so every colour here -- foreground,
+# background, selection and all sixteen ANSI slots -- was being discarded, and
+# foot drops unknown keys quietly at runtime, so the only symptom was a
+# terminal that looked wrong. `foot --check-config` is in test-hypr-config.sh
+# now, which is what would have caught it.
 
 font=JetBrainsMono Nerd Font:size=11
 pad=8x8
@@ -20,19 +30,35 @@ dpi-aware=yes
 [cursor]
 style=beam
 blink=no
-color=@COOL_BG0:raw@ @COOL_ACTIVE:raw@
 
-[colors]
+[scrollback]
+# A terminal that scrolls back far enough to find the error you just scrolled
+# past. 10k lines is roughly a long build.
+lines=10000
+
+# The palette twice, deliberately.
+#
+# foot chooses between these by what the compositor reports as the system
+# light/dark preference, which is a different question from which palette this
+# machine is themed with. ergon-theme does set gsettings to agree, but when
+# nothing answers -- a VM, a session without a portal -- foot falls back to its
+# own built-in scheme rather than to the other section. Defining both means the
+# palette wins either way, and the duplication is in a GENERATED file: there is
+# exactly one place to edit, which is this template.
+#
+# The palette is a cyan->magenta ramp, so there is no honest red or green in it.
+# The ANSI slots are mapped by ROLE: whatever a program means by "error" gets
+# the urgent tint, "success" gets the mint, and the rest are steps along the
+# ramp. Same assignment as wezterm, waybar and mako.
+[colors-dark]
 alpha=1.0
 foreground=@COOL_FG0:raw@
 background=@COOL_BG0:raw@
 selection-foreground=@COOL_FG0:raw@
 selection-background=@COOL_BG2:raw@
+# <text under the cursor> <the cursor itself>
+cursor=@COOL_BG0:raw@ @COOL_ACTIVE:raw@
 
-# The palette is a cyan->magenta ramp, so there is no honest red or green in it.
-# The ANSI slots are mapped by ROLE: whatever a program means by "error" gets
-# the urgent tint, "success" gets the mint, and the rest are steps along the
-# ramp. Same assignment as wezterm, waybar and mako.
 regular0=@COOL_BG1:raw@
 regular1=@COOL_URGENT:raw@
 regular2=@COOL_GOOD:raw@
@@ -51,10 +77,31 @@ bright5=@COOL_BLUSH:raw@
 bright6=@COOL_HOT_0:raw@
 bright7=@COOL_FG0:raw@
 
-[main]
-# A terminal that scrolls back far enough to find the error you just scrolled
-# past. 10k lines is roughly a long build.
-scrollback-lines=10000
+[colors-light]
+alpha=1.0
+foreground=@COOL_FG0:raw@
+background=@COOL_BG0:raw@
+selection-foreground=@COOL_FG0:raw@
+selection-background=@COOL_BG2:raw@
+cursor=@COOL_BG0:raw@ @COOL_ACTIVE:raw@
+
+regular0=@COOL_BG1:raw@
+regular1=@COOL_URGENT:raw@
+regular2=@COOL_GOOD:raw@
+regular3=@COOL_WARN:raw@
+regular4=@COOL_1:raw@
+regular5=@COOL_4:raw@
+regular6=@COOL_0:raw@
+regular7=@COOL_FG1:raw@
+
+bright0=@COOL_BG2:raw@
+bright1=@COOL_HOT_4:raw@
+bright2=@COOL_MINT:raw@
+bright3=@COOL_3:raw@
+bright4=@COOL_2:raw@
+bright5=@COOL_BLUSH:raw@
+bright6=@COOL_HOT_0:raw@
+bright7=@COOL_FG0:raw@
 
 [key-bindings]
 # Matches wezterm's, so muscle memory survives falling back to the escape hatch.

@@ -21,7 +21,7 @@ command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
 echo "== desktop configs, checked by their own parsers"
 
 out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c '
-  pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock >/dev/null 2>&1
+  pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
   # you not to use it, so everything runs as a real user.
@@ -60,6 +60,13 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
   echo "@@fuzzel"
   run "fuzzel --config /tmp/repo/fuzzel/fuzzel.ini --check-config" || true
 
+  # foot. Added after its config was found to have been silently ignored for
+  # months: foot renamed two sections and moved a key, an unknown section takes
+  # every colour in it with it, and foot drops what it does not recognise
+  # without complaining. --check-config is the only thing that says so.
+  echo "@@foot"
+  run "foot --check-config -c /tmp/repo/foot/foot.ini" || true
+
   echo "@@mako"
   run "timeout 5 mako --config /tmp/repo/mako/config" \
     | grep -iE "failed to parse|invalid" || true
@@ -76,7 +83,7 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
 ' 2>&1) || true
 
 rc=0
-for tool in hyprland fuzzel mako hypridle hyprlock; do
+for tool in hyprland fuzzel foot mako hypridle hyprlock; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"
