@@ -32,6 +32,10 @@ ERGON="${ERGON:-$HOME/ergonOS}"
 export PATH="$HOME/.local/bin:$PATH"
 # shellcheck source=../lib/transaction.sh
 . "$ERGON/lib/transaction.sh"
+# How to reach the user manager that is already running from a shell that has
+# no session, which is every shell this script is ever started from.
+# shellcheck source=../lib/user-manager.sh
+. "$ERGON/lib/user-manager.sh"
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   ok  %s\n' "$*"; }
 skip() { printf '   ·   %s\n' "$*"; }
@@ -991,15 +995,40 @@ else
   # and the rest of this script has nothing to do with that.
   warn "systemd-oomd would not start; nothing contains a run that exhausts memory"
 fi
-# The user manager has already read app.slice; a drop-in it has not reloaded is
-# a policy this machine does not have yet. There is no user bus during a
-# provision from a serial console, hence the fallback message rather than a
-# failure.
-if [ "$_user_reload" = 1 ]; then
-  systemctl --user daemon-reload >/dev/null 2>&1 \
-    && ok "user units reloaded (ergon doctor says whether this session's manager took it)" \
-    || warn "no user manager to reload here; the oomd policy applies at the next login"
-fi
+# THE POLICY AS THE RUNNING MANAGER HOLDS IT, which is the only form that
+# reaches oomd. A drop-in under /etc/systemd/user is a file until a manager has
+# read it, and the manager that matters here is nearly always older than this
+# run: there is one per user, it outlives every session, and it read app.slice
+# at login -- before this file existed.
+#
+# This was `systemctl --user daemon-reload || warn`, which could not work from
+# `su - <user> -c` or `sudo -u`: neither opens a logind session, so there is no
+# bus for systemctl to find (see lib/user-manager.sh). The reload failed for a
+# reason that had nothing to do with this machine, the script said the policy
+# would apply at the next login, and a manager sat there holding auto with
+# nothing watching it. Worse, the whole thing was gated on the file having
+# CHANGED, so the second provision of a machine -- the one where the file is
+# already correct and the manager still has not read it -- asked nothing and
+# said nothing.
+#
+# So: ask the manager, reload it when the answer is wrong, ask AGAIN, and
+# report the second answer. Never `systemctl --user restart app.slice`, which
+# would apply the policy by killing every app in the slice.
+#
+# After the oomd block above and not before it: the user manager connects to
+# oomd in order to report this, and a report sent while oomd is down is dropped.
+#
+# When either drop-in moved, reload first -- the compositor's OOMPolicy rides on
+# the same reload, and app.slice below is the witness that the reload landed.
+[ "$_user_reload" = 0 ] || ergon_user_reload || true
+_oom_rc=0
+_oom_live=$(ergon_user_ensure_prop app.slice ManagedOOMMemoryPressure kill) || _oom_rc=$?
+case "$_oom_rc" in
+  0) ok "app.slice is monitored by oomd in the user manager running now" ;;
+  2) warn "no user manager running as $(id -un) here, so nothing is monitored yet — the policy applies at the next login" ;;
+  *) warn "app.slice is ManagedOOMMemoryPressure=$_oom_live even after reloading the user manager; a run that exhausts memory is NOT contained until you log out and back in" ;;
+esac
+unset _oom_rc _oom_live
 
 say "shell"
 # oh-my-zsh and zplug are git clones, not packages. Deliberately not from the

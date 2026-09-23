@@ -1634,11 +1634,55 @@ fi
 # under memory pressure, and see what is still alive afterwards. bin/test-oom.sh
 # has the files, the scope and the doctor rows; this has a compositor to kill.
 echo "--- out-of-memory containment ---"
+
+# Everything these assertions are made of, printed ONCE when any of them fails.
+# Every line of it was worked out by hand on the run that failed, from a report
+# that said only "ManagedOOMMemoryPressure=auto": the drop-in on disk, the
+# property in the manager and the cgroup oomd is watching are three different
+# claims, and none of them proves either of the others. What provisioning itself
+# said about the stage is in here because /tmp/prov.log is printed only when
+# provisioning FAILS, and this stage warns rather than failing -- so on that run
+# every word of its account was thrown away.
+oom_diag_shown=0
+oom_diag() {
+  [ "$oom_diag_shown" = 0 ] || return 0
+  oom_diag_shown=1
+  echo "     --- out-of-memory diagnosis ---"
+  for f in /etc/systemd/user/app.slice.d/10-ergon-oomd.conf \
+           /etc/systemd/user/wayland-wm@.service.d/10-ergon-oom.conf \
+           /etc/systemd/oomd.conf.d/10-ergon.conf; do
+    if [ -r "$f" ]; then
+      grep -vE '^[[:space:]]*(#|$)' "$f" | sed "s|^|     $f: |"
+    else
+      echo "     $f: MISSING — provisioning never wrote it"
+    fi
+  done
+  # DropInPaths is the manager saying which files it has actually read. Without
+  # it, a drop-in that was never written and one the manager never re-read give
+  # the same 'auto'.
+  usr "systemctl --user show app.slice -p ManagedOOMMemoryPressure -p ActiveState -p DropInPaths" \
+    2>&1 | sed 's/^/     manager: /'
+  echo "     oomd: $(systemctl is-active systemd-oomd 2>&1)"
+  # The socket the USER manager connects to in order to report app.slice to
+  # oomd. No socket, no report, whatever the manager holds.
+  ls -l /run/systemd/oom/io.systemd.ManagedOOM 2>&1 | sed 's/^/     socket: /'
+  # And what oomd is monitoring, which is the only end-to-end answer here.
+  command -v oomctl >/dev/null && oomctl 2>&1 | sed 's/^/     oomctl: /'
+  journalctl -b -u systemd-oomd --no-pager -n 15 2>&1 | sed 's/^/     journal: /'
+  # The kernel's own killer fires minutes late and picks the biggest task on the
+  # machine: a line here means nothing contained the run, not that something did.
+  journalctl -b -k --no-pager 2>/dev/null \
+    | grep -iE 'out of memory|oom-kill|killed process' | tail -5 | sed 's/^/     kernel: /'
+  grep -iE 'oom|user manager' /tmp/prov.log 2>/dev/null | tail -10 | sed 's/^/     prov: /'
+  echo "     --- end ---"
+}
+
 if systemctl is-active --quiet systemd-oomd; then
   ok "systemd-oomd is running (provisioning enabled it)"
 else
   bad "systemd-oomd is not running — nothing watches memory pressure"
   systemctl status systemd-oomd --no-pager -l 2>&1 | tail -8 | sed 's/^/     /'
+  oom_diag
 fi
 
 # The policy as the USER MANAGER holds it, which is the only form that reaches
@@ -1646,10 +1690,18 @@ fi
 # this machine does not have yet. There is a manager to ask because the harness
 # lingers the user before it starts anything (see "starting Hyprland"), which is
 # what turned this from a note that asserted nothing into an assertion.
+#
+# Two ways this reads 'auto' and they need telling apart, which is what
+# oom_diag is for: the manager started before the drop-in existed and has not
+# re-read it (DropInPaths empty, file present), or provisioning never wrote the
+# file at all. The first is the one that shipped -- provisioning's reload could
+# not reach the manager from the session-less shell it runs in, warned, and the
+# warning went into a log nobody prints.
 oom_app=$(usr "systemctl --user show -p ManagedOOMMemoryPressure --value app.slice" 2>/dev/null | tr -d '\r')
 case "$oom_app" in
   kill) ok "app.slice is monitored by oomd in this session" ;;
-  *)    bad "app.slice ManagedOOMMemoryPressure='${oom_app:-no user manager to ask}' — oomd is allowed to kill nothing" ;;
+  *)    bad "app.slice ManagedOOMMemoryPressure='${oom_app:-no user manager to ask}' — oomd is allowed to kill nothing"
+        oom_diag ;;
 esac
 
 # A REAL ALLOCATION, run the way `ergon watch` runs one: through the user
@@ -1703,11 +1755,15 @@ case "$hist" in
   *)
     bad "the run was not recorded as an OOM kill — nothing contained it, or the kill was not attributed"
     printf '%s\n' "$hist" | tail -20 | sed 's/^/     /'
-    tail -10 /tmp/oomprobe.log | sed 's/^/     /' ;;
+    tail -10 /tmp/oomprobe.log | sed 's/^/     /'
+    oom_diag ;;
 esac
 case "$rc" in
-  0)   bad "the allocation returned 0 — it was never stopped" ;;
-  124) bad "nothing killed the run in 300s; the timeout ended it, which proves no containment at all" ;;
+  0)   bad "the allocation returned 0 — it was never stopped"; oom_diag ;;
+  # MemoryHigh only throttles, so an unwatched scope reclaims and stalls
+  # forever: 124 is the signature of app.slice not being monitored at all.
+  124) bad "nothing killed the run in 300s; the timeout ended it, which proves no containment at all"
+       oom_diag ;;
 esac
 usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
 

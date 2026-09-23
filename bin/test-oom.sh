@@ -22,8 +22,10 @@
 # touch it; the probe, including the machine where a scope is granted and
 # nothing is watching it; the run still happening when the scope is refused; how
 # a kill is attributed to memory WITHOUT any journal access, and what `ergon
-# hist` shows for it; and the three doctor rows in every state, including a
-# machine with no user manager to ask.
+# hist` shows for it; how the app.slice drop-in is made live in a user manager
+# that is ALREADY running, from the session-less shell provisioning runs in; and
+# the three doctor rows in every state, including a machine with no user manager
+# to ask.
 #
 # DOES NOT COVER: whether systemd-oomd actually kills the scope under pressure,
 # whether the compositor survives it, or whether a notification is drawn. Those
@@ -186,7 +188,26 @@ EOF
 cat > "$T/stub/systemctl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/systemctl"
+# The runtime directory it was ASKED WITH, which the argv does not carry.
+# `systemctl --user` finds the user manager through $XDG_RUNTIME_DIR/bus and
+# nothing else, so a caller without one is talking to a bus that is not there --
+# invisible in the command line, and the whole of the bug this file now covers.
+printf '%s\t%s\n' "${XDG_RUNTIME_DIR-unset}" "$*" >> "$TEST_ROOT/log/systemctl-env"
+# And a manager that cannot be found is a manager that does not answer, which is
+# what the real one does here: "Failed to connect to bus", exit 1, no output.
+# Only where that is the thing under test: the rest of this file runs wherever
+# the suite runs, CI included, and CI has no runtime directory of its own.
+if [ -n "${STUB_NEEDS_BUS:-}" ] && [ -z "${XDG_RUNTIME_DIR:-}${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  echo "Failed to connect to bus: No medium found" >&2
+  exit 1
+fi
 case " $* " in
+  *" daemon-reload "*)
+    # A manager that has re-read its drop-ins answers differently afterwards:
+    # the file on disk never moves, what changes is which manager has read it.
+    # No manager to ask about app.slice is no manager to reload either.
+    [ -n "${STUB_OOM_APP:-}" ] || exit 1
+    : > "$TEST_ROOT/log/daemon-reloaded" ;;
   *" reset-failed "*) ;;
   *"-p Result"*)
     # The user manager's own verdict on the scope, which is what replaced the
@@ -201,9 +222,13 @@ case " $* " in
   # moment before that, and a stub that never says "active" still exercises it.
   *"-p ActiveState"*) echo failed ;;
   *"ManagedOOMMemoryPressure"*)
-    # An empty answer is not "auto": it is a machine with no user manager to ask.
-    [ -n "${STUB_OOM_APP:-}" ] || exit 1
-    printf '%s\n' "$STUB_OOM_APP" ;;
+    if [ -e "$TEST_ROOT/log/daemon-reloaded" ] && [ -n "${STUB_OOM_AFTER_RELOAD:-}" ]; then
+      printf '%s\n' "$STUB_OOM_AFTER_RELOAD"
+    else
+      # An empty answer is not "auto": it is a machine with no user manager to ask.
+      [ -n "${STUB_OOM_APP:-}" ] || exit 1
+      printf '%s\n' "$STUB_OOM_APP"
+    fi ;;
   *"systemd-oomd"*) [ "${STUB_OOMD:-active}" = active ] ;;
   *) exit 0 ;;
 esac
@@ -216,6 +241,76 @@ chmod +x "$T/stub"/*
 export TEST_ROOT="$T" PATH="$T/stub:$PATH" HOME="$T/home" XDG_DATA_HOME="$T/data"
 L="$T/log"
 J="$T/data/ergon/runs.jsonl"
+
+# --- making the drop-in live in a manager that is already running ------------
+# The half of this card that had no test, and the half that shipped broken.
+# Provisioning writes /etc/systemd/user/app.slice.d/10-ergon-oomd.conf and then
+# has to make the manager that is ALREADY running read it -- there is one user
+# manager per user, it outlives every session, and it read app.slice at login,
+# before that file existed. `systemctl --user` reaches it through
+# $XDG_RUNTIME_DIR/bus and nothing else, and the shells provisioning is started
+# from -- `su - <user> -c` in the VM harness, `sudo -u` on a machine -- open no
+# logind session and so have no such variable. The reload therefore failed for a
+# reason that had nothing to do with the machine, provisioning read it as "there
+# is no user manager here", warned that the policy would apply at the next
+# login, and exited 0 with app.slice on auto and nothing watching any of it.
+cat > "$T/umgr" <<EOF
+#!/usr/bin/env bash
+. "$REPO/lib/user-manager.sh"
+"\$@"
+EOF
+chmod +x "$T/umgr"
+# A shell with NO session, which is the only kind provisioning ever runs in.
+umgr() {  # umgr <VAR=VALUE>... -- <function> <args>...
+  rm -f "$L"/systemctl "$L"/systemctl-env "$L"/daemon-reloaded
+  local e=()
+  while [ "$1" != -- ]; do e+=("$1"); shift; done; shift
+  env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS STUB_NEEDS_BUS=1 "${e[@]}" "$T/umgr" "$@"
+}
+
+check "the running manager can be asked from a shell with no session" \
+  test "$(umgr STUB_OOM_APP=kill -- ergon_user_prop app.slice ManagedOOMMemoryPressure)" = kill
+# The assertion the argv cannot make, over the environment instead.
+check "  because it is asked at the user's own runtime directory" \
+  hasf "$L/systemctl-env" "/run/user/$(id -u)"
+
+urc=0; uout=$(umgr STUB_OOM_APP=auto STUB_OOM_AFTER_RELOAD=kill -- \
+  ergon_user_ensure_prop app.slice ManagedOOMMemoryPressure kill) || urc=$?
+check "a manager holding auto is reloaded, and holds kill afterwards" \
+  test "$urc:$uout" = "0:kill"
+check "  which is a daemon-reload" hasf "$L/systemctl" 'daemon-reload'
+# The other fix, which also works and must never be used: `systemctl --user
+# restart app.slice` applies the property by killing every app in the slice --
+# every terminal and every unsaved buffer this card exists to protect.
+check "  and never a restart of the slice, which would kill every app in it" \
+  not has "$L/systemctl" '(restart|stop) .*app\.slice'
+
+urc=0; uout=$(umgr STUB_OOM_APP=auto -- \
+  ergon_user_ensure_prop app.slice ManagedOOMMemoryPressure kill) || urc=$?
+check "a manager still holding auto after the reload is not called fixed" \
+  test "$urc:$uout" = "1:auto"
+# 2, not 1. "Nobody is logged in yet" is a different answer from "the manager
+# holds the wrong thing", it is the one provisioning cannot do anything about,
+# and it is the only one that may honestly mention the next login.
+urc=0; umgr -- ergon_user_ensure_prop app.slice ManagedOOMMemoryPressure kill >/dev/null 2>&1 || urc=$?
+check "no user manager at all is a distinct answer, not a value" test "$urc" = 2
+
+urc=0; uout=$(umgr STUB_OOM_APP=kill -- \
+  ergon_user_ensure_prop app.slice ManagedOOMMemoryPressure kill) || urc=$?
+check "a manager that already holds kill is left alone" test "$urc:$uout" = "0:kill"
+check "  with no reload it does not need" not hasf "$L/systemctl" 'daemon-reload'
+
+# What provisioning does with all that. Unindented, and that IS the assertion:
+# the old version was nested inside `if [ "$_user_reload" = 1 ]`, so the second
+# provision of a machine -- the one where the file is already right and the
+# manager still has not read it -- asked nothing and said nothing.
+check "provisioning asks the manager on every run, not only when the file changed" \
+  has "$REPO/bin/provision-arch.sh" '^_oom_live=\$\(ergon_user_ensure_prop app\.slice ManagedOOMMemoryPressure kill\)'
+# And reserves the one answer it cannot act on for the one case that deserves
+# it. "The policy applies at the next login" on a machine whose manager is
+# sitting right there holding auto is how this shipped.
+check "  and keeps 'next login' for the branch where there is no manager" \
+  has "$REPO/bin/provision-arch.sh" '^  2\) warn .*the policy applies at the next login'
 
 watch() {  # watch <args>... -- fresh logs, one run
   rm -f "$L"/* "$J"
