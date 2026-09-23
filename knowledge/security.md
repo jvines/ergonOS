@@ -78,11 +78,24 @@ nf_tables backend. `flush ruleset` therefore destroys the `DOCKER` and
 `DOCKER-USER` chains of a running daemon, and every container loses its
 networking with nothing in any log to say why. Ours destroys one table by name.
 
-The packaged `nftables.service` stops with exactly that command
-(`ExecStop=/usr/sbin/nft flush ruleset`), so `systemctl restart nftables` --
-what anyone does after editing a ruleset -- would have wiped Docker's chains
-however well scoped the file is. Provisioning writes a drop-in that narrows the
-stop to `nft destroy table inet ergon`.
+Upstream's `nftables.service` stops with exactly that command
+(`ExecStop=/usr/sbin/nft flush ruleset`), so on the distros that ship it --
+Debian is one -- `systemctl restart nftables`, what anyone does after editing a
+ruleset, would wipe Docker's chains however well scoped the file is.
+Provisioning writes a drop-in that narrows the stop to
+`nft destroy table inet ergon`.
+
+**Arch's unit is not upstream's**, and writing that drop-in against the wrong
+one is what left the first real Arch machine with nothing filtering inbound.
+Arch ships three lines -- `Type=oneshot` and
+`ExecStart=/usr/bin/nft -f /etc/nftables.conf` -- with no `RemainAfterExit=`, no
+`ExecReload=` and no `ExecStop=`. systemd runs a oneshot's stop commands the
+moment `ExecStart` exits unless `RemainAfterExit=yes` is set, so adding an
+`ExecStop` to that unit destroyed the table it had just loaded, on every start,
+while `systemctl enable --now` still returned zero. The drop-in therefore sets
+all three directives rather than narrowing one the package is assumed to have,
+and the provisioning stage asks the kernel for the loaded chain instead of
+trusting an exit status.
 
 ### Published container ports bind 127.0.0.1
 
@@ -122,7 +135,9 @@ says it cannot check that without root rather than inventing an answer;
 
 Doctor probes for root separately from asking for the policy, because those are
 two different facts and merging them hid the worst state. `nftables.service` is
-`Type=oneshot RemainAfterExit=yes`, so it is still *active* after someone types
+`Type=oneshot`, and the drop-in above makes it `RemainAfterExit=yes` -- which is
+also what makes `is-active` worth asking at all here, and why the row cannot
+stop there: the unit is still *active* after someone types
 `nft flush ruleset` while debugging -- and a `firewall` row that read a failed
 `nft list` as "I am not root" reported ok, to root, on a machine with an empty
 ruleset. An active unit with no `inet ergon` table is now a hard failure.

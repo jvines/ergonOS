@@ -14,9 +14,10 @@
 # never contain `flush ruleset`. Docker's rules reach the kernel through
 # iptables-nft, which is the SAME nf_tables backend -- so a flush on reload
 # destroys the DOCKER and DOCKER-USER chains of a running daemon and every
-# container loses its networking, with nothing in any log to say why. The
-# packaged nftables.service already stops with exactly that command, which is
-# why the unit drop-in is asserted here too.
+# container loses its networking, with nothing in any log to say why. Upstream's
+# nftables.service stops with exactly that command, which is why the unit
+# drop-in is asserted here too -- and every directive that drop-in RELIES on the
+# unit having, because Arch's unit is a three-line file that has none of them.
 #
 # COVERS: the scoped teardown, the input policy, every exception the card names
 # and the two it does not (DHCPv4, and iifname rather than iif for an interface
@@ -125,15 +126,45 @@ check "forwarding is left to docker" not has "$T/rules" 'hook forward'
 check "outbound is not filtered"     not has "$T/rules" 'hook output'
 
 # --- stopping the service is the same hazard ---------------------------------
-# The packaged unit's ExecStop is `nft flush ruleset`. So `systemctl restart
-# nftables`, which is what anyone does after editing a ruleset, wipes docker's
-# chains on the way down however well scoped the file is.
+# UPSTREAM's ExecStop is `nft flush ruleset` -- Debian's, and what this drop-in
+# was written against. So `systemctl restart nftables`, which is what anyone
+# does after editing a ruleset, wipes docker's chains on the way down there
+# however well scoped the file is.
 check "the drop-in clears ExecStop before replacing it" \
   has "$T/drop-in.conf" '^ExecStop=$'
 check "  because systemd appends to the list otherwise, and the flush would still run" \
   test "$(grep -c '^ExecStop=' "$T/drop-in.conf")" = 2
 check "the stop it puts back destroys only our table" \
   has "$T/drop-in.conf" '^ExecStop=/usr/bin/nft destroy table inet ergon$'
+
+# ARCH's unit is not upstream's, and assuming otherwise cost a whole VM run. The
+# packaged file there is Type=oneshot and ExecStart= and nothing else: no
+# RemainAfterExit=, no ExecReload=, no ExecStop=. systemd runs a oneshot's stop
+# commands the moment ExecStart exits unless RemainAfterExit=yes is set, so the
+# scoped ExecStop above destroyed the table the unit had just loaded, on every
+# start, and the machine sat unfiltered with the service reading "inactive" and
+# provisioning reporting ok. A drop-in must OWN every directive it depends on
+# rather than narrow one it assumes the package ships.
+check "the drop-in keeps the unit active after nft exits" \
+  has "$T/drop-in.conf" '^RemainAfterExit=yes$'
+check "  and the file says why, so the next reader does not take it back out" \
+  has "$T/drop-in.conf" '^# .*oneshot'
+# Provisioning reloads the unit when the ruleset changed. Arch's packaged unit
+# has no ExecReload at all, so that verb fails outright there -- the pair has to
+# agree here rather than in a 35-minute VM run.
+check "the drop-in supplies an ExecReload, which Arch's unit does not have" \
+  has "$T/drop-in.conf" '^ExecReload=/usr/bin/nft -f /etc/nftables\.conf$'
+check "  cleared first, for the distro that does ship one" \
+  test "$(grep -c '^ExecReload=' "$T/drop-in.conf")" = 2
+check "and provisioning is what reloads it" \
+  grep -q 'systemctl reload nftables' "$REPO/bin/provision-arch.sh"
+
+# `systemctl enable --now` returned zero on the machine that was left with
+# nothing filtering inbound, and truthfully: the ruleset loaded, and the unit's
+# own stop destroyed it again a moment later. No exit code can see that, so the
+# stage has to ask the kernel.
+check "provisioning checks the loaded chain, not just systemctl's exit status" \
+  grep -q 'nft list chain inet ergon input' "$REPO/bin/provision-arch.sh"
 
 # --- what docker publishes to ------------------------------------------------
 merge() { jq -S -f "$T/daemon.jq"; }  # stdin: the daemon.json a machine has

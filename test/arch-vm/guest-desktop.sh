@@ -256,14 +256,46 @@ fi
 # can say what `-p` actually binds -- which is the half a firewall cannot
 # cover, because a published port is DNAT'd past the input hook.
 echo "--- firewall ---"
+# What provisioning printed for a stage, from whichever log caught the run. It
+# is printed HERE, on failure, because provisioning's own account of this stage
+# was thrown away: /tmp/prov.log is dumped only when provisioning EXITS
+# non-zero, and a stage that warns still exits zero. The run that found
+# nftables.service inactive therefore had provisioning's warnings, the unit
+# status and the journal all sitting on the disk, and reported none of them --
+# 35 minutes for a failure with no evidence in it.
+prov_stage() {  # prov_stage <stage title> -- that stage's lines from both runs
+  local title=$1 log
+  for log in /tmp/prov.log /tmp/sync.log; do
+    [ -s "$log" ] || continue
+    printf '     --- %s said, under "%s" ---\n' "$log" "$title"
+    sed 's/\x1b\[[0-9;]*m//g' "$log" \
+      | sed -n "/^== $title\$/,/^== /p" | sed '$d' | sed 's/^/     /'
+  done
+}
+_fw_explained=0
+firewall_why() {  # everything the next reader needs, once per run
+  [ "$_fw_explained" = 0 ] || return 0
+  _fw_explained=1
+  echo "     --- systemctl status nftables ---"
+  systemctl status --no-pager --full nftables 2>&1 | sed 's/^/     /'
+  echo "     --- journalctl -u nftables ---"
+  journalctl -u nftables --no-pager -n 30 2>&1 | sed 's/^/     /'
+  prov_stage "firewall and container publishing"
+}
 grep -q 'table inet ergon' /etc/nftables.conf 2>/dev/null \
   && ok "/etc/nftables.conf is ours, not the nftables package's default" \
   || bad "/etc/nftables.conf does not define the inet ergon table"
+# Arch's packaged unit is Type=oneshot with no RemainAfterExit=, so it is
+# "inactive (dead)" a moment after a perfectly successful load. Our drop-in is
+# what makes this question meaningful at all -- and asking it is what caught the
+# drop-in adding an ExecStop to a unit that had none, which destroyed the table
+# ExecStart had just loaded.
 if systemctl is-active --quiet nftables; then
   ok "nftables.service is active"
 else
   bad "nftables.service is not active — the ruleset provisioning wrote did not load"
   nft -c -f /etc/nftables.conf 2>&1 | sed 's/^/     /'
+  firewall_why
 fi
 # policy drop in the KERNEL, not a string in the file. --verify-config passing
 # while nothing was registered is this repo's standing lesson.
@@ -272,32 +304,46 @@ if nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
 else
   bad "the inet ergon input chain is not loaded with policy drop"
   nft list ruleset 2>&1 | head -20 | sed 's/^/     /'
+  firewall_why
 fi
 
 # THE caveat this card turns on. Docker's rules live in the same nf_tables
-# backend through iptables-nft, so `flush ruleset` -- in the file, or in the
-# packaged unit's ExecStop, which is where it really is -- destroys the DOCKER
-# chains of a running daemon and every container silently loses its
-# networking. Both halves are asserted, because the drop-in is what makes the
-# scoped ruleset survive the verb people actually type.
+# backend through iptables-nft, so `flush ruleset` -- in the file, or in an
+# ExecStop, which is where upstream's really is -- destroys the DOCKER chains of
+# a running daemon and every container silently loses its networking. Both
+# halves are asserted, because the drop-in is what makes the scoped ruleset
+# survive the verb people actually type. (Arch ships no ExecStop at all, so on
+# THIS distro the drop-in is not narrowing a flush, it is supplying the teardown
+# the unit does not have -- which is why it must also set RemainAfterExit=yes.)
 systemctl show nftables -p ExecStop 2>/dev/null | grep -q 'flush ruleset' \
   && bad "nftables.service still stops with 'nft flush ruleset' — a restart would wipe docker's chains" \
   || ok "nftables.service stops by destroying only the ergon table"
 if ! nft list chain ip nat DOCKER >/dev/null 2>&1; then
   note "no ip nat DOCKER chain on this machine — nothing for a reload to wipe, so that claim is untested"
-elif systemctl restart nftables && nft list chain ip nat DOCKER >/dev/null 2>&1 \
-     && nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
-  ok "restarting nftables keeps docker's nat chains and reloads our own"
 else
-  bad "restarting nftables destroyed docker's nat chains — every running container just lost its network"
+  # Three separate facts, reported separately. As one conjunction this said
+  # "restarting nftables destroyed docker's nat chains" on a run where docker's
+  # chains were never touched and OUR chain was the one that did not come back —
+  # a true failure pointing at the wrong half of the card.
+  systemctl restart nftables; _fw_rc=$?
+  [ "$_fw_rc" = 0 ] || { bad "systemctl restart nftables failed (exit $_fw_rc)"; firewall_why; }
+  nft list chain ip nat DOCKER >/dev/null 2>&1 \
+    && ok "restarting nftables keeps docker's nat chains" \
+    || bad "restarting nftables destroyed docker's nat chains — every running container just lost its network"
+  if nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+    ok "  and reloads our own"
+  else
+    bad "  but the ergon chain did not come back after the restart"
+    firewall_why
+  fi
 fi
 
 # The doctor row's dangerous state, and the one only a booted machine has: the
-# unit is Type=oneshot RemainAfterExit=yes, so `systemctl is-active` still says
-# active after someone types `nft flush ruleset` while debugging. doctor read a
-# failed `nft list` as "I am not root" and answered ok — as root, on a machine
-# with an empty ruleset. Asserted with root in hand, which is the only way to
-# reach that branch at all.
+# unit is Type=oneshot and our drop-in makes it RemainAfterExit=yes, so
+# `systemctl is-active` still says active after someone types `nft flush
+# ruleset` while debugging. doctor read a failed `nft list` as "I am not root"
+# and answered ok — as root, on a machine with an empty ruleset. Asserted with
+# root in hand, which is the only way to reach that branch at all.
 if nft destroy table inet ergon 2>/dev/null; then
   if ERGON="$G" "$G/bin/ergon-doctor" --json 2>/dev/null \
      | grep -q '"name":"firewall","state":"fail"'; then
@@ -314,6 +360,7 @@ if nft destroy table inet ergon 2>/dev/null; then
     ok "and the ruleset is back after a restart"
   else
     bad "the ruleset did not come back — the rest of this run is unfiltered"
+    firewall_why
   fi
 else
   note "could not destroy the ergon table — doctor's root-with-no-table branch was not tested"

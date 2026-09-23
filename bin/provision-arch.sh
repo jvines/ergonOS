@@ -320,19 +320,48 @@ table inet ergon {
 NFT
 then _nft_new=1; else _nft_new=0; fi
 
-# The packaged unit's ExecStop is `nft flush ruleset` -- the very thing this
-# file refuses to do. So `systemctl restart nftables`, which is what anyone
-# does after editing a ruleset, takes Docker's chains with it on the way down
-# even though the ruleset itself is scoped. Narrow the stop to our table too,
-# or the caveat this card exists for is one systemctl verb away from biting.
+# The unit this drop-in is written against is ARCH's, and Arch's is not
+# upstream's. The whole file there is:
+#
+#   [Unit] ... [Service]
+#   Type=oneshot
+#   ExecStart=/usr/bin/nft -f /etc/nftables.conf
+#   [Install] WantedBy=multi-user.target
+#
+# and nothing else -- no RemainAfterExit=, no ExecReload=, no ExecStop=. Debian
+# ships upstream's, which has all three including the `nft flush ruleset` stop,
+# and this drop-in was first written against THAT shape. It left the first real
+# Arch machine completely unfiltered: systemd runs a oneshot's stop commands the
+# moment ExecStart exits unless RemainAfterExit=yes is set, so the scoped
+# ExecStop below destroyed the table the unit had just loaded, in the same
+# second, on every single start. The service sat "inactive", `nft list ruleset`
+# showed only docker's tables, and provisioning printed ok.
+#
+# So own all three directives rather than narrow one the package is assumed to
+# have. The reset before each is for the distro that DOES ship one: systemd
+# appends to a list-valued directive, so upstream's flush would otherwise still
+# run on stop -- and it is the flush, not our destroy, that takes Docker's
+# iptables-nft chains down with it.
 if _changed /etc/systemd/system/nftables.service.d/10-ergon-scope.conf <<'UNIT'
 # Written by provision-arch.sh.
 #
-# The packaged nftables.service stops with `nft flush ruleset`, which destroys
-# Docker's iptables-nft chains along with ours. Empty ExecStop= first, because
-# systemd APPENDS to a list-valued directive otherwise and the upstream flush
-# would still run.
+# Arch's nftables.service is Type=oneshot with no RemainAfterExit=, so systemd
+# runs the stop commands as soon as `nft -f` exits. Without this line the
+# ExecStop below destroys the ruleset the unit has just loaded and the machine
+# is left with nothing filtering inbound.
 [Service]
+RemainAfterExit=yes
+# Arch's unit has no ExecReload at all, so `systemctl reload nftables` -- what
+# this script does after writing a new ruleset, and what anyone does by hand --
+# fails there with "job type reload is not applicable". The file starts by
+# destroying its own table, so one `nft -f` is the whole swap, in a single
+# transaction, with no window in which nothing filters.
+ExecReload=
+ExecReload=/usr/bin/nft -f /etc/nftables.conf
+# Upstream's stop is `nft flush ruleset`, which destroys Docker's iptables-nft
+# chains along with ours; Arch's is nothing at all, which leaves a stopped
+# service still filtering. Neither is right: destroy exactly the table this
+# machine's file owns.
 ExecStop=
 ExecStop=/usr/bin/nft destroy table inet ergon
 UNIT
@@ -340,16 +369,40 @@ then
   sudo systemctl daemon-reload
 fi
 
-if sudo systemctl enable --now nftables >/dev/null 2>&1; then
+# Why it did not work, into the provisioning log, at the moment it did not
+# work. This stage's warnings were the only account of the failure above and
+# they said nothing a reader could act on: the VM suite prints provisioning's
+# log only when provisioning EXITS non-zero, and a stage that warns still exits
+# zero, so a 35-minute run reported "nftables.service is not active" and not one
+# byte about why.
+_nft_said=0
+_nft_why() {
+  [ "$_nft_said" = 0 ] || return 0   # the checks below overlap; say it once
+  _nft_said=1
+  sudo systemctl status --no-pager --full nftables 2>&1 | sed 's/^/       /' >&2 || true
+  sudo journalctl -u nftables --no-pager -n 20 2>&1 | sed 's/^/       /' >&2 || true
+  sudo nft -c -f /etc/nftables.conf 2>&1 | sed 's/^/       /' >&2 || true
+}
+
+if ! sudo systemctl enable --now nftables >/dev/null 2>&1; then
+  warn "nftables.service would not start -- NOTHING filters inbound on this machine"
+  _nft_why
+elif [ "$_nft_new" = 1 ] && ! sudo systemctl reload nftables >/dev/null 2>&1; then
   # `enable --now` does nothing to a unit that is already running, so a changed
   # ruleset on an installed machine reaches the kernel only through the reload.
-  if [ "$_nft_new" = 1 ] && ! sudo systemctl reload nftables >/dev/null 2>&1; then
-    warn "the new ruleset did not load; run sudo nft -c -f /etc/nftables.conf to see why. The machine is still filtered by the old one"
-  else
-    ok "nftables: input drops by default (lo, established, ICMP, DHCP, tailscale0)"
-  fi
+  warn "the new ruleset did not load; run sudo nft -c -f /etc/nftables.conf to see why. The machine is still filtered by the old one"
+  _nft_why
+fi
+# Ask the KERNEL, not systemctl's exit code. `enable --now` returned zero on the
+# machine that was left unfiltered, and truthfully: ExecStart really did load
+# the ruleset, and the unit's own stop really did destroy it again a moment
+# later. No exit code can see that. The only claim worth making here is the one
+# doctor and the VM suite make: the chain is loaded, with policy drop.
+if sudo nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+  ok "nftables: input drops by default (lo, established, ICMP, DHCP, tailscale0)"
 else
-  warn "nftables.service would not start -- NOTHING filters inbound on this machine"
+  warn "the inet ergon input chain is NOT in the kernel -- NOTHING filters inbound on this machine"
+  _nft_why
 fi
 
 # "ip" is the address `docker run -p 8080:80` binds when the command does not
