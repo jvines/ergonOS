@@ -1,6 +1,12 @@
-# The five-second gate. Runs on every push to main, because there is no excuse
-# for a suite this cheap not to be automatic -- and because every verification
-# in this repo's history happened only because someone remembered to run it.
+# The gate. Runs on every push to main, because every verification in this
+# repo's history happened only because someone remembered to run it.
+#
+# It was the five-second gate until the desktop configs stopped being committed.
+# The last step now pulls an Arch image and installs five packages to load each
+# generated config through the parser that will actually read it, which costs
+# minutes rather than seconds and can fail on a mirror rather than on the
+# commit. That was judged worth it: those configs are no longer reviewable in a
+# diff, so nothing else looks at them until a VM run or a person's session.
 #
 # Deliberately does NOT run the VM suites: those take ~35 minutes and need
 # /dev/kvm. They are in vm.yml, on a timer.

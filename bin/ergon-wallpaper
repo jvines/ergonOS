@@ -19,11 +19,13 @@
 # The user directories come first so a shipped image can be overridden without
 # touching the repo, and nothing here ever writes to them.
 #
-# The generated image is NOT committed, unlike the rendered configs: it is
-# derived, it is binary, and its correct size is a property of the panel it will
-# be shown on, so a repo copy would be a 300 KB blob wrong for every machine but
-# one. Shipped images under theme/backgrounds/ are a different thing and do
-# belong in the repo -- with their provenance recorded next to them.
+# The generated image is not committed, and neither are the rendered configs
+# any more -- but for a different reason each. A config is text, and the cost of
+# tracking it was that a palette switch left every machine dirty. This is binary
+# and its correct size is a property of the panel it will be shown on, so a repo
+# copy would be a 300 KB blob wrong for every machine but one. Shipped images
+# under theme/backgrounds/ are a different thing and do belong in the repo --
+# with their provenance recorded next to them.
 set -euo pipefail
 
 # readlink -f: this is reached through /usr/local/bin/<name>, which is a symlink

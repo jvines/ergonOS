@@ -35,6 +35,12 @@ on:
       - 'bin/test-arch-vm.sh'
       - 'bin/test-hypr-session.sh'
       - 'install.sh'
+      # The renderer and the user-file creator are install-blocking now: if
+      # either fails, install.sh aborts and the machine has no desktop. A
+      # change to them belongs in the same bucket as a change to install.sh
+      # itself, which is what this list already says is worth 35 minutes.
+      - 'bin/ergon-theme'
+      - 'lib/user-config.sh'
       - 'packages/**'
       - 'test/arch-vm/**'
       - '.forgejo/workflows/vm.yml'

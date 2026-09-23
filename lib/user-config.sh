@@ -13,8 +13,9 @@
 # (see the table below), and for all of them the contents are the user's. A
 # shipped script that appended to one of these would be doing exactly what this
 # whole mechanism exists to stop the renderer from doing. bin/ergon-lint
-# enforces that no other file in the repo writes under this directory, and this
-# file is the single exception it allows -- keep the writes here.
+# enforces that nothing outside lib/ writes under this directory; this file and
+# lib/ergon_arxiv.py (which has created arxiv.toml the same way since long
+# before the rule) are the two it allows. Keep the writes here.
 #
 # What happens when one of these is MISSING, measured against the real parsers
 # rather than assumed (Arch containers, 2026-09-23):
@@ -56,17 +57,46 @@ ergon_user_config_dir() {
 # reading documentation -- ~/.config/ergon/mako is what mako/config includes,
 # ~/.config/ergon/waybar.css is what waybar/style.css imports.
 #
-# Kept as one list because it is also what ergon-doctor would report and what
-# the knowledge topic documents; a second copy somewhere would drift.
+# Kept as one list because the knowledge topic documents the same set; a second
+# copy somewhere would drift from this one.
+# The separator is the FIRST "|" and only the first: everything after it is the
+# stub's content, newlines and all, written as a real multi-line string. An
+# earlier version joined the lines with "|" too and decoded them afterwards,
+# which meant a "|" typed inside a sentence silently became a line break and
+# turned the rest of the comment into an uncommented directive. Nothing here
+# contained one, which is the only reason it never fired.
 ERGON_USER_FILES=(
-  "waybar.css|/* Your waybar CSS. Imported at the END of the generated stylesheet, so a rule here beats the same rule there. */"
-  "gtk.css|/* Your GTK CSS. Imported at the end of the generated gtk.css, for GTK3 and GTK4 both. */"
-  "mako|# Your mako settings. Included at the end of the generated global section, so a key here wins.|# Criteria sections ([urgency=critical] and friends) are the exception: the generated ones are parsed after these and win."
-  "fuzzel.ini|# Your fuzzel settings. Included at the end of the generated config, under [main]."
-  "foot.ini|# Your foot settings. Included at the end of the generated config, under [main]."
-  "newsboat.conf|# Your newsboat settings. Included at the end of the generated config."
-  "hyprlock.conf|# Your hyprlock settings. Sourced at the end of the generated config.|# This is where an enrolled fingerprint block belongs -- see: ergon fingerprint."
-  "user.lua|-- Your Hyprland config, in Lua. Loaded last, after the per-host file, so hl.config() here wins.|-- The API is not the one most Hyprland documentation describes: see  ergon explain desktop-config"
+"waybar.css|/* Your waybar CSS. Imported at the END of the generated stylesheet,
+   so a rule here beats the same rule there. */"
+
+"gtk.css|/* Your GTK CSS. Imported at the end of the generated gtk.css,
+   for GTK3 and GTK4 both. */"
+
+"mako|# Your mako settings. Included at the end of the generated global
+# section, so a key here wins.
+#
+# Criteria sections ([urgency=critical] and friends) are the exception: mako
+# accepts an include only before the first one, so the generated criteria are
+# parsed after yours and win on any key both set."
+
+"fuzzel.ini|# Your fuzzel settings. Included at the end of the generated
+# config, under [main]."
+
+"foot.ini|# Your foot settings. Included at the end of the generated config,
+# under [main]."
+
+"newsboat.conf|# Your newsboat settings. Included at the end of the generated
+# config."
+
+"hyprlock.conf|# Your hyprlock settings. Sourced at the end of the generated
+# config. This is where an enrolled fingerprint block belongs -- run:
+# ergon fingerprint"
+
+"user.lua|-- Your Hyprland config, in Lua. Loaded last, after the per-host
+-- file, so an hl.config() here wins.
+--
+-- The API is not the one most Hyprland documentation describes:
+--     ergon explain desktop-config"
 )
 
 # Create every user file that does not exist yet. Never touches one that does.
@@ -80,6 +110,14 @@ ergon_ensure_user_files() {
   mkdir -p "$dir" || { printf 'could not create %s\n' "$dir" >&2; return 1; }
 
   for entry in "${ERGON_USER_FILES[@]}"; do
+    # An entry with no separator at all would otherwise leave name and rest
+    # both equal to the whole string, and write a file whose content is its own
+    # filename -- quietly, and only for the surface someone just added.
+    case "$entry" in
+      *'|'*) ;;
+      *) printf 'malformed ERGON_USER_FILES entry (no "|"): %s\n' "$entry" >&2
+         rc=1; continue ;;
+    esac
     name="${entry%%|*}"
     rest="${entry#*|}"
     # -e, not -f: a user who made one of these a symlink to somewhere in their
@@ -88,7 +126,7 @@ ergon_ensure_user_files() {
     [ -e "$dir/$name" ] && continue
     # The ONLY write in the repo under this directory, and it happens exactly
     # once per file per machine. See the header, and ergon-lint's rule.
-    if printf '%s\n' "${rest//|/$'\n'}" > "$dir/$name"; then
+    if printf '%s\n' "$rest" > "$dir/$name"; then
       created=$((created + 1))
     else
       printf 'could not create %s\n' "$dir/$name" >&2

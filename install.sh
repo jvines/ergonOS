@@ -27,9 +27,21 @@ GRAPHICAL=0
 # shellcheck disable=SC1090
 [ -f "$HOSTENV" ] && . "$HOSTENV"
 
-link() {  # link <repo path> <path under $HOME>
+link() {  # link <repo path> <path under $HOME> [generated]
   local src="$ERGON/$1" dst="$HOME/$2"
-  [ -e "$src" ] || { warn "missing in the repo: $1"; return; }
+  if [ ! -e "$src" ]; then
+    # "generated" marks a file that does not exist until the render above has
+    # run. Thirteen of the sixteen rendered outputs are linked as part of a
+    # whole directory, which always exists, so this guard never sees them; the
+    # gtk pair is linked file by file, so on a never-rendered clone --check
+    # reported them as "missing in the repo". They are not missing from the
+    # repository, they are unrendered, and saying the first about the second
+    # sends someone looking for a broken checkout.
+    if [ "$CHECK" = 1 ] && [ "${3:-}" = generated ]; then
+      printf '   would link  %s -> %s (once rendered)\n' "$2" "$1"; return
+    fi
+    warn "missing in the repo: $1"; return
+  fi
   if [ -L "$dst" ] && [ "$(readlink -f "$dst")" = "$(readlink -f "$src")" ]; then
     return
   fi
@@ -77,8 +89,11 @@ else
     }
     ok "themed configs rendered from $("$ERGON/bin/ergon-theme" --current)"
   else
+    # Counted, not typed. A seventeenth template is exactly the kind of thing
+    # that gets added without anyone remembering a number in a dry-run message.
     "$ERGON/bin/ergon-theme" --check >/dev/null 2>&1 \
-      || printf '   would render  16 themed configs from the palette\n'
+      || printf '   would render  %s themed configs from the palette\n' \
+           "$(find -L "$ERGON" -name '*.in' -not -path '*/.git/*' | wc -l)"
   fi
 
   # The whole directory, not a file: Hyprland's Lua `require` resolves relative
@@ -141,13 +156,13 @@ else
     fi
     ok "btop themed (cool)"
   fi
-  link gtk/settings.ini .config/gtk-3.0/settings.ini
-  link gtk/settings.ini .config/gtk-4.0/settings.ini
+  link gtk/settings.ini .config/gtk-3.0/settings.ini generated
+  link gtk/settings.ini .config/gtk-4.0/settings.ini generated
   # The palette's colours, on top of Adwaita-dark's widgets. Both directories
   # get the same file: GTK3 and libadwaita name the roles differently and
   # gtk.css defines both sets, so one rendered file serves both.
-  link gtk/gtk.css .config/gtk-3.0/gtk.css
-  link gtk/gtk.css .config/gtk-4.0/gtk.css
+  link gtk/gtk.css .config/gtk-3.0/gtk.css generated
+  link gtk/gtk.css .config/gtk-4.0/gtk.css generated
   [ -f "$ERGON/hosts/$HOST/hyprland.lua" ] && link "hosts/$HOST/hyprland.lua" ".config/hypr/hosts/$HOST.lua"
 
   # PATH for the systemd user manager, which is what launches the session under

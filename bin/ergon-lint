@@ -188,8 +188,8 @@ done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
 # hypothetical: `ergon fingerprint` used to tell people to paste an auth block
 # into the GENERATED hyprlock.conf, and every render ate it.
 #
-# lib/user-config.sh is the single exception, and it may only CREATE a file
-# that is absent -- never write one that exists. Four of these surfaces
+# lib/user-config.sh and lib/ergon_arxiv.py are the exceptions, and both may
+# only CREATE a file that is absent -- never write one that exists. Four of these surfaces
 # (waybar, mako, fuzzel, foot) do not start at all if their include target is
 # missing, so something has to create them; keeping that in one auditable file
 # is the point of this rule.
@@ -202,28 +202,38 @@ uc_bad=0
 while IFS= read -r f; do
   [ -f "$f" ] || continue
   rel="${f#"$ERGON"/}"
-  # The one file allowed to create these, and the one that must not be flagged
-  # for doing its job.
-  [ "$rel" = "lib/user-config.sh" ] && continue
+  # The files allowed to create one of these, because each does it the safe
+  # way: only when the file is absent, never over one that exists.
+  # ergon_arxiv.py has done this for arxiv.toml since long before the rule --
+  # the first version of this check named user-config.sh as the ONLY exception,
+  # which was a claim the repo already contradicted.
+  case "$rel" in lib/user-config.sh|lib/ergon_arxiv.py) continue ;; esac
   while IFS=: read -r ln _; do
     [ -n "$ln" ] || continue
     report "$rel" "$ln" \
-      "writes under ~/.config/ergon — that is the user's file; only lib/user-config.sh may create one"
+      "writes under ~/.config/ergon — that is the user's file; create it only if absent, and only from lib/"
     uc_bad=$((uc_bad + 1))
   # Comments and Lua comments dropped first: these paths are named in prose all
   # over this repo, and a lint that fires on documentation is a lint people
   # switch off.
-  # config(_home)?/ergon, case-insensitively: the path is written both as
-  # ~/.config/ergon and as "$XDG_CONFIG_HOME/ergon", and the second spelling
-  # does not contain the literal "config/ergon" at all. A probe caught this
-  # rule missing an `ln -sfn` through XDG_CONFIG_HOME on its first run.
-  done < <(grep -niE 'config(_home)?/ergon' "$f" 2>/dev/null \
+  # The path token, three spellings deep. It is written as ~/.config/ergon, as
+  # "$XDG_CONFIG_HOME/ergon" -- which does not contain the literal string
+  # "config/ergon" at all -- and with braces, "${XDG_CONFIG_HOME}/ergon" or
+  # "${XDG_CONFIG_HOME:-$HOME/.config}/ergon", where a } sits between the two
+  # halves. Probes caught this rule missing the second and third spellings.
+  #
+  # The trailing \b is what keeps ~/.config/ergonomics/ out of it.
+  done < <(grep -niE 'config(_home)?\}?/ergon\b' "$f" 2>/dev/null \
              | grep -vE '^[0-9]+:[[:space:]]*(#|--)' \
-             | grep -iE '(>>?[[:space:]]*"?[^|;&]*config(_home)?/ergon|(^|[^[:alnum:]_])(tee|cp|mv|ln|install|truncate|rm|dd)[[:space:]][^|;&]*config(_home)?/ergon|sed[[:space:]]+-i[^|;&]*config(_home)?/ergon)' \
+             | grep -iE '(>[>|]?[[:space:]]*"?[^|;&]*config(_home)?\}?/ergon\b|(^|[^[:alnum:]_])(tee|cp|mv|ln|install|truncate|rm|dd|touch|rsync)[[:space:]][^|;&]*config(_home)?\}?/ergon\b|sed[[:space:]]+-i[^|;&]*config(_home)?\}?/ergon\b)' \
              || true)
-done < <( { find -L "$ERGON/bin" "$ERGON/lib" "$ERGON/test" -type f ! -name 'erg-*' 2>/dev/null
+# hypr/ and .forgejo/ are in the set too: a write from the compositor's Lua or
+# from a CI step is exactly as invisible as one from bin/, and nothing else
+# would have caught it.
+done < <( { find -L "$ERGON/bin" "$ERGON/lib" "$ERGON/test" "$ERGON/hypr" \
+                 "$ERGON/.forgejo" -type f ! -name 'erg-*' 2>/dev/null
             printf '%s\n' "$ERGON/install.sh"; } | sort )
-[ "$uc_bad" = 0 ] && echo "  ok   nothing writes under ~/.config/ergon but lib/user-config.sh"
+[ "$uc_bad" = 0 ] && echo "  ok   nothing writes under ~/.config/ergon outside lib/"
 
 # ---------------------------------------------------------------------------
 # One SKILL.md, two harnesses.
