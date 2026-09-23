@@ -59,6 +59,24 @@ jobs:
     env:
       CI_DIR: /home/jayvains/ci-runs/ergonos-vm-${{ github.run_id }}
       REMOTE: ssh://git@git.jvines.cl:2222/jayvains/ergonOS.git
+      # Alertmanager on chiki. Its one route sends everything it receives to
+      # Telegram, which is the whole difference between a suite that is red and
+      # a suite somebody knows is red -- and for a weekly job nobody is sitting
+      # in front of, that is the difference between a test and a decoration.
+      #
+      # An IP literal, not alertmanager.jvines.cl: pihole answers EVERY
+      # *.jvines.cl name with 192.168.0.25, so a name here would prove nothing
+      # and would add a DNS hop that can be down at 04:00 on a Monday. Not a
+      # secret either -- this is an RFC1918 address, and a secret that is
+      # missing expands to the empty string with no error, which is this step
+      # failing silently, which is the bug being fixed.
+      ERGON_ALERT_URL: http://192.168.0.25:9093
+      # Deliberately OUTSIDE CI_DIR. Clean up deletes the checkout, and the
+      # step that tells you the job failed has to run after it -- Clean up has
+      # its own history of being the thing that failed. Refreshed from the
+      # commit under test on every run, so it is never older than the last run
+      # that got as far as cloning.
+      ALERTER: /home/jayvains/ci-runs/.ergon-alert
       # Its own disk. The default is ~/.cache/fleet-artifacts/arch-vm, which is
       # the disk a person tests against by hand -- a CI run rebuilding it
       # mid-week would silently destroy their provisioned VM.
@@ -84,6 +102,11 @@ jobs:
           git clone --quiet "$REMOTE" "$CI_DIR"
           cd "$CI_DIR"
           git checkout --quiet "${{ github.sha }}"
+          # Only if there is none yet. checks.yml installs this file after
+          # ./bin/test-alert.sh has passed on it; overwriting that with the
+          # copy from an arbitrary commit would put an unvalidated notifier in
+          # the one place that has to work when everything else has failed.
+          [ -x "$ALERTER" ] || install -Dm755 "$CI_DIR/bin/ergon-alert" "$ALERTER"
           echo "testing $(git rev-parse --short HEAD)"
 
       # --keep leaves the disk behind, because the session suite provisions
@@ -173,3 +196,55 @@ jobs:
             docker run --rm --label cl.jvines.owner=ergon-vm-ci \
               -v "$(dirname "$WORK"):/p" fleet-qemu rm -rf "/p/$(basename "$WORK")"
           fi
+
+      # ERGON-12's third criterion, and the one that was never met: a failure
+      # is visible without anyone going to look for it. Until this step existed
+      # a red Monday reached the Forgejo web UI and nowhere else, so a
+      # 35-minute suite could rot for weeks and the first symptom would be
+      # three rounds of work standing on it.
+      #
+      # The green half first, so that its own failure is reportable by the one
+      # after it. Both are LAST, after Clean up: failure() is true if ANY
+      # earlier step failed, so trailing placement also catches a Clean up that
+      # fails -- a step with a history -- and the run this links to already has
+      # the diagnosis from "Show what the failing checks said" in it. A
+      # cancelled run is not a failed one, so nothing is sent for one.
+      - name: And say when it is green again
+        if: success()
+        env:
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          [ -x "$ALERTER" ] || exit 0
+          "$ALERTER" --resolve --label workflow=vm ErgonCI \
+            "the weekly VM suite is green again on $REF" "$SHA passed."
+
+      - name: Say so somewhere a person will see it
+        if: failure()
+        env:
+          INSTALL: ${{ steps.install.outcome }}
+          SESSION: ${{ steps.session.outcome }}
+          # Through env, not interpolated into the script: a branch name may
+          # carry $( ), a backtick or a semicolon, and interpolation happens
+          # before the shell sees the line.
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          # run_number, NOT run_id. Forgejo's web route resolves
+          # /actions/runs/<n> by the per-repository index, while github.run_id
+          # is the instance-wide primary key -- a URL built from run_id is a
+          # 404, which is how ExoAutomata's smoke tests have been filing cards
+          # that link nowhere. github.server_url already ends in a slash.
+          RUN_URL: ${{ github.server_url }}${{ github.repository }}/actions/runs/${{ github.run_number }}
+        run: |
+          [ -x "$ALERTER" ] || {
+            echo "no notifier at $ALERTER: nobody has been told this run failed" >&2
+            exit 1
+          }
+          case "${INSTALL}:${SESSION}" in
+            failure:*) what="the ISO install and its boot assertions" ;;
+            *:failure) what="the desktop session suite" ;;
+            *)         what="a step outside the two suites" ;;
+          esac
+          "$ALERTER" --label workflow=vm --url "$RUN_URL" \
+            ErgonCI "the weekly VM suite is red -- $what failed" \
+            "$REF at $SHA. What the failing checks printed is in the job log: $RUN_URL"

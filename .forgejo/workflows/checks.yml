@@ -36,6 +36,10 @@ jobs:
     env:
       CI_DIR: /home/jayvains/ci-runs/ergonos-${{ github.run_id }}
       REMOTE: ssh://git@git.jvines.cl:2222/jayvains/ergonOS.git
+      # See the same two entries in vm.yml for why this is an IP literal and
+      # not a name, and why the notifier is kept outside CI_DIR.
+      ERGON_ALERT_URL: http://192.168.0.25:9093
+      ALERTER: /home/jayvains/ci-runs/.ergon-alert
     steps:
       - name: Check out the commit under test
         run: |
@@ -93,6 +97,22 @@ jobs:
       - name: A run that exhausts memory is contained, not the session
         run: cd "$CI_DIR" && ./bin/test-oom.sh
 
+      # The notifier that the two steps at the end of this file depend on. It
+      # is checked here, on every push, precisely because it only ever runs
+      # when something else has already gone wrong -- the one place a silent
+      # regression would never be noticed.
+      - name: The thing that tells you a run failed, works
+        run: cd "$CI_DIR" && ./bin/test-alert.sh
+
+      # Only now. $ALERTER is the copy that outlives Clean up and the one
+      # vm.yml uses on Monday, so it must never be replaced by a notifier that
+      # has not just passed its own test: a commit that broke ergon-alert would
+      # otherwise install the broken one, fail this gate, and then try to
+      # report that failure with it.
+      - name: Keep the notifier that just passed
+        run: install -Dm755 "$CI_DIR/bin/ergon-alert" "$ALERTER"
+
+
       # Every desktop config through the parser that will actually read it.
       # This existed and was wired into nothing, which is how a config could be
       # rejected by Hyprland and still pass every check in this file.
@@ -130,3 +150,47 @@ jobs:
       - name: Clean up
         if: always()
         run: rm -rf "$CI_DIR"
+
+      # The green half first, so that ITS OWN failure is still reportable by
+      # the step below. ergon-alert exits non-zero when a resolve does not
+      # take, and a step that fails after the notifier has already been skipped
+      # turns the job red and tells nobody -- which is this feature failing in
+      # its own shape.
+      - name: And say when it is green again
+        if: success()
+        env:
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          [ -x "$ALERTER" ] || exit 0
+          "$ALERTER" --resolve --label workflow=checks ErgonCI \
+            "the fast gate is green again on $REF" "$SHA passed."
+
+      # main going red is not something to find out from the web UI either.
+      # This gate runs on a push someone just made, so most of the time they
+      # are still here -- but "most of the time" is how main stays broken over
+      # a lunch break, and the mirror step above means a red gate is also the
+      # public clone not being updated.
+      #
+      # Cancelled is not failed, and this workflow cancels in progress on a
+      # newer push, so a superseded run says nothing.
+      - name: Say so somewhere a person will see it
+        if: failure()
+        env:
+          # Through env rather than interpolated into the script. A branch name
+          # may contain $( ), a backtick or a semicolon -- git accepts all
+          # three -- and expression interpolation happens before the shell sees
+          # the line, so the branch name would be running as the runner user.
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}${{ github.repository }}/actions/runs/${{ github.run_number }}
+        run: |
+          [ -x "$ALERTER" ] || {
+            echo "no notifier at $ALERTER: nobody has been told this run failed" >&2
+            exit 1
+          }
+          # "did not finish green" rather than "is red": the resolve step above
+          # can fail on its own, and this covers that too.
+          "$ALERTER" --label workflow=checks --url "$RUN_URL" \
+            ErgonCI "the fast gate did not finish green on $REF" \
+            "commit $SHA. Which step failed is in the job log: $RUN_URL"

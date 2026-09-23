@@ -1,0 +1,328 @@
+#!/usr/bin/env bash
+# ergon:summary=Raise an alert somewhere that is not this screen
+# ergon:group=system
+# ergon:args=[--resolve] [--severity warning|critical] [--label k=v]... [--url <link>] <name> <summary> [description]
+#
+# The only notifier this repo had was notify-send, and it reaches exactly one
+# place: a desktop session that is already in front of you. Everything that
+# runs without one -- the CI runner, a systemd timer, an ssh session -- could
+# not tell you anything at all. That is why the weekly VM suite, 35 minutes of
+# the strongest assertions this repo has, failed into the Forgejo web UI and
+# nowhere else. A suite nobody is told about is a suite that rots, and you find
+# out three rounds later.
+#
+# So it speaks to an Alertmanager instead, which is a thing a lot of people
+# already run and nobody has to run: one POST, no client library, and whatever
+# that Alertmanager's own route does -- Telegram here -- becomes this machine's
+# way of reaching you when you are not at it. FIRING and RESOLVED are then the
+# same shape every other alert on the network already arrives in, so a red CI
+# reads like a red disk does.
+#
+# Where to send is NOT compiled in:
+#
+#   ERGON_ALERT_URL   Alertmanager base URL, e.g. http://10.0.0.5:9093
+#
+# With it unset this falls back to notify-send and then to stderr, which is the
+# right answer on a laptop: the desktop in front of you IS the channel. The
+# address lives with the thing that has an opinion about where alerts go --
+# for this repo's own CI, that is .forgejo/workflows/.
+#
+# FIRING and RESOLVED are states, not events. An alert posted here stays firing
+# until something resolves it (`--resolve`, same name and labels) or its endsAt
+# passes -- so the caller is saying "CI is red", not "a run failed just now",
+# and the RESOLVED message that eventually arrives is the green run saying so.
+# Alertmanager repeats a firing alert on ITS schedule (6h on this fleet, 2h for
+# severity=critical); that cadence is chiki's route config, not this script's.
+set -euo pipefail
+
+# How long the state stands without being restated. This is NOT a detail:
+# Alertmanager defaults a missing endsAt to now + resolve_timeout, five minutes
+# on this fleet, so an alert posted without one announces a red CI and then
+# announces RESOLVED five minutes later with nothing fixed. Explicit, and long:
+# only a CI that has stopped running entirely can let this lapse, and a lapse
+# is the one message this cannot make honest.
+#
+# It does mean a red state is repeated on Alertmanager's own schedule -- six
+# hours on this fleet, two for severity=critical -- until a green run resolves
+# it. That is the same bargain as every other alert here, and the release valve
+# is a silence, which is a deliberate act by a person rather than a timeout.
+HOLD_SECONDS=$(( 30 * 24 * 3600 ))
+TIMEOUT=10
+
+RESOLVE=0
+SEVERITY=warning
+GENERATOR_URL=""
+LABELS=()
+
+die() { printf 'ergon-alert: %s\n' "$1" >&2; exit 2; }
+
+need() { [ "$1" -ge 2 ] || die "$2 needs a value"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --resolve)  RESOLVE=1; shift ;;
+    --severity) need $# --severity; SEVERITY="$2"; shift 2 ;;
+    --url)      need $# --url;      GENERATOR_URL="$2"; shift 2 ;;
+    --label)
+      need $# --label
+      case "$2" in
+        *=*) ;;
+        *)   die "--label wants k=v, got '$2'" ;;
+      esac
+      _k=${2%%=*}; _v=${2#*=}
+      # alertname, severity and instance are set below and are what a resolve
+      # matches on. A --label repeating one of them is legal JSON, Go keeps the
+      # last, and the result is an alert whose name skipped the check three
+      # lines down and which no resolve can ever match -- two alertname
+      # matchers AND to nothing.
+      case "$_k" in
+        alertname|severity|instance) die "--label $_k is set by this command; use --severity, or pick another name" ;;
+        ''|*[!A-Za-z0-9_]*)          die "label name must be [A-Za-z0-9_]+, got '$_k'" ;;
+      esac
+      # The value goes into JSON, where it is escaped, AND into a matcher of
+      # the form k="v", where it is not and cannot easily be: Alertmanager
+      # answers an unescaped quote with a 400. The two would then disagree --
+      # the alert fires and can never be resolved. Refused here instead, while
+      # the caller is still looking.
+      case "$_v" in
+        *'"'*|*'\'*|*$'\n'*|'') die "label value for $_k must not be empty or contain a quote, a backslash or a newline" ;;
+      esac
+      LABELS+=("$2")
+      shift 2 ;;
+    --) shift; break ;;
+    -*) die "unknown option: $1" ;;
+    *)  break ;;
+  esac
+done
+
+NAME="${1:-}"; [ -n "$NAME" ] || die "needs a name: ergon-alert <name> <summary> [description]"
+SUMMARY="${2:-}"
+DESCRIPTION="${3:-}"
+# Options are only read before the name. Anything that looks like one after it
+# was going to be silently swallowed -- `ergon-alert X "summary" --url ...`
+# delivered the literal string "--url" as the description and dropped the link,
+# the labels and the severity, leaving an alert nothing could resolve.
+[ $# -le 3 ] || die "unexpected argument after the description: $4"
+case "${SUMMARY}${DESCRIPTION}" in
+  -*) die "options go before the name: ergon-alert [options] <name> <summary> [description]" ;;
+esac
+case "$DESCRIPTION" in -*) die "options go before the name, not after the summary" ;; esac
+[ "$RESOLVE" = 1 ] || [ -n "$SUMMARY" ] || die "needs a summary"
+
+# An alertname is a Prometheus label value and reaches a Telegram template that
+# renders HTML; keeping it to a plain identifier means neither has to be
+# trusted to escape it.
+case "$NAME" in
+  *[!A-Za-z0-9_:-]*) die "name must be [A-Za-z0-9_:-]+, got '$NAME'" ;;
+esac
+
+HOSTNAME_=$(uname -n)
+
+# A resolve with no words is a resolve that arrives blank. Alertmanager merges
+# the younger alert's annotations wholesale, so the empty ones posted to clear
+# a state REPLACE the text that described it -- and the recovery message, the
+# half of this feature that says it is over, reaches the phone with nothing in
+# it but a label set. Callers should say something better; this is the floor.
+[ -n "$SUMMARY" ] || SUMMARY="$NAME is clear on $HOSTNAME_"
+
+# JSON by hand, rather than through jq. jq IS installed on an ergonOS machine
+# (packages/pacman) and half of bin/ uses it -- but this is the script that
+# runs when something is already broken, on a CI runner, in a container and on
+# a machine mid-install. A notifier that needs a package installed to tell you
+# a package did not install is one more thing that fails silently.
+#
+# The four escapes below are the ones that actually occur here -- a Windows
+# newline from a serial console log, a tab from a test's output, a quote or a
+# backslash from a path. A control character outside that set would produce
+# invalid JSON, so they are dropped rather than passed through.
+jesc() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\r'/}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\t'/\\t}
+  printf '%s' "${s//[[:cntrl:]]/ }"
+}
+
+labels_json() {
+  printf '"alertname":"%s","severity":"%s","instance":"%s"' \
+    "$(jesc "$NAME")" "$(jesc "$SEVERITY")" "$(jesc "$HOSTNAME_")"
+  local kv k v
+  for kv in ${LABELS[@]+"${LABELS[@]}"}; do
+    k=${kv%%=*}; v=${kv#*=}
+    printf ',"%s":"%s"' "$(jesc "$k")" "$(jesc "$v")"
+  done
+}
+
+# The label filter the v2 API takes, one --data-urlencode per matcher, so the
+# quoting inside filter=alertname="x" never has to survive a shell.
+filter_args() {
+  printf '%s\n' "--data-urlencode" "filter=alertname=\"$NAME\""
+  printf '%s\n' "--data-urlencode" "filter=instance=\"$HOSTNAME_\""
+  local kv
+  for kv in ${LABELS[@]+"${LABELS[@]}"}; do
+    printf '%s\n' "--data-urlencode" "filter=${kv%%=*}=\"${kv#*=}\""
+  done
+}
+
+# How many alerts Alertmanager is holding for this name: with these labels, or
+# -- `firing_count any` -- with only the name and the host.
+#
+# Both matter, because a resolve is matched on the WHOLE label set. A resolve
+# whose labels differ from the ones that fired by a single pair does not clear
+# anything; it quietly matches nothing, and the phone goes on being told every
+# six hours that a CI which is now green is red. The narrow count is what
+# decides whether to speak; the wide one is what notices that this call named
+# the wrong labels.
+firing_count() {
+  local body code
+  if [ "${1:-}" = any ]; then
+    mapfile -t _filter < <(printf '%s\n' \
+      "--data-urlencode" "filter=alertname=\"$NAME\"" \
+      "--data-urlencode" "filter=instance=\"$HOSTNAME_\"")
+  else
+    mapfile -t _filter < <(filter_args)
+  fi
+  # `?`, not 0, when the question could not be asked. They are different
+  # answers and conflating them is the whole bug: a resolve that cannot reach
+  # Alertmanager would report "nothing to resolve", exit 0, and leave the alert
+  # firing for a month -- silently, in the script whose reason to exist is not
+  # failing silently. A non-2xx counts as unasked too: an error page contains
+  # no fingerprints either.
+  # Silenced and inhibited alerts are INCLUDED. A silence is the release valve
+  # this file's own header points at, so it is the ordinary state of a red CI
+  # somebody has acknowledged -- and an alert that is silenced is still firing.
+  # Excluding them made the green run report "nothing to resolve", clear
+  # nothing, and hand the operator an alert that came back the moment the
+  # silence lapsed, for a suite that had been green for a week.
+  body=$(curl --silent --show-error --max-time "$TIMEOUT" --get \
+           "${_filter[@]}" --data-urlencode "active=true" \
+           --write-out '\n%{http_code}' \
+           "$url/api/v2/alerts" 2>/dev/null) || { printf '?\n'; return 0; }
+  code=${body##*$'\n'}
+  case "$code" in 2*) ;; *) printf '?\n'; return 0 ;; esac
+  # `|| true` is not decoration: grep exits 1 when it matches nothing, which is
+  # the ordinary case here, and under `set -o pipefail` that is the status of
+  # the whole pipeline -- so the assignment at the call site fails and set -e
+  # takes the script out silently, in the one path whose job is to be noisy.
+  #
+  # The pattern carries its colon and quote so that an alert whose own text
+  # says "fingerprint" -- entirely plausible in this repo -- is not counted as
+  # a second alert when the query echoes its annotations back.
+  printf '%s' "$body" | grep -o '"fingerprint":"' | wc -l || true
+}
+
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+say() {  # always, whatever else happens: a CI log is a channel too
+  [ -n "$SUMMARY" ] || return 0
+  printf '%s: %s%s\n' "$NAME" "$SUMMARY" "${DESCRIPTION:+ -- $DESCRIPTION}" >&2
+}
+
+delivered=0
+url="${ERGON_ALERT_URL:-}"
+url="${url%/}"
+
+if [ -n "$url" ]; then
+  if [ "$RESOLVE" = 1 ]; then
+    # Only resolve what is actually firing. Alertmanager accepts a resolve for
+    # a labelset it has never seen, and then says nothing -- its dedup stage
+    # drops a resolved-only group that has no notification log entry. That is
+    # the behaviour this wants, but it is upstream's internals rather than its
+    # contract, and the same log expires after five days, so a resolve is
+    # silent in one case and meaningful in the other for reasons a reader of
+    # this script cannot see. Ask first instead: a green push is the common
+    # case and it should say nothing at all, visibly.
+    _n=$(firing_count)
+    case "$_n" in
+      0)
+        printf '   nothing firing for %s on %s; nothing to resolve\n' "$NAME" "$HOSTNAME_"
+        # Stated, not accused. Two workflows share this alertname and differ
+        # only by a label, so the other one being red is the ordinary case on
+        # a green push -- but so is a caller that named the wrong labels, and
+        # from here the two look the same.
+        _other=$(firing_count any)
+        case "$_other" in
+          0|'?') ;;
+          *) printf '   (%s other %s alert(s) here are firing under different labels)\n' "$_other" "$NAME" ;;
+        esac
+        exit 0 ;;
+      '?')
+        # Resolve anyway. Posting a resolve for something that is not firing is
+        # harmless -- Alertmanager notifies nobody for a group it never
+        # notified about -- while NOT posting one leaves a phone being told
+        # every six hours that a green CI is red.
+        printf '   could not ask %s what is firing; resolving anyway\n' "$url" ;;
+    esac
+    # Backdated, and not to this instant. Alertmanager decides resolvedness by
+    # comparing endsAt with ITS clock, so a sender a few seconds fast posts an
+    # alert that is not yet over: the merge then keeps the original month-long
+    # endsAt and takes these (empty) annotations, and what was a resolve has
+    # quietly become a re-fire with its text erased. Measured with a fast
+    # clock. Five minutes is more skew than a machine that talks to this
+    # network can have and still be trusted about anything.
+    ends=$(date -u -d '-300 seconds' +%Y-%m-%dT%H:%M:%SZ)
+    now=$(date -u -d '-360 seconds' +%Y-%m-%dT%H:%M:%SZ)
+  else
+    ends=$(date -u -d "+$HOLD_SECONDS seconds" +%Y-%m-%dT%H:%M:%SZ)
+  fi
+
+  body=$(printf '[{"labels":{%s},"annotations":{"summary":"%s","description":"%s"},"startsAt":"%s","endsAt":"%s"%s}]' \
+    "$(labels_json)" "$(jesc "$SUMMARY")" "$(jesc "$DESCRIPTION")" "$now" "$ends" \
+    "${GENERATOR_URL:+,\"generatorURL\":\"$(jesc "$GENERATOR_URL")\"}")
+
+  code=$(printf '%s' "$body" | curl --silent --show-error --max-time "$TIMEOUT" \
+           --output /dev/null --write-out '%{http_code}' \
+           --header 'Content-Type: application/json' --data-binary @- \
+           "$url/api/v2/alerts" 2>/dev/null) || code=000
+  case "$code" in
+    2*) delivered=1
+        printf '   %s %s -> %s\n' \
+          "$([ "$RESOLVE" = 1 ] && echo resolved || echo alerted)" "$NAME" "$url" ;;
+    *)  printf 'ergon-alert: %s refused the alert (HTTP %s)\n' "$url" "$code" >&2 ;;
+  esac
+
+  # Say it worked only if it worked. Alertmanager takes the POST onto a queue
+  # and answers before it has processed it, so the first look back is too
+  # early -- measured, against 0.33.1.
+  if [ "$RESOLVE" = 1 ] && [ "$delivered" = 1 ]; then
+    # `[ ... ] && break` would be a failing command under set -e on the last
+    # pass and take the whole script with it, silently.
+    for _ in 1 2 3 4 5; do
+      _left=$(firing_count)
+      if [ "$_left" = 0 ] || [ "$_left" = '?' ]; then break; fi
+      sleep 0.4
+    done
+    if [ "$_left" = '?' ]; then
+      printf '   posted, but %s could not be asked whether it took\n' "$url"
+    elif [ "$_left" != 0 ]; then
+      printf 'ergon-alert: %s alert(s) matching %s are STILL firing after the resolve.\n' \
+        "$_left" "$NAME" >&2
+      printf '             Either they carry labels this call did not name -- a resolve\n' >&2
+      printf '             matches the WHOLE label set -- or this clock is ahead of the\n' >&2
+      printf '             one Alertmanager is using, and the endsAt posted is still in\n' >&2
+      printf '             its future.\n' >&2
+      exit 1
+    fi
+  fi
+fi
+
+# A desktop, if there is one. Not instead of the above -- both, because the
+# person at the machine and the person carrying the phone are the same person
+# and neither channel is reliable alone.
+if [ "$RESOLVE" != 1 ] && command -v notify-send >/dev/null 2>&1 \
+   && [ -n "${WAYLAND_DISPLAY:-${DISPLAY:-}}" ]; then
+  u=normal; [ "$SEVERITY" = critical ] && u=critical
+  notify-send -u "$u" "$NAME" "$SUMMARY${DESCRIPTION:+
+$DESCRIPTION}" && delivered=1
+fi
+
+say
+
+# Non-zero when nothing took it. A notifier that fails quietly is the bug this
+# script exists to fix, so the caller gets to see that it failed -- in CI that
+# is a red step next to the red step that raised the alarm.
+[ "$delivered" = 1 ] && exit 0
+[ -n "$url" ] || printf 'ergon-alert: ERGON_ALERT_URL is unset and there is no desktop to notify\n' >&2
+exit 1
