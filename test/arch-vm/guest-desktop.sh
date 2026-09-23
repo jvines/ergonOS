@@ -142,6 +142,318 @@ else
   sed 's/^/     /' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null | head -10
 fi
 
+# --- ERGON-21: the docker group is opt-in, not a provisioning default ------
+# host.env was scaffolded above with the template's default, DOCKER_GROUP=0,
+# so THIS run must not have added the user -- sudoless docker is a choice per
+# host, not something every install gets for free. usermod's effect on real
+# /etc/group is exactly what the hermetic doctor test cannot prove.
+if id -nG "$U" | grep -qw docker; then
+  bad "DOCKER_GROUP=0 (the default) and provisioning added $U to the docker group anyway"
+else
+  ok "DOCKER_GROUP=0 (the default): $U was not added to the docker group"
+fi
+# Flip it for the ERGON-22 re-provision below, which is about to happen anyway
+# -- proving the other half (1 DOES add the group) without a fourth full
+# provisioning run just for this knob.
+sed -i 's/^DOCKER_GROUP=0/DOCKER_GROUP=1/' "$H/ergonOS/hosts/$(hostname -s)/host.env"
+
+# --- ERGON-22: a system change reaching a machine already installed --------
+# provision-arch.sh is the only thing that writes system-level state, and
+# `ergon sync` used to re-run install.sh alone -- so packages, systemd
+# drop-ins, polkit rules and GRUB settings reached fresh installs and nothing
+# else. The claim here is the whole round trip on a real machine: provisioned,
+# a commit lands upstream that touches a provisioning input, sync notices and
+# re-provisions, and doctor then calls the machine current.
+#
+# The older commit is manufactured by pushing one FORWARD instead of checking
+# one out. Every commit older than the one that introduced this carries an
+# ergon-sync that cannot detect anything, so rewinding would test the old code;
+# going forward exercises the new code over the same range.
+G="$H/ergonOS"
+STAMP=/var/lib/ergon/provisioned
+
+# ONE row of doctor's JSON, and no verdict on the machine as a whole.
+#
+# `ergon-doctor` exits 1 when ANY check fails, so its status answers "does this
+# whole machine pass" and never "is this row ok". Piped straight into `grep -q`
+# under this file's `set -o pipefail`, that status became the pipeline's, and an
+# assertion about one row was silently a verdict on every other row. Both of
+# this harness's row assertions were written that way and both misreported on
+# the run that found nftables.service inactive: "doctor does not call the
+# machine current after a sync" failed while printing a provisioned row that was
+# ok, and "doctor did not fail the firewall row" failed while printing a row
+# whose state WAS fail -- that one, being about a row doctor must fail, could
+# never have passed at all. Same defect and same fix as bin/test-provisioning.sh's
+# doctor() helper. The whole-machine question is still asked, deliberately and by
+# exit status, at "ergon-doctor reports no failures" far below: they are two
+# different questions and both are worth asking.
+doctor_row() {  # doctor_row <row> <command...> -> that row's JSON object, or ''
+  local row=$1; shift
+  "$@" 2>/dev/null | grep -o "{\"name\":\"$row\"[^}]*}" || true
+}
+if grep -qx "commit=$(su - "$U" -c "git -C $G rev-parse HEAD")" "$STAMP" 2>/dev/null; then
+  ok "provisioning recorded the commit it ran from in $STAMP"
+else
+  bad "$STAMP does not record the commit provisioning ran from"
+  sed 's/^/     /' "$STAMP" 2>/dev/null
+fi
+
+# How the packages arrived, from pacman's own log rather than from the script.
+# -Sy WITHOUT -u points the database at today's versions while the installed
+# packages stay behind, so the next package pulled in links against a
+# libfoo.so.N the old libfoo does not provide -- and `ergon sync` now re-runs
+# this on machines that have not been upgraded in months, which is exactly the
+# state that bites. Nothing else catches a revert to the -Sy/-S pair: the
+# hermetic test stubs provision-arch.sh out, and the stamp says a run happened,
+# not how. `pacman -r <root> -Sy` from pacstrap does not match either pattern,
+# and the later bare `-S --needed` fallbacks (waybar, graphics) are correct --
+# it is the refresh without the upgrade that must never appear.
+if grep -q "Running 'pacman -Syu" /var/log/pacman.log 2>/dev/null \
+   && ! grep -qE "Running 'pacman -Sy[^u]" /var/log/pacman.log 2>/dev/null; then
+  ok "packages were installed in one -Syu transaction, with no bare -Sy refresh"
+else
+  bad "provisioning did not install in a single -Syu transaction"
+  grep -o "Running 'pacman -S[^']*" /var/log/pacman.log 2>/dev/null | sed 's/^/     /' | head -5
+fi
+
+echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-harness
+chmod 440 /etc/sudoers.d/99-harness
+# ERGON-20. The re-provision below is the only run in this suite that meets a
+# daemon.json already on the machine, so put a key in it that provisioning does
+# not write and assert further down that the merge kept it. On a real laptop
+# that key is "data-root" pointing at /home, and the stanza used to replace the
+# file whole and restart dockerd in the same breath -- the daemon came back on
+# /var/lib/docker, where none of the machine's images or volumes are.
+if jq -S '."insecure-registries" = ["registry.jvines.cl:5000"]' /etc/docker/daemon.json > /tmp/dj.staged 2>/dev/null \
+   && mv /tmp/dj.staged /etc/docker/daemon.json; then
+  ok "staged an operator key in daemon.json for the re-provision to keep"
+else
+  bad "could not stage an operator key in /etc/docker/daemon.json (harness)"
+fi
+rm -rf /tmp/ergon-origin.git /tmp/ergon-ahead
+# git clean: the 9p share is a working tree and can carry work in progress,
+# which this copy inherits. ergon-sync rightly refuses a dirty tree, and which
+# tree the disk was built from is not what is under test.
+if su - "$U" -c "set -e
+    git -C $G clean -qfd
+    git clone -q --bare $G /tmp/ergon-origin.git
+    git -C $G remote set-url origin /tmp/ergon-origin.git
+    git clone -q /tmp/ergon-origin.git /tmp/ergon-ahead
+    printf '\n# ERGON-22: a provisioning input changes upstream.\n' >> /tmp/ergon-ahead/packages/pacman
+    git -C /tmp/ergon-ahead -c user.email=vm@ergon.invalid -c user.name=vm commit -qam 'packages: a provisioning input changes'
+    git -C /tmp/ergon-ahead push -q origin HEAD" > /tmp/sync-setup.log 2>&1
+then
+  su - "$U" -c "ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 $G/bin/ergon-sync --yes" > /tmp/sync.log 2>&1
+  ahead=$(su - "$U" -c "git -C $G rev-parse HEAD")
+  if grep -qx "commit=$ahead" "$STAMP" 2>/dev/null; then
+    ok "ergon sync re-provisioned for an incoming change to packages/pacman"
+  else
+    bad "sync did not re-provision — the stamp is still $(sed -n 's/^commit=//p' "$STAMP" 2>/dev/null), the repo is at $ahead"
+    tail -15 /tmp/sync.log | sed 's/^/     /'
+  fi
+  _prov_row=$(doctor_row provisioned su - "$U" -c "$G/bin/ergon-doctor --json")
+  case "$_prov_row" in
+    *'"state":"ok"'*)
+      ok "ergon doctor reports the machine as provisioned at the current commit" ;;
+    # An absent row is its own failure: a check that never ran proves nothing,
+    # and must not fall through into the message about the stamp being stale.
+    "")
+      bad "doctor printed no 'provisioned' row at all — the check did not run"
+      su - "$U" -c "$G/bin/ergon-doctor" 2>&1 | tail -5 | sed 's/^/     /' ;;
+    *)
+      bad "doctor does not call the machine current after a sync: $_prov_row"
+      su - "$U" -c "$G/bin/ergon-doctor" 2>/dev/null \
+        | grep -E 'provisioned|base-packages' | sed 's/^/     /' ;;
+  esac
+  # ERGON-21, other half: this re-provision ran with DOCKER_GROUP=1 (flipped
+  # above), so it must have added the group this time.
+  if id -nG "$U" | grep -qw docker; then
+    ok "DOCKER_GROUP=1: the re-provision above added $U to the docker group"
+  else
+    bad "DOCKER_GROUP=1 but $U is not in the docker group after re-provisioning"
+  fi
+else
+  bad "could not stage a commit ahead of the guest's repo (harness)"
+  tail -5 /tmp/sync-setup.log | sed 's/^/     /'
+fi
+
+# --- ERGON-20: the firewall, and where a published port binds --------------
+# bin/test-firewall.sh reads the ruleset provisioning WRITES. Only a booted
+# machine can say whether the kernel accepted it, and only a running dockerd
+# can say what `-p` actually binds -- which is the half a firewall cannot
+# cover, because a published port is DNAT'd past the input hook.
+echo "--- firewall ---"
+# What provisioning printed for a stage, from whichever log caught the run. It
+# is printed HERE, on failure, because provisioning's own account of this stage
+# was thrown away: /tmp/prov.log is dumped only when provisioning EXITS
+# non-zero, and a stage that warns still exits zero. The run that found
+# nftables.service inactive therefore had provisioning's warnings, the unit
+# status and the journal all sitting on the disk, and reported none of them --
+# 35 minutes for a failure with no evidence in it.
+prov_stage() {  # prov_stage <stage title> -- that stage's lines from both runs
+  local title=$1 log
+  for log in /tmp/prov.log /tmp/sync.log; do
+    [ -s "$log" ] || continue
+    printf '     --- %s said, under "%s" ---\n' "$log" "$title"
+    sed 's/\x1b\[[0-9;]*m//g' "$log" \
+      | sed -n "/^== $title\$/,/^== /p" | sed '$d' | sed 's/^/     /'
+  done
+}
+_fw_explained=0
+firewall_why() {  # everything the next reader needs, once per run
+  [ "$_fw_explained" = 0 ] || return 0
+  _fw_explained=1
+  echo "     --- systemctl status nftables ---"
+  systemctl status --no-pager --full nftables 2>&1 | sed 's/^/     /'
+  echo "     --- journalctl -u nftables ---"
+  journalctl -u nftables --no-pager -n 30 2>&1 | sed 's/^/     /'
+  prov_stage "firewall and container publishing"
+}
+grep -q 'table inet ergon' /etc/nftables.conf 2>/dev/null \
+  && ok "/etc/nftables.conf is ours, not the nftables package's default" \
+  || bad "/etc/nftables.conf does not define the inet ergon table"
+# Arch's packaged unit is Type=oneshot with no RemainAfterExit=, so it is
+# "inactive (dead)" a moment after a perfectly successful load. Our drop-in is
+# what makes this question meaningful at all -- and asking it is what caught the
+# drop-in adding an ExecStop to a unit that had none, which destroyed the table
+# ExecStart had just loaded.
+if systemctl is-active --quiet nftables; then
+  ok "nftables.service is active"
+else
+  bad "nftables.service is not active — the ruleset provisioning wrote did not load"
+  nft -c -f /etc/nftables.conf 2>&1 | sed 's/^/     /'
+  firewall_why
+fi
+# policy drop in the KERNEL, not a string in the file. --verify-config passing
+# while nothing was registered is this repo's standing lesson.
+if _chain=$(nft list chain inet ergon input 2>/dev/null) && [ -z "${_chain##*policy drop*}" ]; then
+  ok "inet ergon input is loaded with policy drop"
+else
+  bad "the inet ergon input chain is not loaded with policy drop"
+  nft list ruleset 2>&1 | head -20 | sed 's/^/     /'
+  firewall_why
+fi
+
+# THE caveat this card turns on. Docker's rules live in the same nf_tables
+# backend through iptables-nft, so `flush ruleset` -- in the file, or in an
+# ExecStop, which is where upstream's really is -- destroys the DOCKER chains of
+# a running daemon and every container silently loses its networking. Both
+# halves are asserted, because the drop-in is what makes the scoped ruleset
+# survive the verb people actually type. (Arch ships no ExecStop at all, so on
+# THIS distro the drop-in is not narrowing a flush, it is supplying the teardown
+# the unit does not have -- which is why it must also set RemainAfterExit=yes.)
+# Read the property, THEN judge it, and require the scoped teardown rather than
+# merely the absence of the wide one. As `systemctl show ... | grep -q 'flush
+# ruleset' || ok` this answered "stops by destroying only the ergon table" for
+# three machines that do not: one where systemctl itself failed, one where the
+# unit is unknown, and -- the case that matters on Arch, which ships NO ExecStop
+# -- one where the drop-in never reached the unit, so stopping nftables leaves
+# the ergon table loaded and `is-active` lies about it. grep's 1 for "that string
+# is absent" was standing in for a positive claim it cannot make.
+_execstop=$(systemctl show nftables -p ExecStop 2>/dev/null)
+case "$_execstop" in
+  *'flush ruleset'*)
+    bad "nftables.service still stops with 'nft flush ruleset' — a restart would wipe docker's chains" ;;
+  *'destroy table inet ergon'*)
+    ok "nftables.service stops by destroying only the ergon table" ;;
+  ExecStop=)
+    bad "nftables.service has no ExecStop at all — the drop-in never reached the unit, so a stop leaves the ergon table loaded"
+    firewall_why ;;
+  *)
+    bad "could not read nftables.service's ExecStop, so its teardown was not checked: '${_execstop:-systemctl printed nothing}'"
+    firewall_why ;;
+esac
+if ! nft list chain ip nat DOCKER >/dev/null 2>&1; then
+  note "no ip nat DOCKER chain on this machine — nothing for a reload to wipe, so that claim is untested"
+else
+  # Three separate facts, reported separately. As one conjunction this said
+  # "restarting nftables destroyed docker's nat chains" on a run where docker's
+  # chains were never touched and OUR chain was the one that did not come back —
+  # a true failure pointing at the wrong half of the card.
+  systemctl restart nftables; _fw_rc=$?
+  [ "$_fw_rc" = 0 ] || { bad "systemctl restart nftables failed (exit $_fw_rc)"; firewall_why; }
+  nft list chain ip nat DOCKER >/dev/null 2>&1 \
+    && ok "restarting nftables keeps docker's nat chains" \
+    || bad "restarting nftables destroyed docker's nat chains — every running container just lost its network"
+  if _chain=$(nft list chain inet ergon input 2>/dev/null) && [ -z "${_chain##*policy drop*}" ]; then
+    ok "  and reloads our own"
+  else
+    bad "  but the ergon chain did not come back after the restart"
+    firewall_why
+  fi
+fi
+
+# The doctor row's dangerous state, and the one only a booted machine has: the
+# unit is Type=oneshot and our drop-in makes it RemainAfterExit=yes, so
+# `systemctl is-active` still says active after someone types `nft flush
+# ruleset` while debugging. doctor read a failed `nft list` as "I am not root"
+# and answered ok — as root, on a machine with an empty ruleset. Asserted with
+# root in hand, which is the only way to reach that branch at all.
+if nft destroy table inet ergon 2>/dev/null; then
+  # `env`, not an ERGON= prefix on the function call: in bash a prefix assignment
+  # to a SHELL FUNCTION stays set after it returns, and ERGON is read again below.
+  _fw_row=$(doctor_row firewall env ERGON="$G" "$G/bin/ergon-doctor" --json)
+  case "$_fw_row" in
+    *'"state":"fail"'*)
+      ok "as root and with no ergon table, doctor fails the firewall row" ;;
+    "")
+      bad "doctor printed no 'firewall' row at all — the check did not run" ;;
+    *)
+      bad "doctor did not fail the firewall row on a machine where nothing filters inbound: $_fw_row" ;;
+  esac
+  # Put it back before anything else runs, and say whether that worked: the
+  # tests after this one must not be quietly running on an unfiltered machine.
+  if systemctl restart nftables >/dev/null 2>&1 \
+     && _chain=$(nft list chain inet ergon input 2>/dev/null) && [ -z "${_chain##*policy drop*}" ]; then
+    ok "and the ruleset is back after a restart"
+  else
+    bad "the ruleset did not come back — the rest of this run is unfiltered"
+    firewall_why
+  fi
+else
+  note "could not destroy the ergon table — doctor's root-with-no-table branch was not tested"
+fi
+
+echo "--- where docker publishes ---"
+grep -q '"ip"[[:space:]]*:[[:space:]]*"127\.0\.0\.1"' /etc/docker/daemon.json 2>/dev/null \
+  && ok "daemon.json binds published ports to 127.0.0.1" \
+  || bad "/etc/docker/daemon.json does not set \"ip\": \"127.0.0.1\""
+# The merge, end to end. The key above was staged into daemon.json before
+# ergon-sync re-provisioned this machine, so this says whether provisioning
+# keeps what a machine had or writes over it — and dockerd was restarted in
+# between, which is what makes losing it expensive rather than cosmetic.
+if [ "$(jq -r '."insecure-registries"[0] // ""' /etc/docker/daemon.json 2>/dev/null)" = registry.jvines.cl:5000 ]; then
+  ok "re-provisioning merged into daemon.json and kept the operator key"
+else
+  bad "re-provisioning discarded what was already in daemon.json"
+  sed 's/^/     /' /etc/docker/daemon.json 2>/dev/null
+fi
+# The binding itself, which is the acceptance criterion. busybox is ~4 MB and
+# the container never has to serve anything: what listens on the host is
+# dockerd's proxy for the published port, and that is the thing under test.
+# The harness has user-mode NAT so the pull works, but it can fail offline --
+# a missing image says nothing about where docker binds, so that is a note and
+# not a failure.
+if docker image inspect busybox >/dev/null 2>&1 \
+   || timeout 180 docker pull -q busybox >/dev/null 2>&1; then
+  docker rm -f ergon-fw-probe >/dev/null 2>&1 || true
+  if docker run -d --name ergon-fw-probe -p 8080:80 busybox sleep 60 >/dev/null 2>&1; then
+    sleep 1
+    _bound=$(ss -ltn 2>/dev/null | awk '{print $4}' | grep ':8080$' | sort | tr '\n' ' ' | sed 's/ $//')
+    case "$_bound" in
+      "127.0.0.1:8080") ok "docker run -p 8080:80 listens on 127.0.0.1:8080 and nowhere else" ;;
+      "")               bad "nothing listens on 8080 after publishing it — the probe did not come up, or userland-proxy is off and only the DNAT would show" ;;
+      *)                bad "a published port listens on '$_bound', not 127.0.0.1:8080 alone" ;;
+    esac
+    docker rm -f ergon-fw-probe >/dev/null 2>&1 || true
+  else
+    bad "the probe container would not start; where a published port binds was not tested"
+  fi
+else
+  note "no busybox image and the pull failed (offline?) — where a published port binds was not tested"
+fi
+rm -f /etc/sudoers.d/99-harness
+
 # --- a bundle from a real forge, over ssh on a non-standard port ------------
 # test-bundles.sh fetches from a local repository through stubs. This is the
 # path a private overlay actually takes: sshd on 2222, the user's own key,
@@ -276,9 +588,16 @@ else
   bad "kb_layout not scaffolded per host (expected '${_kb:-us}')"
   grep -n kb_layout "$H/ergonOS/hosts/$(hostname -s)/hyprland.lua" 2>/dev/null | sed 's/^/     /'
 fi
-grep -rq 'kb_layout = "us"' "$H/.config/hypr/common/" 2>/dev/null \
-  && bad "the shared config still hardcodes a keyboard layout" \
-  || ok "no keyboard layout hardcoded in the shared config"
+# The directory first. `grep -rq ... && bad || ok` reported "no keyboard layout
+# hardcoded" for a common/ that install.sh had never linked, because grep's 2 for
+# "no such directory" and its 1 for "no match" both skip the bad and land on ok.
+if [ ! -d "$H/.config/hypr/common" ]; then
+  bad "no $H/.config/hypr/common — the shared config was never linked, so nothing was checked"
+elif grep -rq 'kb_layout = "us"' "$H/.config/hypr/common/"; then
+  bad "the shared config still hardcodes a keyboard layout"
+else
+  ok "no keyboard layout hardcoded in the shared config"
+fi
 
 # Microcode belongs to the CPU that is present.
 case "$(awk -F': ' '/^vendor_id/ { print $2; exit }' /proc/cpuinfo)" in
@@ -383,6 +702,57 @@ else
   sed -n '/AUR packages/,$p' /tmp/prov.log 2>/dev/null | tail -20 | sed 's/^/       /'
 fi
 
+# ERGON-29: a pin in packages/aur is only worth having if the build actually
+# used it. ergon-aur detaches the clone onto that commit before makepkg and
+# records what it built from -- and provisioning has just run, so both of those
+# are this machine's own answer rather than a claim in a file. Stubs can prove
+# the checkout; only a real provision proves the pin survives the path
+# provisioning actually takes.
+PIN=$(awk '$1 == "waybar-git" && match($0, /pin=[0-9a-f]{7,40}/) {
+             print substr($0, RSTART + 4, RLENGTH - 4) }' "$H/ergonOS/packages/aur")
+if [ -z "$PIN" ]; then
+  note "waybar-git carries no pin in packages/aur; nothing to honour"
+else
+  BUILT_FROM=$(awk '$1 == "waybar-git" { print $2 }' "$H/.local/state/ergon/aur-builds" 2>/dev/null)
+  [ "$BUILT_FROM" = "$PIN" ] \
+    && ok "waybar-git was built from the PKGBUILD commit packages/aur pins" \
+    || bad "waybar-git was built from '${BUILT_FROM:-nothing recorded}', not the pinned $PIN"
+  AT=$(git -C "$H/.cache/aur/waybar-git" rev-parse HEAD 2>/dev/null)
+  [ "$AT" = "$PIN" ] \
+    && ok "  and the clone it builds in is checked out at exactly that commit" \
+    || bad "  but the clone sits at '${AT:-nothing}', not $PIN"
+fi
+
+# ERGON-29: the rebuild `ergon update` performs builds the SAME commit again --
+# only the libraries under it moved -- into the clone the previous build already
+# left a package in, and makepkg REFUSES to overwrite one ("A package has
+# already been built") rather than rebuilding it. No stub can show that:
+# bin/test-aur.sh's makepkg is a script that writes a file, so it reproduces the
+# refusal only because it was told to. This is the real makepkg, over a package
+# provisioning built minutes ago.
+#
+# openai-codex-bin rather than waybar-git: it is a downloaded static binary, so
+# the rebuild costs a fetch instead of a compile, and the collision is the same
+# one.
+AURD=$H/.cache/aur/openai-codex-bin
+PREV=$(ls -- "$AURD"/*.pkg.tar.* 2>/dev/null | head -1)
+if [ -z "$PREV" ]; then
+  note "no built package under $AURD; a rebuild there would collide with nothing"
+else
+  # makepkg -i installs through sudo, and the harness password-less rule was
+  # removed after provisioning. Back for this one command only.
+  echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-harness
+  chmod 440 /etc/sudoers.d/99-harness
+  if su - "$U" -c "ERGON=$H/ergonOS $H/ergonOS/bin/ergon-aur --rebuild openai-codex-bin" \
+       > /tmp/rebuild.log 2>&1; then
+    ok "a rebuild builds over the package the previous build left in the clone"
+  else
+    bad "ergon aur --rebuild failed where a package of its own was already built"
+    tail -5 /tmp/rebuild.log | sed 's/^/       /'
+  fi
+  rm -f /etc/sudoers.d/99-harness
+fi
+
 # Any DRM card, not card0 specifically: with virtio-vga-gl the guest can
 # enumerate the device under a different index, and gating on card0 aborted the
 # whole desktop phase on a VM that demonstrably had a working GPU.
@@ -473,11 +843,36 @@ pgrep -x seatd >/dev/null && ok "seatd running" || bad "seatd did not start"
 
 # --- start the compositor --------------------------------------------------
 echo "--- starting Hyprland ---"
+# A USER MANAGER, before anything else touches /run/user/1000.
+#
+# This harness has never had one: it is driven from a serial console, so there
+# is no logind session, and without a session there is no user@1000.service, no
+# session bus, no app.slice and no oomd policy in it. The out-of-memory section
+# far below was gated on asking that manager a question, so it asked nothing and
+# asserted nothing on every run. Lingering starts the manager with no session at
+# all, which is exactly the gap.
+#
+# FIRST, and not later: user-runtime-dir@1000.service mounts a tmpfs on
+# /run/user/1000, so lingering after the compositor has put its socket there
+# hides the socket and takes the rest of this suite with it.
+loginctl enable-linger "$U" >/dev/null 2>&1 || true
+for _ in $(seq 1 30); do [ -S /run/user/1000/bus ] && break; sleep 1; done
+if [ -S /run/user/1000/bus ]; then
+  ok "systemd --user is running for $U (lingering), so this session has a bus and an app.slice"
+else
+  note "no user manager here: the containment checks below can only be asked of one"
+fi
 install -d -o "$U" -g "$U" -m 700 /run/user/1000
 cat > /tmp/start-hypr.sh <<'EOF'
 export XDG_RUNTIME_DIR=/run/user/1000
 export LIBSEAT_BACKEND=seatd
 export XDG_CURRENT_DESKTOP=Hyprland
+
+# The session bus, which exists here only because the harness lingers the user
+# above. mako, notify-send and everything else that speaks D-Bus find the bus
+# through this variable and nothing else: without it a notification is dropped
+# with no error anywhere, which reads as "the notification code is broken".
+[ -S "$XDG_RUNTIME_DIR/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 
 # PATH comes from the same file systemd --user would read, not from a
 # convenient reimplementation of it. This session is started by hand and so has
@@ -551,6 +946,7 @@ esac
 # Run something as the user, inside the session, the way the session would.
 usr() {
   su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 \
+                DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
                 HYPRLAND_INSTANCE_SIGNATURE=$SIG \
                 WAYLAND_DISPLAY=$WLD \
                 XDG_CURRENT_DESKTOP=Hyprland \
@@ -644,7 +1040,12 @@ set_layout() {
 }
 key_of() { printf '%s\n' "$1" | awk -F'  +' -v d="$2" '$2 == d { sub(/^SUPER \+ /, "", $1); print $1 }'; }
 IFS=$'\t' read -r KB0 KV0 < <(kb_main)
-if grep -q 'code:' <<<"$KEYS_OUT"; then bad "ergon-keys shows a raw code:N"; else ok "ergon-keys shows no raw code:N"; fi
+# KEYS_OUT is captured with `|| true` above, so an ergon-keys that died leaves it
+# empty -- and "no raw code:N" was then true of no rows at all rather than of the
+# cheatsheet. An empty answer is a failure, not a clean one.
+if [ -z "$KEYS_OUT" ]; then bad "ergon-keys printed nothing, so 'no raw code:N' would be a claim about no rows"
+elif grep -q 'code:' <<<"$KEYS_OUT"; then bad "ergon-keys shows a raw code:N"
+else ok "ergon-keys shows no raw code:N"; fi
 # Without this, a dead first source would pass below as "session" on the fallback.
 # Captured, not piped into grep -q. Under pipefail, grep -q exits at the first
 # match, the dump (~70K) dies of SIGPIPE mid-write, and the pipeline reports a
@@ -686,8 +1087,15 @@ if [ -z "$KEYS_DUPS" ]; then ok "no chord is bound twice"; else bad "chords boun
 # source below; description, key and locked are real Hyprland-side bind
 # properties that DO survive and are checked against the live compositor.
 # Code lines only: binds.lua's own comment records what the bind USED to be.
-if grep -v '^[[:space:]]*--' "$H/.config/hypr/common/binds.lua" 2>/dev/null \
-     | grep 'hl\.dsp\.exit()' >/dev/null; then
+# The file first: `grep -v <file> | grep <pattern>` exits non-zero both when
+# binds.lua is clean AND when it is missing, unreadable or empty, so an install
+# that never linked the compositor config read as "no direct hl.dsp.exit() left".
+# (`grep ... >/dev/null` and not `grep -q`: -q leaves on the first match, the
+# left grep takes SIGPIPE, and under pipefail a match comes back as a miss.)
+_binds_lua="$H/.config/hypr/common/binds.lua"
+if [ ! -s "$_binds_lua" ]; then
+  bad "no binds.lua at $_binds_lua — the session has no binds, and nothing was checked"
+elif grep -v '^[[:space:]]*--' "$_binds_lua" | grep 'hl\.dsp\.exit()' >/dev/null; then
   bad "binds.lua still calls hl.dsp.exit() directly -- SUPER+SHIFT+E must open the session menu instead"
 else
   ok "no direct hl.dsp.exit() left in binds.lua"
@@ -796,6 +1204,16 @@ else
   bad "ergon-doctor --json is not valid JSON"
   head -3 /tmp/doctor.json | sed 's/^/     /'
 fi
+# ERGON-29: a check that silently never runs is the same as one never written,
+# and both of these depend on rebuild-detector and packages/aur being reachable
+# from a real installed machine.
+for row in aur aur-pins; do
+  if python3 -c "import json,sys; d=json.load(open('/tmp/doctor.json')); sys.exit(0 if any(c['name']=='$row' for c in d['checks']) else 1)" 2>/dev/null; then
+    ok "ergon-doctor reports a '$row' row"
+  else
+    bad "ergon-doctor has no '$row' row — the foreign-package check did not run"
+  fi
+done
 printf '   --   doctor says:\n'
 usr ergon-doctor 2>&1 | sed 's/^/        /'
 
@@ -1109,12 +1527,19 @@ if systemctl is-active --quiet power-profiles-daemon; then
   _n=$(su - "$U" -c 'powerprofilesctl list' 2>/dev/null | grep -cE '^[* ]*[a-z-]+:')
   [ "${_n:-0}" -ge 2 ] && ok "$_n power profiles to cycle between" \
                        || bad "only ${_n:-0} power profile — the button has nothing to switch to"
-  if pkaction --action-id org.freedesktop.UPower.PowerProfiles.switch-profile --verbose 2>/dev/null \
-     | grep -A1 'implicit active' | grep -qi 'yes\|auth_admin_keep\|auth_self_keep'; then
-    ok "polkit lets an active session switch profile"
-  else
-    note "could not read the polkit policy for switch-profile (pkaction missing?)"
-  fi
+  # Read the value, then judge it. As one pipeline, "pkaction is not installed"
+  # and "polkit REFUSES an active session" were the same non-zero status and both
+  # came out as a note -- so a policy that had stopped permitting the switch would
+  # have been reported as a thing this run could not ask about. Only a missing
+  # pkaction, or an action polkit does not know, is a note now; an answer that is
+  # not a grant is a failure.
+  _pk_active=$(pkaction --action-id org.freedesktop.UPower.PowerProfiles.switch-profile --verbose 2>/dev/null \
+    | sed -n 's/^[[:space:]]*implicit active:[[:space:]]*//p' | tr -d '[:space:]')
+  case "$_pk_active" in
+    "")                                 note "could not read the polkit policy for switch-profile (pkaction missing?)" ;;
+    yes|auth_admin_keep|auth_self_keep) ok "polkit lets an active session switch profile ($_pk_active)" ;;
+    *)                                  bad "polkit's implicit active for switch-profile is '$_pk_active' — the profile button cannot work even from a real session" ;;
+  esac
 else
   bad "power-profiles-daemon is not running — clicking the profile icon does nothing"
 fi
@@ -1276,6 +1701,210 @@ else
   sleep 1
   hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b' | sed 's/^/     after: /'
   echo "     --- end ---"
+fi
+
+# --- a runaway job must not take the session with it (ERGON-19) ------------
+# The acceptance no parser and no stub can reach: allocate until the machine is
+# under memory pressure, and see what is still alive afterwards. bin/test-oom.sh
+# has the files, the scope and the doctor rows; this has a compositor to kill.
+echo "--- out-of-memory containment ---"
+
+# Everything these assertions are made of, printed ONCE when any of them fails.
+# Every line of it was worked out by hand on the run that failed, from a report
+# that said only "ManagedOOMMemoryPressure=auto": the drop-in on disk, the
+# property in the manager and the cgroup oomd is watching are three different
+# claims, and none of them proves either of the others. What provisioning itself
+# said about the stage is in here because /tmp/prov.log is printed only when
+# provisioning FAILS, and this stage warns rather than failing -- so on that run
+# every word of its account was thrown away.
+oom_diag_shown=0
+oom_diag() {
+  [ "$oom_diag_shown" = 0 ] || return 0
+  oom_diag_shown=1
+  echo "     --- out-of-memory diagnosis ---"
+  for f in /etc/systemd/user/app.slice.d/10-ergon-oomd.conf \
+           /etc/systemd/user/wayland-wm@.service.d/10-ergon-oom.conf \
+           /etc/systemd/oomd.conf.d/10-ergon.conf; do
+    if [ -r "$f" ]; then
+      grep -vE '^[[:space:]]*(#|$)' "$f" | sed "s|^|     $f: |"
+    else
+      echo "     $f: MISSING — provisioning never wrote it"
+    fi
+  done
+  # DropInPaths is the manager saying which files it has actually read. Without
+  # it, a drop-in that was never written and one the manager never re-read give
+  # the same 'auto'.
+  usr "systemctl --user show app.slice -p ManagedOOMMemoryPressure -p ActiveState -p DropInPaths" \
+    2>&1 | sed 's/^/     manager: /'
+  echo "     oomd: $(systemctl is-active systemd-oomd 2>&1)"
+  # The socket the USER manager connects to in order to report app.slice to
+  # oomd. No socket, no report, whatever the manager holds.
+  ls -l /run/systemd/oom/io.systemd.ManagedOOM 2>&1 | sed 's/^/     socket: /'
+  # And what oomd is monitoring, which is the only end-to-end answer here.
+  command -v oomctl >/dev/null && oomctl 2>&1 | sed 's/^/     oomctl: /'
+  journalctl -b -u systemd-oomd --no-pager -n 15 2>&1 | sed 's/^/     journal: /'
+  # The kernel's own killer fires minutes late and picks the biggest task on the
+  # machine: a line here means nothing contained the run, not that something did.
+  journalctl -b -k --no-pager 2>/dev/null \
+    | grep -iE 'out of memory|oom-kill|killed process' | tail -5 | sed 's/^/     kernel: /'
+  grep -iE 'oom|user manager' /tmp/prov.log 2>/dev/null | tail -10 | sed 's/^/     prov: /'
+  echo "     --- end ---"
+}
+
+if systemctl is-active --quiet systemd-oomd; then
+  ok "systemd-oomd is running (provisioning enabled it)"
+else
+  bad "systemd-oomd is not running — nothing watches memory pressure"
+  systemctl status systemd-oomd --no-pager -l 2>&1 | tail -8 | sed 's/^/     /'
+  oom_diag
+fi
+
+# The policy as the USER MANAGER holds it, which is the only form that reaches
+# oomd: a drop-in under /etc/systemd/user that no manager has read is a policy
+# this machine does not have yet. There is a manager to ask because the harness
+# lingers the user before it starts anything (see "starting Hyprland"), which is
+# what turned this from a note that asserted nothing into an assertion.
+#
+# Two ways this reads 'auto' and they need telling apart, which is what
+# oom_diag is for: the manager started before the drop-in existed and has not
+# re-read it (DropInPaths empty, file present), or provisioning never wrote the
+# file at all. The first is the one that shipped -- provisioning's reload could
+# not reach the manager from the session-less shell it runs in, warned, and the
+# warning went into a log nobody prints.
+oom_app=$(usr "systemctl --user show -p ManagedOOMMemoryPressure --value app.slice" 2>/dev/null | tr -d '\r')
+case "$oom_app" in
+  kill) ok "app.slice is monitored by oomd in this session" ;;
+  *)    bad "app.slice ManagedOOMMemoryPressure='${oom_app:-no user manager to ask}' — oomd is allowed to kill nothing"
+        oom_diag ;;
+esac
+
+# A REAL ALLOCATION, run the way `ergon watch` runs one: through the user
+# manager, under app.slice, with MemoryHigh forcing the scope to reclaim hard so
+# that the pressure oomd acts on actually builds.
+#
+# The OUTER unit is a transient service rather than a scope, and that is this
+# harness's shape rather than a shortcut. cgroup v2 refuses a migration unless
+# the mover can write the cgroup.procs of the COMMON ANCESTOR of source and
+# destination; everything here descends from a root-owned serial-console cgroup
+# rather than from user@1000.service, so `systemd-run --user --scope` -- which
+# is what both `ergon watch` and uwsm-app use -- cannot move its own caller in,
+# and fails before running anything. A service is started BY the manager, inside
+# its own tree, so nothing is migrated. `ergon watch` then runs from inside
+# user@1000.service, where its scope IS allowed, and the cgroup, the slice, the
+# pressure and the kill below are all the real ones.
+cat > /tmp/eat-memory.py <<'PY'
+# bytearray, not a reservation: it writes zeroes, so every page is resident and
+# the cgroup is really under pressure rather than merely over-committed.
+blocks = []
+while True:
+    blocks.append(bytearray(64 * 1024 * 1024))
+PY
+HYPR_BEFORE=$(pgrep -x Hyprland | head -1)
+OOMUNIT=ergon-vm-oom-probe
+usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
+# The unit is started BY the user manager, so it inherits the manager's
+# environment and not usr()'s -- and the manager has no DBUS_SESSION_BUS_ADDRESS
+# unless the session imported one. libnotify talks over GDBus, which has no
+# $XDG_RUNTIME_DIR/bus fallback, so notify-send failed to reach mako and
+# ergon-watch's `|| true` swallowed it: the kill happened, hist recorded it, and
+# the one thing the card promises -- the machine SAYING what it killed -- was
+# missing for a reason that only exists in this harness. A terminal in the real
+# session carries both.
+usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app.slice \
+     --setenv=PATH='$SESSION_PATH' \
+     --setenv=XDG_RUNTIME_DIR=/run/user/1000 \
+     --setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus -- \
+     ergon watch --name oom-probe --mem 256M -- python3 /tmp/eat-memory.py" \
+  >/tmp/oomprobe.log 2>&1
+rc=$?
+# timeout kills systemd-run --wait, never the unit it is waiting on, so an
+# unkilled allocation would go on eating the VM for the rest of the suite.
+usr "systemctl --user stop $OOMUNIT.service" >/dev/null 2>&1 || true
+
+# THE MECHANISM, not the mortality. Any non-zero exit used to count as a pass
+# here, so `python3` missing (127), `ergon` off the PATH (127) or a typo in the
+# allocator (1) all read as "the machine ended it" -- and so did a run that
+# nothing contained at all, because MemoryHigh only throttles and an unkilled
+# job climbs until the GLOBAL kernel OOM killer picks the biggest task on the
+# machine, which also exits 137. The manager's verdict on the scope is the one
+# answer that separates those: oom-kill, from ergon-watch's own scope, is the
+# thing this card claims to have built.
+# Captured rather than piped into `grep -q`: grep leaves on the first match, su
+# takes SIGPIPE for the rest, and this file's `set -o pipefail` then hands back
+# 141 for the very output that matched.
+hist=$(usr "ergon hist --json --name oom-probe" 2>/dev/null)
+case "$hist" in
+  *'"oom": 1'*)
+    ok "ergon watch's own scope was killed for memory, and hist says so rather than exit 137" ;;
+  *)
+    bad "the run was not recorded as an OOM kill — nothing contained it, or the kill was not attributed"
+    printf '%s\n' "$hist" | tail -20 | sed 's/^/     /'
+    tail -10 /tmp/oomprobe.log | sed 's/^/     /'
+    oom_diag ;;
+esac
+case "$rc" in
+  0)   bad "the allocation returned 0 — it was never stopped"; oom_diag ;;
+  # MemoryHigh only throttles, so an unwatched scope reclaims and stalls
+  # forever: 124 is the signature of app.slice not being monitored at all.
+  124) bad "nothing killed the run in 300s; the timeout ended it, which proves no containment at all"
+       oom_diag ;;
+esac
+usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
+
+HYPR_AFTER=$(pgrep -x Hyprland | head -1)
+if [ -n "$HYPR_BEFORE" ] && [ "$HYPR_BEFORE" = "$HYPR_AFTER" ]; then
+  ok "the compositor is the same process it was (PID $HYPR_AFTER)"
+else
+  bad "Hyprland PID changed: $HYPR_BEFORE -> ${HYPR_AFTER:-gone}"
+  dump_log
+fi
+# A PID survives a compositor that has stopped answering, so ask it something.
+hq version | grep -q Hyprland && ok "and it still answers hyprctl" \
+                              || bad "the compositor is alive but not answering"
+
+# mako holds a critical notification until it is dismissed (mako/config), so if
+# the daemon is there the message is still on screen. The window the job ran in
+# may have died with it, which is what makes this the only place the machine
+# says WHAT it killed.
+if usr "pgrep -x mako" >/dev/null 2>&1; then
+  # makoctl's own status, kept. Swallowed inside the command substitution, a
+  # makoctl that could not reach the daemon was indistinguishable from a mako
+  # holding nothing, and both were reported as the second -- which sends the
+  # next reader to the notification code over a broken bus address.
+  _mako=$(usr "makoctl list" 2>/dev/null); _mako_rc=$?
+  case "$_mako" in
+    *oom-probe*) ok "a notification names the run that was killed" ;;
+    *) if [ "$_mako_rc" != 0 ]; then
+         bad "makoctl could not read mako back (exit $_mako_rc) — whether a notification names the run is untested"
+       else
+         bad "mako is running but holds no notification naming the run"
+         # Which half is broken: ergon-watch never calling notify-send, or a bus
+         # that cannot carry it. Send one DIRECTLY and look again -- if this
+         # arrives, delivery works and the caller is at fault; if it does not,
+         # nothing ergon-watch does could have arrived either.
+         echo "     --- notify-send on the session PATH ---"
+         usr "command -v notify-send" 2>&1 | sed 's/^/     /'
+         echo "     --- a notification sent directly ---"
+         usr "notify-send -u critical 'ergon probe' 'direct oom-probe delivery test'" 2>&1 | sed 's/^/     /'
+         echo "     rc=$?"
+         usr "makoctl list" 2>&1 | head -30 | sed 's/^/     /'
+         echo "     --- what ergon watch itself printed ---"
+         tail -20 /tmp/oomprobe.log 2>/dev/null | sed 's/^/     /'
+       fi ;;
+  esac
+else
+  note "mako is not running here, so the notification cannot be read back"
+fi
+
+# The path a person actually takes, and the one thing this harness cannot walk:
+# SUPER+RETURN goes through uwsm-app, which is `systemd-run --user --scope` and
+# so hits the same migration rule as above from a compositor that logind never
+# put inside user@1000.service. Reported rather than skipped silently, so that a
+# harness that one day starts the session through greetd turns it into a pass.
+if usr "systemd-run --user --scope --quiet --collect --slice=app.slice -p MemoryHigh=64M -- true" >/dev/null 2>&1; then
+  ok "a user scope can be created from this session, so uwsm-app's terminals are contained here too"
+else
+  note "no user scope from a serial console (cgroup v2 refuses the migration), so the uwsm-app half of the terminal path is covered only by bin/test-oom.sh and by ergon-doctor's shell-slice row on real hardware"
 fi
 
 # --- what the OS hands its agents -----------------------------------------

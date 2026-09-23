@@ -30,6 +30,12 @@ fi
 
 ERGON="${ERGON:-$HOME/ergonOS}"
 export PATH="$HOME/.local/bin:$PATH"
+# shellcheck source=../lib/transaction.sh
+. "$ERGON/lib/transaction.sh"
+# How to reach the user manager that is already running from a shell that has
+# no session, which is every shell this script is ever started from.
+# shellcheck source=../lib/user-manager.sh
+. "$ERGON/lib/user-manager.sh"
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   ok  %s\n' "$*"; }
 skip() { printf '   ·   %s\n' "$*"; }
@@ -40,6 +46,12 @@ warn() { printf '   !!  %s\n' "$*" >&2; }
 
 # Same helper install.sh uses: strip comments, blank lines and trailing space.
 _pkglist() { sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/[[:space:]]*$//' "$1"; }
+
+# The list of paths this script reads, shared with ergon-sync and ergon-doctor
+# so all three ask the same question. See the file for why it is not written
+# out here.
+# shellcheck source=../lib/provision-inputs.sh
+. "$ERGON/lib/provision-inputs.sh"
 
 # ---------------------------------------------------------------------------
 say "system packages"
@@ -81,12 +93,44 @@ if command -v informant >/dev/null && ! informant check >/dev/null 2>&1; then
   fi
 fi
 
-# --needed makes this a no-op for anything already present. No -y: refreshing
-# the db and installing in one transaction is the partial-upgrade footgun.
-sudo pacman -Sy --noconfirm >/dev/null
+# -Syu, in ONE transaction -- and only on a run that actually has something to
+# install.
+#
+# The comment that stood here argued that refreshing the database and
+# installing together is the partial-upgrade footgun, and had it backwards. The
+# footgun is -Sy WITHOUT -u: it points the database at today's versions while
+# the installed packages stay at whatever day they were installed, so the next
+# package pulled in links against a libfoo.so.N that the old, unupgraded libfoo
+# does not provide. Installing anything at all therefore means -Syu.
+#
+# Which is exactly why this asks first whether anything is missing. `ergon
+# sync` now re-runs provisioning for a change to grub/ or a hardware profile,
+# and a machine that already has every package does not need a transaction for
+# that -- least of all a months-deep unattended upgrade under a live session,
+# where the linux package takes /usr/lib/modules/$(uname -r) with it and mesa
+# is replaced under the running compositor. Upgrading is `ergon update`, which
+# checks the four preconditions this script does not.
 mapfile -t PKGS < <(_pkglist "$ERGON/packages/pacman")
-sudo pacman -S --needed --noconfirm "${PKGS[@]}"
-ok "${#PKGS[@]} packages"
+# Also guards the -T below: with no targets it reads STDIN, so an empty
+# manifest would hang provisioning rather than report anything.
+[ "${#PKGS[@]}" -gt 0 ] || { echo "packages/pacman is empty" >&2; exit 1; }
+# -T prints the targets that are NOT satisfied and exits 127 when there are
+# any, which set -e would otherwise take as fatal.
+mapfile -t MISSING < <(pacman -T "${PKGS[@]}" 2>/dev/null || true)
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  warn "${#MISSING[@]} package(s) missing — installing them upgrades the system (pacman -Syu)"
+  # The guards ergon-update puts around ITS transaction, because this is the
+  # same transaction. They were only on that side while this one ran bare, and
+  # ERGON-22 turned that into a real difference: `ergon sync` now re-runs
+  # provisioning on a machine that is in use, so this is the copy that upgrades
+  # a laptop with a session open and a lid to close.
+  ergon_txn_space 8 "Run 'sudo paccache -rk1', then provision again." || exit 1
+  ergon_txn_wrap ergon-provision provisioning "package install"
+  sudo "${ERGON_TXN[@]}" pacman -Syu --needed --noconfirm "${PKGS[@]}"
+  ok "${#PKGS[@]} packages"
+else
+  ok "${#PKGS[@]} packages already installed; nothing to upgrade here (use: ergon update)"
+fi
 
 # ---------------------------------------------------------------------------
 say "snapshots"
@@ -176,6 +220,263 @@ sudo rmmod floppy 2>/dev/null || true
 [ -e /dev/fd0 ] && warn "/dev/fd0 is still present on this boot; it is gone after the next one" \
                 || ok "no floppy device"
 
+# ---------------------------------------------------------------------------
+say "firewall and container publishing"
+# ERGON-20. Nothing filtered inbound on this machine at all -- no ufw, no
+# nftables, no iptables anywhere in the repo -- and this is a laptop that joins
+# conference and observatory Wi-Fi, where every other host on the subnet is a
+# stranger.
+#
+# Two halves, because the ruleset alone does not cover the second one. A
+# published container port is DNAT'd in the nat hook and delivered through
+# FORWARD, so it never passes the input chain: `docker run -p 8080:80` on a
+# firewalled machine is still open to the room. The daemon binding it to
+# loopback is what closes that, and the two are written together here so
+# neither can be applied without the other.
+#
+# _changed rather than the unconditional `install` every other /etc file in
+# this script uses: applying daemon.json means restarting dockerd, which stops
+# every running container. A re-provision must not do that for bytes that did
+# not move.
+_changed() {  # _changed <path> < content -- true when the file now differs
+  local p=$1 t; t=$(mktemp)
+  cat > "$t"
+  if sudo cmp -s "$t" "$p" 2>/dev/null; then rm -f "$t"; return 1; fi
+  # set -e does not apply to a function called as an `if` condition, so a write
+  # that failed would otherwise return "unchanged" and the caller would report
+  # a policy it never applied.
+  sudo install -Dm644 "$t" "$p" || { rm -f "$t"; warn "could not write $p"; return 1; }
+  rm -f "$t"
+}
+
+if _changed /etc/nftables.conf <<'NFT'
+#!/usr/bin/nft -f
+# Written by provision-arch.sh. Loaded by nftables.service.
+#
+# There is no "flush ruleset" in this file and there must never be one.
+# nftables.service re-runs this file on every reload, and Docker's rules live
+# in the same nf_tables backend through iptables-nft -- so a flush wipes the
+# DOCKER and DOCKER-USER chains out from under a running daemon and every
+# container loses its networking until dockerd is restarted. This file owns one
+# table and destroys exactly that one. `destroy` rather than `delete` because
+# destroy does not fail when the table is not there yet, which is every first
+# boot.
+destroy table inet ergon
+
+table inet ergon {
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		iif "lo" accept
+		ct state established,related accept
+		ct state invalid drop
+
+		# Every ICMP type, not a hand-picked list. The list is where this goes
+		# wrong, and it goes wrong silently: without ICMPv6 neighbour
+		# discovery IPv6 does not work at all, and without packet-too-big the
+		# path MTU black-holes -- a connection that opens, moves a few KB and
+		# then hangs forever, which is the worst thing to debug from an
+		# observatory. Echo is in deliberately: a laptop nobody can ping is
+		# harder to diagnose than one they can.
+		meta l4proto icmp accept
+		meta l4proto ipv6-icmp accept
+
+		# DHCP, both families. Conntrack does not cover the v4 client:
+		# NetworkManager's internal client does DISCOVER/OFFER over AF_PACKET,
+		# which never reaches this hook, but a rebinding renewal is broadcast
+		# and its reply has no outbound entry to match -- so the lease renews
+		# for as long as the original server answers and the link then dies
+		# hours into a conference day. DNS needs nothing here; a reply to a
+		# query this machine sent is established.
+		udp dport 68 udp sport 67 accept
+		udp dport 546 udp sport 547 accept
+
+		# The tailnet is trusted -- the fleet reaches this machine over it.
+		# iifname, NOT iif: iif resolves the name to an interface index when
+		# the ruleset LOADS, so the whole file fails when tailscaled has not
+		# brought tailscale0 up yet, which is the boot order on every reboot.
+		iifname "tailscale0" accept
+		# Direct WireGuard. Without it tailscale still works, through a DERP
+		# relay, which is slower for no reason anyone can see.
+		udp dport 41641 accept
+		# ssh from the LAN is dropped with everything else. That is the intended
+		# answer: sshd is not enabled on a fresh install, and the fleet reaches
+		# this machine over the tailnet, which the rule above already trusts.
+
+		# mDNS stays CLOSED. It is what network printer discovery needs, and
+		# printing is card G22, which owns opening it -- to the LAN only, and
+		# only when printing is enabled:
+		#   udp dport 5353 ip daddr 224.0.0.251 accept
+		#   udp dport 5353 ip6 daddr ff02::fb accept
+		#
+		# Traffic from the docker bridges is dropped with everything else, so a
+		# container reaching back to the host gateway (host.docker.internal,
+		# --add-host ...:host-gateway) hangs. That is deliberate and it is in
+		# knowledge/security.md; opening it belongs in this file, not in a
+		# rule someone adds by hand that the next reload discards.
+	}
+
+	# No forward chain and no output chain, on purpose. Docker owns forwarding
+	# through DOCKER-USER and DOCKER-ISOLATION, and a second forward chain with
+	# a drop policy here would break container networking outright. Outbound is
+	# unrestricted; that trade is recorded in knowledge/security.md.
+}
+NFT
+then _nft_new=1; else _nft_new=0; fi
+
+# The unit this drop-in is written against is ARCH's, and Arch's is not
+# upstream's. The whole file there is:
+#
+#   [Unit] ... [Service]
+#   Type=oneshot
+#   ExecStart=/usr/bin/nft -f /etc/nftables.conf
+#   [Install] WantedBy=multi-user.target
+#
+# and nothing else -- no RemainAfterExit=, no ExecReload=, no ExecStop=. Debian
+# ships upstream's, which has all three including the `nft flush ruleset` stop,
+# and this drop-in was first written against THAT shape. It left the first real
+# Arch machine completely unfiltered: systemd runs a oneshot's stop commands the
+# moment ExecStart exits unless RemainAfterExit=yes is set, so the scoped
+# ExecStop below destroyed the table the unit had just loaded, in the same
+# second, on every single start. The service sat "inactive", `nft list ruleset`
+# showed only docker's tables, and provisioning printed ok.
+#
+# So own all three directives rather than narrow one the package is assumed to
+# have. The reset before each is for the distro that DOES ship one: systemd
+# appends to a list-valued directive, so upstream's flush would otherwise still
+# run on stop -- and it is the flush, not our destroy, that takes Docker's
+# iptables-nft chains down with it.
+if _changed /etc/systemd/system/nftables.service.d/10-ergon-scope.conf <<'UNIT'
+# Written by provision-arch.sh.
+#
+# Arch's nftables.service is Type=oneshot with no RemainAfterExit=, so systemd
+# runs the stop commands as soon as `nft -f` exits. Without this line the
+# ExecStop below destroys the ruleset the unit has just loaded and the machine
+# is left with nothing filtering inbound.
+[Service]
+RemainAfterExit=yes
+# Arch's unit has no ExecReload at all, so `systemctl reload nftables` -- what
+# this script does after writing a new ruleset, and what anyone does by hand --
+# fails there with "job type reload is not applicable". The file starts by
+# destroying its own table, so one `nft -f` is the whole swap, in a single
+# transaction, with no window in which nothing filters.
+ExecReload=
+ExecReload=/usr/bin/nft -f /etc/nftables.conf
+# Upstream's stop is `nft flush ruleset`, which destroys Docker's iptables-nft
+# chains along with ours; Arch's is nothing at all, which leaves a stopped
+# service still filtering. Neither is right: destroy exactly the table this
+# machine's file owns.
+ExecStop=
+ExecStop=/usr/bin/nft destroy table inet ergon
+UNIT
+then
+  sudo systemctl daemon-reload
+fi
+
+# Why it did not work, into the provisioning log, at the moment it did not
+# work. This stage's warnings were the only account of the failure above and
+# they said nothing a reader could act on: the VM suite prints provisioning's
+# log only when provisioning EXITS non-zero, and a stage that warns still exits
+# zero, so a 35-minute run reported "nftables.service is not active" and not one
+# byte about why.
+_nft_said=0
+_nft_why() {
+  [ "$_nft_said" = 0 ] || return 0   # the checks below overlap; say it once
+  _nft_said=1
+  sudo systemctl status --no-pager --full nftables 2>&1 | sed 's/^/       /' >&2 || true
+  sudo journalctl -u nftables --no-pager -n 20 2>&1 | sed 's/^/       /' >&2 || true
+  sudo nft -c -f /etc/nftables.conf 2>&1 | sed 's/^/       /' >&2 || true
+}
+
+if ! sudo systemctl enable --now nftables >/dev/null 2>&1; then
+  warn "nftables.service would not start -- NOTHING filters inbound on this machine"
+  _nft_why
+elif [ "$_nft_new" = 1 ] && ! sudo systemctl reload nftables >/dev/null 2>&1; then
+  # `enable --now` does nothing to a unit that is already running, so a changed
+  # ruleset on an installed machine reaches the kernel only through the reload.
+  warn "the new ruleset did not load; run sudo nft -c -f /etc/nftables.conf to see why. The machine is still filtered by the old one"
+  _nft_why
+fi
+# Ask the KERNEL, not systemctl's exit code. `enable --now` returned zero on the
+# machine that was left unfiltered, and truthfully: ExecStart really did load
+# the ruleset, and the unit's own stop really did destroy it again a moment
+# later. No exit code can see that. The only claim worth making here is the one
+# doctor and the VM suite make: the chain is loaded, with policy drop.
+# CAPTURED, not piped into `grep -q`. grep leaves on the first match, nft takes
+# SIGPIPE writing the rest, and this script's `set -o pipefail` then hands back
+# 141 -- so the check reported "NOTHING filters inbound" about a machine whose
+# chain was loaded, with policy drop, the whole time. Reproduced: a loaded
+# ruleset gives `pipeline rc=141` under pipefail and rc=0 through a variable.
+if _nft_chain=$(sudo nft list chain inet ergon input 2>/dev/null) \
+   && case "$_nft_chain" in *"policy drop"*) true ;; *) false ;; esac; then
+  ok "nftables: input drops by default (lo, established, ICMP, DHCP, tailscale0)"
+else
+  warn "the inet ergon input chain is NOT in the kernel -- NOTHING filters inbound on this machine"
+  _nft_why
+fi
+
+# "ip" is the address `docker run -p 8080:80` binds when the command does not
+# name one. Docker's default is 0.0.0.0, which on this machine means every
+# conference network it has ever joined, and the ruleset above cannot help
+# because the DNAT bypasses the input hook.
+#
+# The cost is real: a compose service another fleet host reaches today stops
+# answering. Publishing off-box is now a thing you say out loud --
+#   docker run -p 0.0.0.0:8080:80 ...      ports: ["0.0.0.0:8080:80"] in compose
+#
+# log-opts because json-file has no default cap at all: one chatty container
+# fills / and then everything on the machine fails at once, which reads as a
+# disk problem rather than as a container.
+#
+# MERGED into what is already there, not written over it. Every other /etc file
+# this script owns is ergon policy that nothing else writes, but daemon.json is
+# where a machine keeps its own state: "data-root" on /home because / is small,
+# the insecure-registries entry for the registry chiki hosts, a proxy stanza. A
+# whole-file heredoc discards all of it and the restart below then brings
+# dockerd up on the default data-root, where every image, container and volume
+# the machine had is simply not there -- and provisioning prints ok. So set
+# four keys and leave everything else alone.
+#
+# jq -S because the bytes have to be stable: unsorted, the merge would reorder
+# the file on every run and _changed would restart dockerd -- stopping every
+# container -- for content that did not move. A file someone hand-indented is
+# rewritten once, which is a real change and costs one restart.
+_dj_old=$(sudo cat /etc/docker/daemon.json 2>/dev/null || true)
+# Missing or empty carries no state worth preserving, and jq on empty input
+# prints nothing at all -- which the guard below would read as a refusal,
+# leaving the machine publishing to 0.0.0.0 forever.
+[ -n "${_dj_old//[[:space:]]/}" ] || _dj_old='{}'
+_dj_jq=$(cat <<'DOCKERD'
+.ip = "127.0.0.1"
+| ."log-driver" = "json-file"
+| ."log-opts"."max-size" = "10m"
+| ."log-opts"."max-file" = "5"
+DOCKERD
+)
+_dj_new=$(printf '%s\n' "$_dj_old" | jq -S "$_dj_jq" 2>/dev/null) || _dj_new=
+if ! command -v jq >/dev/null 2>&1; then
+  # jq is in packages/pacman and installed by the stage at the top of this
+  # script, so this is only reachable on a machine that never got the package
+  # list. Refusing beats falling back to a whole-file write.
+  warn "jq is missing, so daemon.json cannot be merged -- leaving it alone. Published ports still bind 0.0.0.0"
+elif [ -z "$_dj_new" ]; then
+  # jq fails, and prints nothing, on anything that is not an object: a
+  # truncated edit, a stray array, a file half-written by something else.
+  # dockerd is not running with that file either way, and overwriting it would
+  # destroy the only copy of whatever someone was in the middle of.
+  warn "/etc/docker/daemon.json is not a JSON object -- leaving it alone. Published ports still bind 0.0.0.0; fix the file and re-run"
+elif _changed /etc/docker/daemon.json <<<"$_dj_new"; then
+  if systemctl is-active --quiet docker; then
+    sudo systemctl restart docker \
+      && ok "docker publishes to 127.0.0.1 only (-p 0.0.0.0:PORT:PORT to publish off-box); dockerd restarted" \
+      || warn "daemon.json written but dockerd would not restart; it applies on the next boot"
+  else
+    ok "docker publishes to 127.0.0.1 only (-p 0.0.0.0:PORT:PORT to publish off-box)"
+  fi
+else
+  skip "docker publishing policy unchanged"
+fi
+
 say "services"
 # power-profiles-daemon belongs here and was missing: it is installed by
 # packages/pacman and was never enabled, so waybar's power-profiles-daemon
@@ -186,7 +487,10 @@ for u in NetworkManager docker tailscaled bluetooth fwupd power-profiles-daemon;
     sudo systemctl enable --now "$u" >/dev/null 2>&1 && ok "$u" || skip "$u (not installed)"
   fi
 done
-groups | grep -qw docker || { sudo usermod -aG docker "$USER"; ok "added $USER to docker (re-login required)"; }
+# Group membership, NOT the daemon, is gated on DOCKER_GROUP (see "docker
+# group" below, after hosts/$HOST/host.env exists to read it from) -- the
+# daemon enables unconditionally because sudo docker needs it running either
+# way, and that is the documented path when the knob is off.
 
 # ---------------------------------------------------------------------------
 say "graphics"
@@ -451,6 +755,34 @@ HYPRHOST
 fi
 
 # ---------------------------------------------------------------------------
+say "docker group"
+# usermod -aG docker used to be unconditional in "services" above. That group
+# is effectively passwordless root -- anything that can reach the socket can
+# bind-mount / and chroot into it -- so it is opt-in per host now, read the
+# same way GRAPHICAL is: from hosts/<host>/host.env, default 0. This is the
+# first stage that can ask, because the file did not necessarily exist until
+# the "per-host directory" stage just above scaffolded it.
+DOCKER_GROUP=0
+HOSTENV="$ERGON/hosts/$HOST/host.env"
+# shellcheck disable=SC1090
+[ -f "$HOSTENV" ] && . "$HOSTENV"
+# $(id -un), not $USER: `groups` with no argument answers for THIS PROCESS's
+# cached supplementary groups, not a live /etc/group lookup -- coreutils says
+# so in its own --help. Naming the user forces the live read here too, same
+# reason bin/ergon-doctor's docker-group check does.
+ME="$(id -un)"
+if [ "${DOCKER_GROUP:-0}" = 1 ]; then
+  groups "$ME" | grep -qw docker || { sudo usermod -aG docker "$ME"; ok "added $ME to docker (re-login required) -- DOCKER_GROUP=1 in $HOSTENV"; }
+else
+  # Never REMOVE membership: a reprovision that silently drops your own
+  # session's docker access is a worse surprise than the one this knob fixes.
+  # If it is 0 and you are in the group anyway, that is ergon doctor's
+  # business to report, not this script's to undo.
+  groups "$ME" | grep -qw docker && skip "in the docker group despite DOCKER_GROUP=0 -- ergon doctor" \
+                                  || skip "DOCKER_GROUP=0 -- docker needs sudo"
+fi
+
+# ---------------------------------------------------------------------------
 say "bundles"
 # Optional package groups: inference, astronomy, ml, gpu, julia, latex,
 # notebooks. See packages/bundles/README.md.
@@ -574,6 +906,136 @@ else
   warn "polkit rule written but the daemon was not reloaded; it applies after a reboot"
 fi
 
+# ---------------------------------------------------------------------------
+say "out-of-memory containment"
+# ERGON-19. A sampler that exhausted memory used to cost the whole session, and
+# every link in that chain is a default nobody chose.
+#
+# uwsm runs the compositor as wayland-wm@hyprland.service with Slice=session.slice,
+# no Delegate= and no OOMPolicy=, so it takes the manager default OOMPolicy=stop
+# -- and the unit carries OnFailure=wayland-session-shutdown.target with
+# OnFailureJobMode=replace-irreversibly. One process killed by the kernel inside
+# that unit therefore stops the unit, and stopping it ends the session: every
+# terminal, every Emacs buffer, every unsaved notebook. Terminals used to be
+# started straight from a keybind, which put them and everything they ran in
+# exactly that unit.
+#
+# Three files, each answering a different half:
+#
+#   oomd.conf.d   act on memory PRESSURE. The kernel OOM killer only fires when
+#                 an allocation actually fails, which on a machine with swap is
+#                 minutes after it stopped being usable.
+#   app.slice.d   where systemd-oomd is allowed to act.
+#   wayland-wm@   the kernel killing something that IS still in the compositor's
+#                 unit must not end the session.
+#
+# app.slice and NOT app-graphical.slice, worked out rather than copied from
+# Omarchy: systemd-oomd(8) says only DESCENDANTS of a monitored cgroup are
+# candidates, the monitored unit itself never is, and "only leaf cgroups and
+# cgroups with memory.oom.group set to 1 are eligible candidates". uwsm puts
+# each uwsm-app launch in its own scope under app-graphical.slice, which is a
+# child of app.slice -- so monitoring app.slice reaches each app's scope
+# individually, two levels down, and can never kill app-graphical.slice as a
+# whole because a slice with children is not a leaf. app.slice also covers the
+# transient scope `ergon watch` puts each run in; app-graphical.slice would not,
+# since `systemd-run --user` defaults to the ROOT slice (ergon-watch asks for
+# --slice=app.slice for that reason). The compositor is in session.slice, which
+# is monitored by nothing here and is the point of the whole arrangement.
+#
+# zram is deliberately NOT part of this. It changes what hibernation resumes
+# from, and bin/test-hibernate.sh needs a VM to say whether that still works.
+_oomd_reload=0; _user_reload=0
+if _changed /etc/systemd/oomd.conf.d/10-ergon.conf <<'OOMD'
+# Written by provision-arch.sh.
+#
+# oomd.conf(5) defaults to 60% pressure sustained for 30s. On a laptop that is
+# half a minute in which nothing redraws and no keystroke lands -- the state
+# this is supposed to prevent, arrived at on the way to preventing it. 50%/20s
+# is the same pair Omarchy settled on.
+#
+# SwapUsedLimit= is left at its default on purpose: it only governs cgroups with
+# ManagedOOMSwap=kill, and nothing here sets that. Swap on this machine is where
+# the hibernation image goes, so "swap is full" is not by itself a reason to
+# kill anything.
+[OOM]
+DefaultMemoryPressureLimit=50%
+DefaultMemoryPressureDurationSec=20s
+OOMD
+then _oomd_reload=1; fi
+
+if _changed /etc/systemd/user/app.slice.d/10-ergon-oomd.conf <<'OOMAPP'
+# Written by provision-arch.sh.
+#
+# Everything uwsm-app starts -- every terminal, every launcher hit, and the
+# scope `ergon watch` wraps a run in -- lands under this slice, so this is the
+# one line that decides whether a runaway job is killed on its own or takes the
+# machine with it. The compositor is in session.slice and is deliberately not
+# covered: it must never be a candidate.
+[Slice]
+ManagedOOMMemoryPressure=kill
+OOMAPP
+then _user_reload=1; fi
+
+if _changed /etc/systemd/user/wayland-wm@.service.d/10-ergon-oom.conf <<'OOMWM'
+# Written by provision-arch.sh.
+#
+# uwsm's unit sets no OOMPolicy=, so it gets the default, stop -- and it stops
+# with a failure, which its own OnFailure=wayland-session-shutdown.target turns
+# into the end of the session. Anything still started inside the compositor's
+# unit (an exec-once daemon, the foot escape hatch, anything forked from either)
+# would therefore cost the whole desktop the moment the kernel picked it.
+# continue logs the kill and keeps the session.
+[Service]
+OOMPolicy=continue
+OOMWM
+then _user_reload=1; fi
+
+if sudo systemctl enable --now systemd-oomd >/dev/null 2>&1; then
+  # Restart only when the config moved: this runs on every provision, and
+  # bouncing the daemon for bytes that did not change costs a window in which
+  # nothing is watching pressure at all.
+  [ "$_oomd_reload" = 0 ] || sudo systemctl restart systemd-oomd >/dev/null 2>&1 || true
+  ok "systemd-oomd watches memory pressure; a runaway app is killed, the session is not"
+else
+  # Not fatal. A kernel without PSI, or a container, has no pressure to watch --
+  # and the rest of this script has nothing to do with that.
+  warn "systemd-oomd would not start; nothing contains a run that exhausts memory"
+fi
+# THE POLICY AS THE RUNNING MANAGER HOLDS IT, which is the only form that
+# reaches oomd. A drop-in under /etc/systemd/user is a file until a manager has
+# read it, and the manager that matters here is nearly always older than this
+# run: there is one per user, it outlives every session, and it read app.slice
+# at login -- before this file existed.
+#
+# This was `systemctl --user daemon-reload || warn`, which could not work from
+# `su - <user> -c` or `sudo -u`: neither opens a logind session, so there is no
+# bus for systemctl to find (see lib/user-manager.sh). The reload failed for a
+# reason that had nothing to do with this machine, the script said the policy
+# would apply at the next login, and a manager sat there holding auto with
+# nothing watching it. Worse, the whole thing was gated on the file having
+# CHANGED, so the second provision of a machine -- the one where the file is
+# already correct and the manager still has not read it -- asked nothing and
+# said nothing.
+#
+# So: ask the manager, reload it when the answer is wrong, ask AGAIN, and
+# report the second answer. Never `systemctl --user restart app.slice`, which
+# would apply the policy by killing every app in the slice.
+#
+# After the oomd block above and not before it: the user manager connects to
+# oomd in order to report this, and a report sent while oomd is down is dropped.
+#
+# When either drop-in moved, reload first -- the compositor's OOMPolicy rides on
+# the same reload, and app.slice below is the witness that the reload landed.
+[ "$_user_reload" = 0 ] || ergon_user_reload || true
+_oom_rc=0
+_oom_live=$(ergon_user_ensure_prop app.slice ManagedOOMMemoryPressure kill) || _oom_rc=$?
+case "$_oom_rc" in
+  0) ok "app.slice is monitored by oomd in the user manager running now" ;;
+  2) warn "no user manager running as $(id -un) here, so nothing is monitored yet — the policy applies at the next login" ;;
+  *) warn "app.slice is ManagedOOMMemoryPressure=$_oom_live even after reloading the user manager; a run that exhausts memory is NOT contained until you log out and back in" ;;
+esac
+unset _oom_rc _oom_live
+
 say "shell"
 # oh-my-zsh and zplug are git clones, not packages. Deliberately not from the
 # AUR: both are a checkout and a source line, and an AUR wrapper would add a
@@ -676,6 +1138,33 @@ else
     && ok "claude code: $CLAUDE_POLICY -> /usr/share/ergon/AGENTS.md" \
     || warn "could not link $CLAUDE_POLICY"
 fi
+
+say "provisioning record"
+# What this machine was provisioned FROM, so that something can later ask
+# whether it still matches the repo. Nothing could, before: `ergon sync`
+# fast-forwards the checkout and re-runs install.sh, which is the USER-level
+# layer, so a package added to packages/pacman, a polkit rule or a GRUB setting
+# reached fresh installs and nothing else -- machines drifted apart by the date
+# each happened to be installed.
+#
+# Every input gets a digest, not just this script and packages/pacman: with two
+# of them recorded, doctor was answering a strictly smaller question than sync
+# asked, and called a machine current while sync was saying it was not.
+#
+# Written last, because it claims every stage above it ran; this script is
+# set -e, so reaching here is that claim.
+#
+# /var/lib/ergon and world-readable, like ergon-backup's status file, because
+# `ergon doctor` runs as the user and "cannot check without root" is no answer
+# to "is this machine current".
+_prov_commit=$(git -C "$ERGON" rev-parse HEAD 2>/dev/null || echo unknown)
+{
+  echo "# Written by provision-arch.sh; read by ergon sync and ergon doctor."
+  echo "commit=$_prov_commit"
+  echo "at=$(date +%s)"
+  ergon_input_digests "$ERGON"
+} | sudo install -Dm644 /dev/stdin /var/lib/ergon/provisioned
+ok "provisioned at ${_prov_commit:0:7}, recorded in /var/lib/ergon/provisioned"
 
 say "done"
 cat <<'EOF'

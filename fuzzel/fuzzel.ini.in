@@ -14,7 +14,18 @@ prompt="  "
 icon-theme=Papirus-Dark
 icons-enabled=yes
 fields=name,generic,comment,categories,filename,keywords
-terminal=wezterm start --
+# ERGON-19. Without these two lines everything the launcher starts is a child of
+# fuzzel, which is a child of the compositor's own systemd unit -- so a browser
+# or a notebook that exhausts memory is a process the kernel kills INSIDE
+# wayland-wm@hyprland.service, and uwsm ends the session on that. uwsm-app puts
+# each launch in its own scope under app-graphical.slice, where systemd-oomd may
+# kill it and nothing else.
+launch-prefix=uwsm-app --
+# ergon-term rather than `wezterm start --`: it passes --always-new-process (a
+# shared wezterm process means one cgroup for every terminal, so one kill takes
+# them all) and it falls back to foot on a machine where the AUR build is
+# missing or mid-rebuild.
+terminal=ergon-term
 layer=overlay
 lines=12
 width=48

@@ -1,4 +1,4 @@
-# Packages installed by provision-arch.sh with `pacman -S --needed`.
+# Packages installed by provision-arch.sh with `pacman -Syu --needed`.
 #
 # One per line, comments and blank lines stripped. This is the laptop's manifest
 # and NOT a fleet list — the Debian boxes have packages/apt, and the overlap is
@@ -46,7 +46,13 @@ man-pages
 # --- system ----------------------------------------------------------------
 inetutils           # hostname(1); arch-bootstrap writes /etc/hostname
 networkmanager      # nmtui is the network UI; waybar's network module reads it
-pacman-contrib      # paccache, checkupdates
+pacman-contrib      # paccache, checkupdates, pacdiff
+rebuild-detector    # checkrebuild: which installed packages link a shared
+                    # library that is no longer on disk. Nothing else on an
+                    # Arch machine ever rebuilds an AUR package after a soname
+                    # bump, and the failure is silent -- the binary dies at
+                    # exec, so waybar-git simply never appears and no log says
+                    # why. `ergon update` and `ergon doctor` both read it.
 reflector           # mirror ranking
 informant           # BLOCKS an upgrade until the Arch news item is read.
                     # On a rolling distro the manual-intervention notices are
@@ -54,6 +60,9 @@ informant           # BLOCKS an upgrade until the Arch news item is read.
                     # announced before they land.
 docker
 docker-compose
+nftables            # the firewall provisioning writes. iptables-nft, which docker
+                    # depends on, is the iptables CLI over the same backend --
+                    # it ships neither the nft command nor nftables.service
 tailscale
 age
 sops

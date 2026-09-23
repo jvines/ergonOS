@@ -10,7 +10,9 @@
 #
 # "Which run in March was the one that worked" is a question everyone has and
 # nobody can answer. Every `ergon watch` writes here: command, working
-# directory, commit, duration, exit code, peak memory.
+# directory, commit, duration, exit code, peak memory, and whether it was the
+# machine that ended it -- a run killed for memory says so rather than showing
+# up as exit 137.
 #
 # Together with ergon-fig this is the provenance spine -- the figure tells you
 # which run produced it, and this tells you what that run was.
@@ -23,7 +25,7 @@ while [ $# -gt 0 ]; do
     --failed) ONLY_FAILED=1; shift ;;
     --name)   PATTERN="${2:?--name needs a pattern}"; shift 2 ;;
     --json)   JSON=1; shift ;;
-    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *[0-9]*)  N="$1"; shift ;;
     *) echo "ergon-hist: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -68,7 +70,16 @@ print(f"  {'when':<17} {'name':<{w}} {'dur':>7} {'peak':>7}  {'git':<14} status"
 for r in rows:
     when = r.get("started", "")[:16].replace("T", " ")
     rc = r.get("exit", 0)
-    status = "ok" if rc == 0 else f"FAILED ({rc})"
+    # An OOM kill is its own answer, not exit 137. "FAILED (137)" sends you
+    # looking for a bug in the script; "OUT OF MEMORY" tells you the run was
+    # too big for the machine, which is a different afternoon. Older lines have
+    # no field at all, so .get() rather than an index.
+    if rc == 0:
+        status = "ok"
+    elif r.get("oom"):
+        status = "OUT OF MEMORY"
+    else:
+        status = f"FAILED ({rc})"
     print(f"  {when:<17} {r.get('name','')[:w]:<{w}} {dur(r.get('seconds',0)):>7} "
           f"{str(r.get('peak_mb',0))+'M':>7}  {r.get('git','') or '-':<14} {status}")
 PY

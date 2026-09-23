@@ -75,6 +75,215 @@ else
   rec warn "bundles" "no $HOSTENV — this machine is not described anywhere"
 fi
 
+# --- docker group ------------------------------------------------------------
+# `groups`, not host.env's opinion of it: DOCKER_GROUP says what provisioning
+# was told, membership is what is actually true, and the two can disagree --
+# a machine provisioned before this knob existed, or one someone usermod'd by
+# hand. Either way the group is real root for any process in the session, so
+# this reports the fact even where host.env doesn't claim it.
+#
+# `groups` with no argument answers for the CALLING PROCESS's cached
+# supplementary groups, not a live /etc/group lookup -- coreutils' own --help
+# says so. A terminal, tmux pane or ssh master left open across a `usermod`
+# would then have doctor echo its own stale answer back at it: "not in the
+# group" from the one place meant to catch that. Same reason line 66 already
+# uses $(id -un) instead of $USER, which is also unset in plenty of contexts
+# doctor runs in -- ssh non-interactive exec, a cron/timer wrapper, `sudo -u`.
+DG=0
+if [ -f "$HOSTENV" ]; then
+  # shellcheck disable=SC1090
+  DG=$( . "$HOSTENV" 2>/dev/null; printf '%s' "${DOCKER_GROUP:-0}" )
+fi
+# And $SUDO_USER before either, because the firewall row below prints
+# "run: sudo ergon doctor" -- under which $(id -un) is root, root is in no
+# docker group, and this row would answer ok about a machine where the real
+# user can become root without a password. The one row that exists to catch
+# that, saying the opposite, under the invocation doctor itself suggests.
+WHO="${SUDO_USER:-$(id -un)}"
+if groups "$WHO" | grep -qw docker; then
+  if [ "$DG" = 1 ]; then
+    rec warn "docker-group" "any process in this session can become root -- the trade-off DOCKER_GROUP=1 chose for this host"
+  else
+    rec warn "docker-group" "any process in this session can become root, and host.env does not declare it (DOCKER_GROUP=$DG) -- set DOCKER_GROUP=1 if that's intended, otherwise sudo gpasswd -d $WHO docker"
+  fi
+else
+  rec ok "docker-group" "not in the docker group — docker needs sudo"
+fi
+
+# --- the firewall --------------------------------------------------------------
+# Not "is nftables installed": a ruleset that fails to parse leaves the service
+# dead and the package present, which is the state this has to catch. The
+# question is whether the input chain provisioning wrote is loaded in the
+# kernel with a drop policy right now.
+#
+# The chain policy needs CAP_NET_ADMIN to read -- `nft list` over netlink is
+# root-only. Same answer as the snapper check: say so rather than invent one.
+# `systemctl is-active` needs no root, so an unfiltered machine is still caught
+# when doctor runs as the user, which is how it is normally run.
+#
+# Root is probed on its own, BEFORE the policy is asked for. Reading a non-zero
+# `nft list` as "I am not root" made those two facts one branch, and the state
+# it then got wrong is the dangerous one: nftables.service is Type=oneshot
+# RemainAfterExit=yes, so it stays active after someone types `nft flush
+# ruleset` or `nft destroy table inet ergon` while debugging. `sudo ergon
+# doctor` on that machine printed ok, with a note about needing root, as root,
+# while nothing at all filtered inbound.
+if ! systemctl is-active --quiet nftables 2>/dev/null; then
+  rec fail "firewall" "nftables.service is not active — nothing filters inbound on the next network this machine joins"
+elif ! sudo -n true 2>/dev/null; then
+  rec ok "firewall" "nftables.service is active; the chain policy cannot be checked without root (run: sudo ergon doctor)"
+elif pol=$(sudo -n nft list chain inet ergon input 2>/dev/null); then
+  case "$pol" in
+    *"policy drop"*) rec ok "firewall" "inet ergon input is loaded, policy drop" ;;
+    *) rec fail "firewall" "the inet ergon input chain is loaded but its policy is not drop — inbound is open" ;;
+  esac
+else
+  rec fail "firewall" "nftables.service is active but the inet ergon table is not loaded — nothing filters inbound"
+fi
+
+# --- what docker publishes to --------------------------------------------------
+# A file read, so this one answers for a user with no sudo at all, and it is
+# the half the firewall cannot cover: a published port is DNAT'd past the input
+# hook, so `docker run -p 8080:80` with docker's own default of 0.0.0.0 is open
+# to the room whatever the ruleset says.
+#
+# Read under ERGON_SYSROOT like the stamp above, so the hermetic test can point
+# it at a fixture.
+DJ="${ERGON_SYSROOT:-}/etc/docker/daemon.json"
+if [ ! -f "$DJ" ]; then
+  rec fail "docker-publish" "no $DJ — docker run -p binds 0.0.0.0, on every network this laptop joins"
+elif grep -q '"ip"[[:space:]]*:[[:space:]]*"127\.0\.0\.1"' "$DJ"; then
+  rec ok "docker-publish" "ports bind 127.0.0.1 — publish off-box on purpose: -p 0.0.0.0:PORT:PORT"
+else
+  rec fail "docker-publish" "$DJ does not set \"ip\": \"127.0.0.1\" — docker run -p binds every interface"
+fi
+
+# --- provisioning ------------------------------------------------------------
+# The system-level layer -- packages, systemd drop-ins, polkit rules, GRUB --
+# reaches a machine only through bin/provision-arch.sh. `ergon sync` re-runs it
+# when the incoming commits touch what it reads, and this is how you find out
+# that it did: whether what is ON this machine is what the repo says now, or
+# what the repo said the day it was installed.
+#
+# Read under ERGON_SYSROOT, like the DMI below, so bin/test-provisioning.sh can
+# point it at a fixture. Provisioning itself always writes the real path.
+#
+# Over the same input list ergon-sync uses, from the same file. This checked
+# two of the paths sync watched, so it was answering a strictly smaller
+# question: a commit touching only grub/ left sync saying "not applied yet" and
+# doctor saying "provisioning inputs unchanged", about the same machine.
+# shellcheck source=../lib/provision-inputs.sh
+. "$ERGON/lib/provision-inputs.sh"
+STAMP="${ERGON_SYSROOT:-}/var/lib/ergon/provisioned"
+_st()  { sed -n "s/^$1=//p" "$STAMP" 2>/dev/null | tail -1; }
+repo_at=$(git -C "$ERGON" rev-parse --short HEAD 2>/dev/null)
+if [ ! -f "$STAMP" ]; then
+  rec warn "provisioned" "never recorded — this machine predates the stamp, or was never provisioned. Run bin/provision-arch.sh"
+else
+  # Recorded in full, shown short -- except that a machine provisioned from a
+  # copy with no .git records "unknown", and truncating that reads as a
+  # mangled sha rather than as the absence of one.
+  prov_at=$(_st commit); [ "${#prov_at}" -eq 40 ] && prov_at=${prov_at:0:7}
+  stale=$(ergon_stale_inputs "$ERGON" "$STAMP" | tr '\n' ' ')
+  stale="${stale% }"
+  if [ -n "$stale" ]; then
+    rec warn "provisioned" "at $prov_at, repo at ${repo_at:-unknown} — $stale changed since. Run bin/provision-arch.sh"
+  else
+    rec ok "provisioned" "at $prov_at, repo at ${repo_at:-unknown}; provisioning inputs unchanged"
+  fi
+fi
+
+# This is "is the package installed", which the header above rejects -- and it
+# is the one place the question is not a proxy for anything. Everywhere else it
+# stood in for a behaviour and was wrong; here the manifest reaching this
+# machine IS the claim, and a name in packages/pacman that pacman does not have
+# is a package provisioning never installed.
+if command -v pacman >/dev/null 2>&1 && [ -f "$ERGON/packages/pacman" ]; then
+  mapfile -t want < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/[[:space:]]*$//' "$ERGON/packages/pacman")
+  # -T takes its targets as arguments and reads STDIN when there are none, so
+  # an empty manifest here would hang doctor rather than report nothing.
+  if [ "${#want[@]}" -gt 0 ]; then
+    mapfile -t miss < <(pacman -T "${want[@]}" 2>/dev/null)
+    if [ "${#miss[@]}" -gt 0 ]; then
+      rec warn "base-packages" "${#miss[@]} of ${#want[@]} in packages/pacman not installed: ${miss[*]}"
+    else
+      rec ok "base-packages" "all ${#want[@]} in packages/pacman are installed"
+    fi
+  fi
+fi
+
+# --- foreign packages --------------------------------------------------------
+# Nothing on an Arch machine rebuilds an AUR package. One is linked against the
+# shared libraries of the day it was built, and after -Syu moves a soname the
+# binary dies at exec with "cannot open shared object file" and nothing else
+# says why -- waybar-git that way is a bar that simply never appears.
+#
+# checkrebuild reads the ELF headers of installed files, so this is local and
+# works offline. Deliberately NOT a query to the AUR: doctor runs every time
+# someone is already annoyed, and a check that waits on a network is a check
+# people stop running. `ergon aur --outdated` is where the network question
+# lives.
+if command -v pacman >/dev/null 2>&1; then
+  mapfile -t fgn < <(pacman -Qm 2>/dev/null | awk '{print $1}')
+  if [ "${#fgn[@]}" -eq 0 ]; then
+    rec ok "aur" "no foreign packages"
+  elif ! command -v checkrebuild >/dev/null 2>&1; then
+    rec warn "aur" "${#fgn[@]} foreign package(s), and no rebuild-detector — nothing notices one linked against a library that moved"
+  else
+    # checkrebuild has printed both `repo/name` and `repo name` across versions,
+    # so take the name off the end and let `pacman -Qm` say which are foreign.
+    brk=$(checkrebuild 2>/dev/null | awk '{ n = $NF; sub(/^.*\//, "", n); print n }' \
+          | grep -xF -f <(printf '%s\n' "${fgn[@]}") | tr '\n' ' ')
+    brk="${brk% }"
+    if [ -n "$brk" ]; then
+      rec warn "aur" "$brk link a library that is gone — ergon aur --rebuild PKG"
+    else
+      rec ok "aur" "${#fgn[@]} foreign package(s), none linked against a library that is gone"
+    fi
+  fi
+
+  # The conservative, offline half of "outdated": whether what is installed was
+  # built from the PKGBUILD commit packages/aur reviewed. A pin moved forward in
+  # the repo and never rebuilt here is a machine running a recipe nobody on it
+  # ever ran -- and that is the failure that makes a pin worth having.
+  #
+  # Read from what ergon-aur recorded, because a -git pkgver names the UPSTREAM
+  # commit and cannot answer this.
+  BUILT="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/aur-builds"
+  # Only the pinned packages this machine actually has. A pin for something
+  # installed nowhere here is the repo's business, not this machine's.
+  have=" ${fgn[*]} "
+  drift=""; unbuilt=""; pinned=0
+  while read -r p pin; do
+    case "$have" in *" $p "*) ;; *) continue ;; esac
+    pinned=$((pinned + 1))
+    was=$(awk -v p="$p" '$1 == p { print $2 }' "$BUILT" 2>/dev/null)
+    if [ -z "$was" ]; then
+      # Installed, pinned, and nothing here ever recorded building it. That is
+      # every machine provisioned before the pins existed: the package was built
+      # once from whatever the AUR had that day, and the shortcut for an
+      # already-installed package means re-provisioning never rebuilds it. It
+      # was reported "ok" for exactly as long as nobody had checked -- which is
+      # the opposite of what this check is for, so it is a warning until a
+      # rebuild here makes it an answer.
+      unbuilt="${unbuilt:+$unbuilt }$p"
+    elif [ "${was:0:${#pin}}" != "$pin" ]; then
+      drift="${drift:+$drift }$p"
+    fi
+  done < <(awk '$1 !~ /^#/ && match($0, /pin=[0-9a-f]{7,40}/) {
+                  print $1, substr($0, RSTART + 4, RLENGTH - 4) }' \
+              "$ERGON/packages/aur" 2>/dev/null)
+  if [ "$pinned" -gt 0 ]; then
+    if [ -n "$drift" ] || [ -n "$unbuilt" ]; then
+      note="${drift:+$drift not built from the commit packages/aur pins}"
+      note="${note:+$note; }${unbuilt:+$unbuilt never built here, so nothing has compared what is installed to the pin}"
+      rec warn "aur-pins" "$note — ergon aur --rebuild PKG"
+    else
+      rec ok "aur-pins" "all $pinned pinned PKGBUILD(s) built from the reviewed commit"
+    fi
+  fi
+fi
+
 # --- rollback ----------------------------------------------------------------
 # Checks what ergon-rollback needs, NOT what `snapper rollback` needs. The
 # first version of this check conflated them and reported a hard FAIL on a
@@ -195,8 +404,60 @@ else
   rec warn "firmware" "fwupd not installed — nothing updates this machine's firmware, BIOS included"
 fi
 
+# --- what happens when a run exhausts memory -------------------------------
+# Not "is systemd-oomd installed": it ships inside the systemd package, so that
+# question is answered yes on every machine here and means nothing. The two
+# that matter are whether anything is watching memory pressure, and whether it
+# is allowed to act where the jobs are.
+if systemctl is-active --quiet systemd-oomd 2>/dev/null; then
+  rec ok "oomd" "systemd-oomd is watching memory pressure"
+else
+  rec fail "oomd" "systemd-oomd is not running — a run that exhausts memory takes the session with it (sudo systemctl enable --now systemd-oomd)"
+fi
+
+# The property the RUNNING user manager holds, not the drop-in file: a file
+# under /etc/systemd/user that no manager has reloaded is a policy this machine
+# does not have yet, and reading the file would certify it anyway. An empty
+# --value means there was no manager to ask, which is a different answer from
+# "auto" and must not be reported as one.
+# Under sudo there is no user manager to ask -- `systemctl --user` exits 1 with
+# nothing on stdout, which is indistinguishable here from a machine that has no
+# user session at all. Reporting that as ok certified the policy on a laptop
+# that did not have it, under the very invocation the firewall row asks for.
+if [ -n "${SUDO_USER:-}" ]; then
+  rec warn "oom-policy" "a root shell cannot see your user manager — run 'ergon doctor' as $WHO for this row"
+elif oom_app=$(systemctl --user show -p ManagedOOMMemoryPressure --value app.slice 2>/dev/null) \
+   && [ -n "$oom_app" ]; then
+  case "$oom_app" in
+    kill) rec ok "oom-policy" "app.slice is monitored; oomd may kill a runaway app, never the compositor (session.slice)" ;;
+    *)    rec fail "oom-policy" "app.slice ManagedOOMMemoryPressure=$oom_app — oomd is allowed to act on nothing; re-run provisioning, then systemctl --user daemon-reload" ;;
+  esac
+else
+  rec ok "oom-policy" "no user manager here to ask about app.slice"
+fi
+
 # --- the session -----------------------------------------------------------
 if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  # WHERE THIS SHELL IS, which decides what a job started in it can cost. Under
+  # uwsm the compositor is wayland-wm@hyprland.service in session.slice, with
+  # OOMPolicy=stop and OnFailure=wayland-session-shutdown.target -- so a
+  # terminal that ended up in there is one where the kernel killing a sampler
+  # ends the whole session. A terminal launched through uwsm-app is in its own
+  # scope under app.slice, where oomd kills it and nothing else.
+  #
+  # cgroup v2 writes one "0::<path>" line; tail -1 is the v1 fallback picking
+  # the last controller rather than nothing at all.
+  cg=$(tail -1 "${ERGON_SYSROOT:-}/proc/self/cgroup" 2>/dev/null)
+  # Same reason as oom-policy above: under sudo this reads the cgroup of the
+  # sudo process in the login session, not the shell you are asking about, and
+  # would report a terminal that IS contained as one that is not.
+  [ -z "${SUDO_USER:-}" ] || cg=sudo
+  case "$cg" in
+    sudo) rec warn "shell-slice" "a root shell is not the shell you are asking about — run 'ergon doctor' as $WHO for this row" ;;
+    */session.slice/*) rec fail "shell-slice" "this shell is inside the compositor's unit — a job that exhausts memory here ends the session. Was the terminal started from a bind without uwsm-app?" ;;
+    */app.slice/*)     rec ok   "shell-slice" "under app.slice as ${cg##*/} — a runaway job here is killed on its own" ;;
+    *)                 rec warn "shell-slice" "${cg:-no cgroup} — outside app.slice, so oomd will not contain a runaway job started here" ;;
+  esac
   case ":$PATH:" in
     *":$ERGON/bin:"*) rec ok "session-path" "repo bin is on PATH" ;;
     *) rec fail "session-path" "repo bin NOT on PATH — every ergon-* in the bar is a no-op. Is environment.d/10-ergon-path.conf linked?" ;;
@@ -225,7 +486,7 @@ if [ "$JSON" = 1 ]; then
   for i in $(seq 0 $((n-1))); do
     [ "$i" -gt 0 ] && printf ','
     printf '{"name":"%s","state":"%s","note":"%s"}' \
-      "${R_NAME[i]}" "${R_STATE[i]}" "$(printf '%s' "${R_NOTE[i]}" | sed 's/"/\\"/g')"
+      "${R_NAME[i]}" "${R_STATE[i]}" "$(printf '%s' "${R_NOTE[i]}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   done
   printf '],"warnings":%d,"failures":%d}\n' "$warns" "$fails"
 else

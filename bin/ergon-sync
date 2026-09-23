@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # ergon:summary=Make a new machine yours
 # ergon:group=system
-# ergon:args=[--from URL] [--check]
+# ergon:args=[--from URL] [--check] [--yes]
 # ergon:help=native
 #
 #   ergon sync --from git@host:me/dotfiles.git    on a fresh install
 #   ergon sync                                    thereafter
 #   ergon sync --check                            what would change
+#   ergon sync --yes                              re-provision without asking
+#
+# --yes answers the provisioning prompt, and provisioning installs packages --
+# which on a machine missing any of them is a full `pacman -Syu`. Nothing else
+# a sync does can touch a package.
 #
 # Your config follows you. This repo IS the mechanism -- host.env already
 # records which bundles a machine has, install.sh already links everything, and
@@ -17,16 +22,23 @@
 # It does NOT pull and apply blindly. Fetching, showing you what changed, and
 # applying are three steps, because a config sync that silently rewrites your
 # session while you are working is a thing people disable after the first time.
+#
+# install.sh is only the user-level layer. Packages, systemd drop-ins, polkit
+# rules and GRUB settings arrive through provisioning and nowhere else, so
+# until this re-ran it, every system-level fix in the repo reached fresh
+# installs only and an older machine silently kept the system it was born with.
 set -euo pipefail
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 FROM=""
 CHECK=0
+YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --from)  FROM="${2:?}"; shift 2 ;;
     --check) CHECK=1; shift ;;
-    -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --yes|-y) YES=1; shift ;;
+    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "ergon-sync: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -46,6 +58,69 @@ fi
 [ -d "$ERGON/.git" ] || { echo "ergon-sync: $ERGON is not a git checkout — use --from URL" >&2; exit 1; }
 cd "$ERGON"
 
+# The paths provisioning reads, shared with provision-arch.sh (which writes the
+# stamp) and ergon-doctor, so all three ask the same question over the same set.
+# shellcheck source=../lib/provision-inputs.sh
+. "$ERGON/lib/provision-inputs.sh"
+# Read under ERGON_SYSROOT, like ergon-doctor, so bin/test-provisioning.sh can
+# point it at a fixture. Provisioning itself always writes the real path.
+STAMP="${ERGON_SYSROOT:-}/var/lib/ergon/provisioned"
+
+# What THIS MACHINE is missing, not what the incoming commits carry. Deriving
+# it from HEAD..origin/BRANCH asked the question exactly once -- on the single
+# run that performed the fast-forward -- so a decline, a non-interactive run
+# without --yes, or a provisioning run that failed was never asked again: the
+# next sync found nothing incoming and said the machine was up to date.
+provisioning_gap() {
+  if [ ! -f "$STAMP" ]; then
+    printf 'no provisioning record — never provisioned, or provisioned before the stamp existed\n'
+    return
+  fi
+  local stale
+  stale=$(ergon_stale_inputs "$ERGON" "$STAMP" | tr '\n' ' ')
+  [ -z "$stale" ] || printf 'changed since provisioning last ran: %s\n' "${stale% }"
+}
+
+# Non-zero when the system layer is not what the repo says. The status is the
+# point: a declined prompt, a non-interactive run that only printed the command
+# and a provisioning run that failed all leave a machine that does NOT match
+# the remote, and this used to end "ok ... matches the remote" and exit 0 for
+# all three -- which is what a timer or a script reads.
+apply_provisioning() {
+  local gap rerun=0 reply=""
+  gap=$(provisioning_gap)
+  [ -n "$gap" ] || return 0
+  printf '\n   system    %s\n' "$gap"
+
+  # provision-arch.sh is idempotent by design -- every stage checks before it
+  # writes -- so re-running it IS the fix. It wants sudo and it is not quick,
+  # so it never happens silently: a person is asked, --yes covers a script, and
+  # a non-interactive run without it is told the command rather than left
+  # believing the machine took the change.
+  if [ "$YES" = 1 ]; then
+    rerun=1
+  elif [ -t 0 ]; then
+    # Names what it costs. "Provisioning" does not suggest a system upgrade to
+    # someone who edited a GRUB snippet, and on a machine missing a package
+    # that is exactly what it is.
+    printf '   re-run provisioning now? (installs packages; may run pacman -Syu) [y/N] '
+    # `|| true`: this script is set -e, and a Ctrl-D at the prompt would
+    # otherwise end the sync before install.sh ran.
+    read -r reply || true
+    case "$reply" in y|Y|yes) rerun=1 ;; esac
+  fi
+  if [ "$rerun" != 1 ]; then
+    printf '   !!  not applied yet. Run:  %s/bin/provision-arch.sh\n' "$ERGON"
+    return 1
+  fi
+  # Before install.sh, not after: provisioning is what puts the packages and
+  # the /usr/local/bin links on the machine that install.sh's own links and
+  # bundles then assume.
+  "$ERGON/bin/provision-arch.sh" && return 0
+  printf '   !!  provisioning failed — the system-level change is NOT applied\n'
+  return 1
+}
+
 git fetch --quiet origin 2>/dev/null || { echo "ergon-sync: cannot reach the remote" >&2; exit 1; }
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 BEHIND=$(git rev-list --count "HEAD..origin/$BRANCH" 2>/dev/null || echo 0)
@@ -63,31 +138,59 @@ if [ "$BEHIND" -gt 0 ]; then
 fi
 
 if [ "$CHECK" = 1 ]; then
+  gap=$(provisioning_gap)
+  [ -z "$gap" ] || printf '\n   system    %s\n' "$gap"
+  if [ "$BEHIND" -gt 0 ]; then
+    # Named here and not only after the merge, because "what would change" has
+    # to include the part that needs sudo and ten minutes. These join the gap
+    # above the moment the fast-forward lands.
+    incoming=$(git diff --name-only "HEAD..origin/$BRANCH" -- "${ERGON_PROVISION_INPUTS[@]}")
+    if [ -n "$incoming" ]; then
+      printf '\n   the incoming commits change what provisioning installs:\n'
+      printf '%s\n' "$incoming" | sed 's/^/     /'
+    fi
+  fi
   printf '\n   --check: nothing applied\n'
   exit 0
 fi
+
 if [ "$BEHIND" = 0 ]; then
   printf '\n   ok  up to date\n'
-  exit 0
+else
+  if [ "$DIRTY" -gt 0 ]; then
+    echo >&2
+    echo "ergon-sync: the working tree is dirty. Commit or stash first --" >&2
+    echo "            a sync that stomps your uncommitted config is a sync you" >&2
+    echo "            turn off after the first time." >&2
+    exit 1
+  fi
+  # --ff-only, never merge. A merge commit generated by a background sync is a
+  # thing you find later and cannot explain.
+  git merge --ff-only "origin/$BRANCH" || {
+    echo "ergon-sync: cannot fast-forward (the histories have diverged)." >&2
+    echo "            Resolve it by hand; this will not invent a merge." >&2
+    exit 1; }
+  printf '   ok  fast-forwarded\n'
 fi
-if [ "$DIRTY" -gt 0 ]; then
-  echo >&2
-  echo "ergon-sync: the working tree is dirty. Commit or stash first --" >&2
-  echo "            a sync that stomps your uncommitted config is a sync you" >&2
-  echo "            turn off after the first time." >&2
+
+# Asked on a run with nothing incoming too: this is about what the machine HAS,
+# and the run that raises it is the one least likely to have answered it.
+PROVISIONED=1
+apply_provisioning || PROVISIONED=0
+
+# install.sh links the checkout, so with nothing incoming there is nothing new
+# for it to link -- and a sync that re-ran it, and every bundle's fetch, on
+# every invocation is one people stop leaving in a timer.
+if [ "$BEHIND" -gt 0 ]; then
+  ./install.sh
+  if command -v ergon-bundle >/dev/null 2>&1; then
+    ergon-bundle sync || printf '   !!  some bundles failed\n'
+  fi
+fi
+
+if [ "$PROVISIONED" = 1 ]; then
+  printf '\n   ok  this machine matches the remote\n'
+else
+  printf '\n   !!  the user layer is current; the system layer is NOT\n'
   exit 1
 fi
-
-# --ff-only, never merge. A merge commit generated by a background sync is a
-# thing you find later and cannot explain.
-git merge --ff-only "origin/$BRANCH" || {
-  echo "ergon-sync: cannot fast-forward (the histories have diverged)." >&2
-  echo "            Resolve it by hand; this will not invent a merge." >&2
-  exit 1; }
-printf '   ok  fast-forwarded\n'
-
-./install.sh
-if command -v ergon-bundle >/dev/null 2>&1; then
-  ergon-bundle sync || printf '   !!  some bundles failed\n'
-fi
-printf '\n   ok  this machine matches the remote\n'

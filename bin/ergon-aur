@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# ergon:summary=Build and install one AUR package
+# ergon:summary=Build, rebuild and check the AUR packages this machine installs
 # ergon:group=system
-# ergon:args=<pkgname>
+# ergon:args=<pkgname> | --rebuild <pkgname> | --outdated
 #
 # Clone, review, makepkg. No helper: the point is that a PKGBUILD gets looked at
 # before it runs as you.
@@ -9,23 +9,131 @@
 # This is a separate command because provisioning and `ergon-bundle` both need it,
 # and the conflict handling below is the kind of thing that must exist in
 # exactly one place.
+#
+# Three modes of the same small tool, not a package manager:
+#
+#   <pkgname>            build and install, unless it is already installed
+#   --rebuild <pkgname>  build and install even though it is
+#   --outdated           say what has moved; build nothing, install nothing
+#
+# --rebuild exists because nothing else on an Arch machine ever rebuilds a
+# foreign package. One is linked against the shared libraries of the day it was
+# built; -Syu moves a soname, and the binary then dies at exec with "cannot open
+# shared object file" and no other trace -- which for waybar-git is a desktop
+# with no bar and no error anywhere a person would look. `ergon update` runs
+# checkrebuild and calls this.
 set -euo pipefail
 
-pkg="${1:?usage: ergon-aur <pkgname>}"
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 AURDIR="${AURDIR:-$HOME/.cache/aur}"
+# What each package was actually BUILT from. Machine state, not config, so it
+# lives beside the bundle ledger rather than in the repo -- and it is the only
+# offline answer to "is what is installed the commit packages/aur reviewed",
+# because a -git pkgver names the UPSTREAM commit while the pin is on the AUR
+# repository that carries the PKGBUILD.
+BUILT="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/aur-builds"
 mkdir -p "$AURDIR"
 
 # The name becomes a path under $AURDIR and an argument to git and pacman, and
 # ergon-bundle hands this whatever a bundle's aur file says. `../x` or `-x`
 # must not get that far.
 _is_pkg() { local LC_ALL=C; [[ $1 =~ ^[a-z0-9@_+][a-z0-9@._+-]{0,127}$ ]]; }
+
+# The reviewed commit packages/aur records, if the package has one. Read off the
+# package's OWN line: a continuation line of the comment above it begins with
+# `#`, so $1 never matches a package name there.
+_pin() {  # _pin <pkgname>
+  awk -v p="$1" '$1 == p && match($0, /pin=[0-9a-f]{7,40}/) {
+                   print substr($0, RSTART + 4, RLENGTH - 4) }' \
+      "$ERGON/packages/aur" 2>/dev/null || true
+}
+
+MODE=install
+case "${1:-}" in
+  --outdated) MODE=outdated ;;
+  --rebuild)  MODE=rebuild; shift ;;
+  -*)         echo "ergon-aur: unknown option: $1" >&2; exit 2 ;;
+esac
+
+if [ "$MODE" = outdated ]; then
+  # Local first, and it cannot be wrong: `pacman -Qm` IS the foreign set.
+  mapfile -t foreign < <(pacman -Qm 2>/dev/null | sort)
+  [ "${#foreign[@]}" -gt 0 ] || { printf '   ok   no foreign packages\n'; exit 0; }
+
+  # One RPC call for all of them. --max-time because this is also reached from
+  # `ergon update`: an AUR that accepts the connection and then says nothing
+  # would hang an upgrade that has already finished.
+  q=""; for l in "${foreign[@]}"; do q="$q&arg[]=${l%% *}"; done
+  reply=$(curl -fsS --max-time 10 "https://aur.archlinux.org/rpc/?v=5&type=info$q" 2>/dev/null) || reply=""
+  # A reply that did not arrive, or did not parse, is not "everything is
+  # current". Exit 2 so a caller can tell those two apart, and say which it is.
+  if [ "$(printf '%s' "$reply" | jq -r '.type // empty' 2>/dev/null)" != multiinfo ]; then
+    printf '   !!   the AUR did not answer — nothing below would have been a statement about what is current\n' >&2
+    exit 2
+  fi
+  declare -A avail=()
+  while IFS=$'\t' read -r n v; do
+    [ -z "$n" ] || avail["$n"]="$v"
+  done < <(printf '%s' "$reply" | jq -r '.results[] | "\(.Name)\t\(.Version)"' 2>/dev/null)
+
+  for l in "${foreign[@]}"; do
+    name=${l%% *}; have=${l##* }; pin=$(_pin "$name"); d="$AURDIR/$name"
+    if [ -n "$pin" ]; then
+      # A pinned package's AUR version says nothing about it: it is built from
+      # the commit packages/aur records, not from whatever the packager last
+      # pushed. What can be out of date is the PIN -- so print the two commands
+      # that move it, because a pin nobody can advance gets deleted instead.
+      [ ! -d "$d" ] || timeout 20 git -C "$d" fetch -q origin 2>/dev/null || true
+      ahead=$(git -C "$d" rev-list --count "$pin..origin/master" 2>/dev/null || true)
+      if [ -z "$ahead" ]; then
+        printf '   ·    %s %s, pinned at %s — no clone under %s to compare against\n' \
+          "$name" "$have" "${pin:0:7}" "$AURDIR"
+      elif [ "$ahead" = 0 ]; then
+        printf '   ok   %s %s, pinned at %s — the AUR has nothing newer\n' "$name" "$have" "${pin:0:7}"
+      else
+        printf '   ·    %s %s, pinned at %s — %s newer PKGBUILD commit(s)\n' "$name" "$have" "${pin:0:7}" "$ahead"
+        printf '        review: git -C %s log --oneline %s..origin/master\n' "$d" "${pin:0:7}"
+        printf '        then put that commit in packages/aur and: ergon aur --rebuild %s\n' "$name"
+      fi
+    elif [ -z "${avail[$name]:-}" ]; then
+      printf '   !!   %s %s is not in the AUR — nothing will ever update it\n' "$name" "$have"
+    elif [ "$(vercmp "$have" "${avail[$name]}")" -lt 0 ]; then
+      printf '   ·    %s %s → %s   (ergon aur --rebuild %s)\n' "$name" "$have" "${avail[$name]}" "$name"
+    else
+      printf '   ok   %s %s\n' "$name" "$have"
+    fi
+  done
+  exit 0
+fi
+
+pkg="${1:?usage: ergon-aur <pkgname> | --rebuild <pkgname> | --outdated}"
 _is_pkg "$pkg" || { echo "ergon-aur: '$pkg' is not a package name" >&2; exit 2; }
 
-pacman -Qi -- "$pkg" >/dev/null 2>&1 && { printf '   ·   %s (already installed)\n' "$pkg"; exit 0; }
+# --rebuild differs from the plain form in exactly this: the package being
+# installed already is the whole reason it was called.
+if [ "$MODE" = install ] && pacman -Qi -- "$pkg" >/dev/null 2>&1; then
+  printf '   ·   %s (already installed)\n' "$pkg"
+  exit 0
+fi
 
+pin=$(_pin "$pkg")
 [ -d "$AURDIR/$pkg" ] || git clone -q -- "https://aur.archlinux.org/$pkg.git" "$AURDIR/$pkg"
 cd "$AURDIR/$pkg"
-git pull -q --ff-only 2>/dev/null || true
+if [ -n "$pin" ]; then
+  # Fetch first: a pin is moved FORWARD by hand, so the commit named in
+  # packages/aur is routinely one this clone has never seen. A checkout that
+  # cannot find it is fatal -- building the previous pin instead would be
+  # building a PKGBUILD nobody asked for while reporting success.
+  timeout 60 git fetch -q origin 2>/dev/null || true
+  git checkout -q --detach "$pin" 2>/dev/null \
+    || { echo "ergon-aur: packages/aur pins $pkg at $pin, which is not in its AUR history" >&2; exit 4; }
+else
+  # A package that WAS pinned and no longer is leaves this clone on a detached
+  # HEAD, where `git pull --ff-only` fails quietly and every later build is
+  # still the old pin.
+  git symbolic-ref -q HEAD >/dev/null || git checkout -q master 2>/dev/null || true
+  git pull -q --ff-only 2>/dev/null || true
+fi
 # Not paused for review: provisioning is non-interactive. Saying "review before
 # continuing" and then continuing was a promise this never kept.
 printf '   building %s from %s/PKGBUILD (read it there)\n' "$pkg" "$AURDIR/$pkg"
@@ -57,4 +165,19 @@ for c in $(makepkg --printsrcinfo 2>/dev/null | awk -F' = ' '$1 ~ /conflicts$/ {
   fi
 done
 
-makepkg -si --noconfirm
+# -f, because $AURDIR/$pkg is kept between builds and makepkg refuses outright
+# -- "A package has already been built. (use -f to overwrite)" -- when a tarball
+# of the same pkgver is still sitting in it. A rebuild after a soname bump
+# produces exactly that: the same pinned commit, built against new libraries. So
+# without -f the one rebuild this tool exists to perform is the one that cannot
+# run, `ergon update` warns and moves on, and checkrebuild names the package
+# again on every upgrade forever.
+makepkg -si --noconfirm --force
+
+# What this build actually came from. `ergon doctor` compares it against the pin
+# in packages/aur, which is how moving a pin forward becomes a visible "rebuild
+# this" rather than an edit to a file nobody re-reads.
+mkdir -p "$(dirname "$BUILT")"
+{ awk -v p="$pkg" '$1 != p' "$BUILT" 2>/dev/null || true
+  printf '%s %s\n' "$pkg" "$(git rev-parse HEAD)"; } | LC_ALL=C sort > "$BUILT.new"
+mv -- "$BUILT.new" "$BUILT"

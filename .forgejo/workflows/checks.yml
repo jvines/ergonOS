@@ -54,6 +54,21 @@ jobs:
       - name: CLI --help never runs a command
         run: cd "$CI_DIR" && ./bin/test-cli.sh
 
+      - name: Provisioning reaches installed machines
+        run: cd "$CI_DIR" && ./bin/test-provisioning.sh
+
+      - name: Update runs the transaction the way it says
+        run: cd "$CI_DIR" && ./bin/test-update.sh
+
+      - name: AUR builds the reviewed commit, and says so honestly
+        run: cd "$CI_DIR" && ./bin/test-aur.sh
+
+      - name: The firewall drops inbound, and docker publishes to localhost
+        run: cd "$CI_DIR" && ./bin/test-firewall.sh
+
+      - name: A run that exhausts memory is contained, not the session
+        run: cd "$CI_DIR" && ./bin/test-oom.sh
+
       # The public mirror is worse than useless when it is stale: someone clones
       # a tree that is weeks behind and hits bugs that were fixed. Pushing it
       # here means it can only ever be behind by a run that FAILED.

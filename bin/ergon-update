@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Upgrade the system, with the checks that keep Arch boring
 # ergon:group=system
-# ergon:args=[--check] [--yes]
+# ergon:args=[--check] [--yes] [--no-snapshot]
 #
 # `pacman -Syu` with the preconditions that turn "Arch breaks a lot" into "Arch
 # is fine". None of these are clever; they are the four ways a rolling upgrade
@@ -11,7 +11,11 @@
 #                              kernel/glibc transaction is the genuinely bad
 #                              outcome. Checked first, always.
 #   2. expired keyring      -- signature errors that read like a compromised
-#                              mirror. Fix the keyring, then upgrade.
+#                              mirror. The keyring is REFRESHED here, in its own
+#                              transaction immediately before -Su: `pacman -Q`
+#                              cannot tell a current keyring from one that
+#                              expired last month, and it is the expired one
+#                              that makes every package look unsigned.
 #   3. unread manual-intervention news -- informant gates this. The Arch news
 #                              items that break machines are always announced
 #                              first; the failure mode is not reading them.
@@ -21,13 +25,29 @@
 # The snapshot itself is not taken here: snap-pac hooks pacman directly, so
 # every transaction gets one whether it came from this script or not. What this
 # checks is that the hook can work.
+#
+# --yes means "do not ask me", and nothing else. It used to waive 3 and 4 as
+# well, so the flag you pass to keep a script from blocking on a prompt was the
+# same flag that skipped the two checks that stop a machine breaking, and the
+# flag that removed orphans unattended. Accepting an upgrade with no rollback
+# point is now its own deliberate --no-snapshot; unread news is cleared by
+# reading it.
+#
+# The transaction runs under `systemd-run --scope` while a
+# sleep:shutdown:handle-lid-switch inhibitor is held. There are three ways a
+# pacman stops half way through, none of them pacman's doing: a terminal opened
+# by a keybind lives inside the compositor's unit, so a Hyprland crash takes the
+# upgrade down with it; systemd re-execs itself when systemd is what is being
+# upgraded; and a closed lid suspends the machine mid-transaction. The scope
+# answers the first two, the inhibitor the third.
 set -euo pipefail
 
-CHECK_ONLY=0; ASSUME_YES=0
+CHECK_ONLY=0; ASSUME_YES=0; NO_SNAPSHOT=0
 for a in "$@"; do
   case "$a" in
     --check) CHECK_ONLY=1 ;;
     --yes|-y) ASSUME_YES=1 ;;
+    --no-snapshot) NO_SNAPSHOT=1 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -39,7 +59,15 @@ ok()   { printf '   ok   %s\n' "$*"; }
 warn() { printf '   !!   %s\n' "$*" >&2; }
 die()  { printf '   FAIL %s\n' "$*" >&2; exit 1; }
 
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# shellcheck source=../lib/transaction.sh
+. "$ERGON/lib/transaction.sh"
 MIN_ROOT_GIB="${ERGON_UPDATE_MIN_ROOT_GIB:-8}"
+# ERGON_SYSROOT is the seam bin/test-update.sh uses, the same one ergon-hardware
+# and ergon-sync read: the paths that say whether the running kernel and
+# compositor still exist are looked up under it. Empty on a real machine, where
+# every path below is the absolute one.
+ROOT="${ERGON_SYSROOT:-}"
 
 say "space"
 # Two separate places, and they fail differently. / filling mid-transaction
@@ -60,31 +88,31 @@ if [ "$(findmnt -no FSTYPE /)" = btrfs ]; then
 fi
 
 say "rollback point"
-if [ -f /etc/snapper/configs/root ] && pacman -Q snap-pac >/dev/null 2>&1; then
+if [ -f "$ROOT/etc/snapper/configs/root" ] && pacman -Q snap-pac >/dev/null 2>&1; then
   ok "snapper + snap-pac — this transaction will be snapshotted"
+elif [ "$NO_SNAPSHOT" = 1 ]; then
+  warn "no snapper/snap-pac, and --no-snapshot: this upgrade will NOT be rollback-able"
 else
-  warn "no snapper/snap-pac: this upgrade will NOT be rollback-able"
-  [ "$ASSUME_YES" = 1 ] || die "refusing an unsnapshotted upgrade; pass --yes to override"
+  warn "no snapper/snap-pac: this upgrade would NOT be rollback-able"
+  die "refusing an unsnapshotted upgrade; pass --no-snapshot to accept that"
 fi
 
 say "keyring"
-# An out-of-date archlinux-keyring makes every package look unsigned. Updating
-# it FIRST, in its own transaction, is the documented order and the one thing
-# here that must not be folded into the main -Syu.
-if ! pacman -Q archlinux-keyring >/dev/null 2>&1; then
-  die "archlinux-keyring is not installed"
+keyring=$(pacman -Q archlinux-keyring 2>/dev/null | awk '{print $2}' || true)
+if [ -n "$keyring" ]; then
+  ok "archlinux-keyring $keyring — refreshed below before anything else upgrades"
+else
+  warn "archlinux-keyring is not installed — the upgrade installs it first"
 fi
-ok "archlinux-keyring $(pacman -Q archlinux-keyring | awk '{print $2}')"
 
 say "news"
 if command -v informant >/dev/null; then
   if ! informant check >/dev/null 2>&1; then
     warn "unread Arch news — read it before upgrading:"
-    informant list -r 2>/dev/null | head -5
-    [ "$ASSUME_YES" = 1 ] || die "run 'informant read' first"
-  else
-    ok "no unread news"
+    informant list -r 2>/dev/null | head -5 || true
+    die "run 'informant read' first"
   fi
+  ok "no unread news"
 else
   warn "informant not installed — manual-intervention notices are not gated"
 fi
@@ -92,40 +120,213 @@ fi
 say "pending"
 # checkupdates uses a temporary database, so it never touches the real one.
 # `pacman -Sy` to "check" is the classic way to create a partial-upgrade state.
+#
+# Nothing pending is not the end of the run. It used to `exit 0` here, which
+# meant the orphan, firmware, .pacnew and reboot reports were reachable only on
+# a day something happened to be out of date -- so the machine that needed a
+# reboot after yesterday's kernel was the one that never got told.
+PENDING=1
 if command -v checkupdates >/dev/null; then
   pending=$(checkupdates 2>/dev/null || true)
-  if [ -z "$pending" ]; then ok "already up to date"; exit 0; fi
-  printf '%s\n' "$pending" | sed 's/^/     /'
-  printf '   %d package(s)\n' "$(printf '%s\n' "$pending" | wc -l)"
+  if [ -z "$pending" ]; then
+    PENDING=0; ok "already up to date"
+  else
+    printf '%s\n' "$pending" | sed 's/^/     /'
+    printf '   %d package(s)\n' "$(printf '%s\n' "$pending" | wc -l)"
+  fi
 else
   warn "pacman-contrib not installed — cannot preview"
 fi
 
-[ "$CHECK_ONLY" = 1 ] && exit 0
-
-say "upgrade"
-if [ "$ASSUME_YES" = 1 ]; then
-  sudo pacman -Syu --noconfirm
-else
-  sudo pacman -Syu
-fi
-
-say "cleanup"
-# Keep three versions. The cache is on its own subvolume precisely so a rollback
-# can still reach the packages needed to fix itself — do not empty it.
-sudo paccache -rk3 >/dev/null 2>&1 && ok "package cache trimmed to 3 versions"
-
-orphans=$(pacman -Qtdq 2>/dev/null || true)
-if [ -n "$orphans" ]; then
-  printf '   orphans:\n'; printf '%s\n' "$orphans" | sed 's/^/     /'
-  if [ "$ASSUME_YES" = 1 ]; then
-    printf '%s\n' "$orphans" | sudo pacman -Rns - --noconfirm
-  else
+# Orphans are REPORTED; they are removed only by a person answering yes. A
+# package that arrived as a dependency and is now unneeded is very often one you
+# use directly -- installed for a tool, kept for itself. Piping them into
+# `pacman -Rns --noconfirm` because --yes was passed is how an unattended
+# upgrade takes a library out from under work that was fine before it ran.
+report_orphans() {
+  say "orphans"
+  local orphans reply
+  orphans=$(pacman -Qtdq 2>/dev/null || true)
+  [ -n "$orphans" ] || { ok "none"; return 0; }
+  printf '%s\n' "$orphans" | sed 's/^/     /'
+  if [ "$CHECK_ONLY" = 1 ] || [ ! -t 0 ]; then
     printf '   remove them with: pacman -Qtdq | sudo pacman -Rns -\n'
+    return 0
   fi
-else
-  ok "no orphans"
+  printf '   remove them? [y/N] '
+  read -r reply || true
+  # No --noconfirm on the removal, unlike the --yes path this replaced: -Rns
+  # CASCADES, taking the orphans' own dependencies once nothing needs them, so
+  # the set pacman is about to remove is larger than the list printed above and
+  # pacman's prompt is the only place the real one is shown. It can be answered:
+  # pacman reopens stdin from the controlling terminal once it has read its
+  # targets off the pipe, and this branch is only reached when there is one.
+  case "$reply" in
+    y|Y|yes) printf '%s\n' "$orphans" | sudo pacman -Rns - ;;
+    *) printf '   kept. Remove them with: pacman -Qtdq | sudo pacman -Rns -\n' ;;
+  esac
+}
+
+# An AUR package is linked against the shared libraries that existed the day it
+# was built, and nothing on an Arch machine ever rebuilds one. -Syu moves a
+# soname, the binary keeps its DT_NEEDED for the old one, and the next exec
+# fails with "cannot open shared object file" -- which for waybar-git is a
+# desktop with no bar and no error anywhere a person would look. That is the
+# whole failure mode of running -git packages on a rolling distro.
+#
+# checkrebuild (rebuild-detector) reads the ELF headers of what is installed
+# against the packages that own the libraries, so this is entirely local: no
+# network, and nothing can be called broken because a mirror was down.
+#
+# Rebuilding is NOT destructive the way removing an orphan is -- it reinstalls
+# the same package, from the PKGBUILD commit packages/aur pins -- so --yes may
+# proceed here without asking, and does. The prompt is for the interactive case,
+# where an AUR build is long enough that being asked first is worth something.
+report_rebuild() {
+  say "rebuilds"
+  local broken reply p pkgs
+  if ! command -v checkrebuild >/dev/null; then
+    warn "rebuild-detector not installed — nothing notices an AUR package left linked against a library that moved"
+    return 0
+  fi
+  # checkrebuild has printed both `repo/name` and `repo name` across versions,
+  # so take the name off the end and let `pacman -Qm` say which of those are
+  # foreign. A repo package needing a rebuild is the mirrors' problem and
+  # pacman's; a foreign one is nobody's.
+  broken=$(checkrebuild 2>/dev/null | awk '{ n = $NF; sub(/^.*\//, "", n); print n }' \
+           | grep -xF -f <(pacman -Qm 2>/dev/null | awk '{print $1}') || true)
+  [ -n "$broken" ] || { ok "no foreign package links a library that is gone"; return 0; }
+  printf '%s\n' "$broken" | sed 's/^/     /'
+  if [ "$CHECK_ONLY" = 1 ] || { [ "$ASSUME_YES" = 0 ] && [ ! -t 0 ]; }; then
+    printf '   rebuild them with: ergon aur --rebuild PKG\n'
+    return 0
+  fi
+  if [ "$ASSUME_YES" = 0 ]; then
+    printf '   rebuild them now? [y/N] '
+    read -r reply || true
+    case "$reply" in
+      y|Y|yes) ;;
+      *) printf '   kept. Rebuild them with: ergon aur --rebuild PKG\n'; return 0 ;;
+    esac
+  fi
+  # Read the whole list first, then loop. `while read ... <<< "$broken"` hands
+  # its stdin to every command inside it, so the first makepkg or sudo that
+  # wants a password would eat the remaining package names and rebuild none of
+  # them -- the same shape as a nested ssh inside a heredoc.
+  mapfile -t pkgs <<< "$broken"
+  for p in "${pkgs[@]}"; do
+    [ -n "$p" ] || continue
+    "$ERGON/bin/ergon-aur" --rebuild "$p" || warn "$p failed to rebuild"
+  done
+}
+
+# .pacnew files are the quiet half of an Arch upgrade: pacman never merges a
+# config you edited, it writes the new one beside yours and moves on, so a file
+# you changed once keeps running against defaults that have moved on without it.
+# Nothing on the machine mentions them unless something asks.
+report_pacnew() {
+  say "config files"
+  if ! command -v pacdiff >/dev/null; then
+    warn "pacman-contrib not installed — .pacnew files are not reported"
+    return 0
+  fi
+  local new
+  new=$(pacdiff -o 2>/dev/null || true)
+  [ -n "$new" ] || { ok "no .pacnew/.pacsave files"; return 0; }
+  printf '%s\n' "$new" | sed 's/^/     /'
+  printf '   merge them with: sudo -E pacdiff\n'
+}
+
+# Two things keep running after the package under them has been replaced, and
+# neither of them says so.
+#
+# The kernel: pacman owns /usr/lib/modules/<release>/vmlinuz, and an upgraded
+# kernel takes that directory with it, so the running kernel's modules are
+# simply gone and the next module load fails. `pacman -Qo` on that path asks
+# exactly that, and it answers for linux, linux-lts and linux-zen alike.
+# Comparing `uname -r` against `pacman -Q linux` claimed a reboot was needed on
+# EVERY run of an lts machine, which is what this repo installs; and
+# /var/run/reboot-required is a Debian file that nothing on Arch writes.
+#
+# The compositor: Hyprland's binary is replaced under the running process, and
+# /proc/<pid>/exe then reads "(deleted)". It cannot be restarted in place -- the
+# session goes with it -- so that one is a log-out, not a reboot.
+report_restart() {
+  say "restart"
+  local release pid exe
+  release=$(uname -r)
+  if pacman -Qo "$ROOT/usr/lib/modules/$release/vmlinuz" >/dev/null 2>&1; then
+    ok "running kernel $release is still the installed one"
+  else
+    warn "the running kernel ($release) is no longer installed — reboot when convenient"
+  fi
+  pid=$(pgrep -x Hyprland 2>/dev/null | head -1 || true)
+  [ -n "$pid" ] || return 0
+  exe=$(readlink "$ROOT/proc/$pid/exe" 2>/dev/null || true)
+  case "$exe" in
+    *'(deleted)') warn "Hyprland was replaced under the running session — log out and back in" ;;
+    *) ok "the running compositor is the installed one" ;;
+  esac
+}
+
+upgrade() {
+  local confirm="" rc=0
+  [ "$ASSUME_YES" = 0 ] || confirm="--noconfirm"
+
+  # The probe and the wrapper are in lib/transaction.sh, because provisioning
+  # opens a transaction too and had none of this.
+  ergon_txn_wrap ergon-update system-upgrade upgrade
+
+  # One command, so all of it is inside the one scope and the one inhibitor.
+  #
+  # The sync is its own step and failing it is fatal. `pacman -Sy` refreshes
+  # EVERY repo's database independently and keeps whichever ones arrived, so a
+  # mirror that times out for extra while core succeeds leaves two databases
+  # taken at different times, already moved into /var/lib/pacman/sync — and an
+  # upgrade resolved from that mix is a partial upgrade, cross-repo, exactly
+  # what this file exists to prevent. It is why pacman's own -Syu returns
+  # without upgrading when the sync fails, and this must not be the thing that
+  # overrides it. Exit 10 because pacman only ever exits 0 or 1, so the two
+  # failures can be told apart and reported as what they are.
+  #
+  # The keyring is a SEPARATE -S afterwards, so that IT failing is not fatal:
+  # by then the databases are refreshed, and a refreshed database with no -Su
+  # behind it is itself the partial-upgrade state. -Su runs, and hits the
+  # signature errors itself if the keyring really was the problem.
+  local txn="pacman -Sy $confirm || exit 10"
+  txn="$txn; pacman -S --needed $confirm archlinux-keyring || true"
+  txn="$txn; pacman -Su $confirm"
+  sudo "${ERGON_TXN[@]}" bash -c "$txn" || rc=$?
+  case "$rc" in
+    0) ;;
+    10) die "could not synchronize the package databases — nothing was upgraded;" \
+            "re-run 'ergon update' once the mirrors answer" ;;
+    *)  die "the upgrade failed — the machine may be part way through it; re-run 'ergon update'" ;;
+  esac
+}
+
+if [ "$CHECK_ONLY" = 1 ]; then
+  report_orphans
+  report_rebuild
+  report_pacnew
+  report_restart
+  printf '\n   --check: nothing applied\n'
+  exit 0
 fi
+
+if [ "$PENDING" = 1 ]; then
+  say "upgrade"
+  upgrade
+
+  say "cleanup"
+  # Keep three versions. The cache is on its own subvolume precisely so a
+  # rollback can still reach the packages needed to fix itself -- do not empty
+  # it.
+  sudo paccache -rk3 >/dev/null 2>&1 && ok "package cache trimmed to 3 versions"
+fi
+
+report_orphans
+report_rebuild
 
 say "firmware"
 # Reported, never applied automatically. A firmware update is the one thing here
@@ -137,7 +338,5 @@ else
   warn "fwupd not installed"
 fi
 
-say "done"
-if [ -e /var/run/reboot-required ] || [ "$(uname -r)" != "$(pacman -Q linux 2>/dev/null | awk '{print $2}' | sed 's/\.arch/-arch/')" ]; then
-  printf '   the running kernel differs from the installed one — reboot when convenient\n'
-fi
+report_pacnew
+report_restart

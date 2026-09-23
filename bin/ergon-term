@@ -30,7 +30,15 @@ esac
 # Each terminal spells the app-id flag differently, and gets the command in a
 # different position. Keep the mapping here rather than at every call site.
 if command -v wezterm >/dev/null; then
-  set -- start ${CLASS:+--class "$CLASS"} ${1:+--} "$@"
+  # --always-new-process (ERGON-19). By DEFAULT `wezterm start` does not start
+  # anything: it asks an already-running wezterm GUI to open the window, so
+  # every terminal on the machine is one process in one cgroup, whichever
+  # window was opened first. That is invisible until something runs the machine
+  # out of memory -- systemd-oomd kills whole cgroups, so the kill that should
+  # have taken one runaway job takes every open terminal with it, which is the
+  # damage this card exists to stop rather than merely relocate. A process per
+  # window costs tens of MB and makes the containment real.
+  set -- start --always-new-process ${CLASS:+--class "$CLASS"} ${1:+--} "$@"
   exec wezterm "$@"
 elif command -v foot >/dev/null; then
   exec foot ${CLASS:+--app-id "$CLASS"} ${1:+--} "$@"
