@@ -1878,6 +1878,18 @@ if usr "pgrep -x mako" >/dev/null 2>&1; then
          bad "makoctl could not read mako back (exit $_mako_rc) — whether a notification names the run is untested"
        else
          bad "mako is running but holds no notification naming the run"
+         # Which half is broken: ergon-watch never calling notify-send, or a bus
+         # that cannot carry it. Send one DIRECTLY and look again -- if this
+         # arrives, delivery works and the caller is at fault; if it does not,
+         # nothing ergon-watch does could have arrived either.
+         echo "     --- notify-send on the session PATH ---"
+         usr "command -v notify-send" 2>&1 | sed 's/^/     /'
+         echo "     --- a notification sent directly ---"
+         usr "notify-send -u critical 'ergon probe' 'direct oom-probe delivery test'" 2>&1 | sed 's/^/     /'
+         echo "     rc=$?"
+         usr "makoctl list" 2>&1 | head -30 | sed 's/^/     /'
+         echo "     --- what ergon watch itself printed ---"
+         tail -20 /tmp/oomprobe.log 2>/dev/null | sed 's/^/     /'
        fi ;;
   esac
 else
