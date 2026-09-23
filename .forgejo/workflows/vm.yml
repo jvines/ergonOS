@@ -41,6 +41,19 @@ on:
       # itself, which is what this list already says is worth 35 minutes.
       - 'bin/ergon-theme'
       - 'lib/user-config.sh'
+      # The surfaces the session suite now switches palette against. Without
+      # them the assertion added for ERGON-33 could only ever fail on the
+      # Monday after the change that broke it. theme/*.env and not theme/**:
+      # theme/backgrounds holds the wallpapers, and a new image is not worth
+      # thirty-five minutes of a runner.
+      - 'theme/*.env'
+      - 'mako/**'
+      - 'swayosd/**'
+      # waybar for the same reason: the session block asserts the bar comes
+      # BACK from the restart a palette switch does to it, and the fast gate
+      # can only parse its stylesheet -- it cannot tell you the bar mapped a
+      # surface, which is what a bad @import costs.
+      - 'waybar/**'
       - 'packages/**'
       - 'test/arch-vm/**'
       - '.forgejo/workflows/vm.yml'

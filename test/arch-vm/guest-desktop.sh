@@ -1165,6 +1165,39 @@ hq monitors -j | grep -q '"name"' && ok "a monitor is present" || bad "no monito
 # while the real one worked, and the assertion passed on the real one -- so the
 # log carried a fatal-looking waybar error that meant nothing. Wait for the one
 # the session started; only start one here if the session did not.
+# btop was sent SIGUSR2 by the apply step. Upstream #860 aborts on the redraw
+# that follows a reload when the GPU box is shown; ergon-theme reads btop.conf
+# to avoid that, and the config this machine installs has no shown_boxes line
+# at all, so the signal really was delivered here. Whether the process survived
+# it is a thing only a live btop can say, and this is the only one there is.
+if [ -z "$_pal_before_btop" ]; then
+  note "no btop was open across the switch, so the SIGUSR2 path is unobserved here"
+elif usr "pgrep -x btop" >/dev/null 2>&1; then
+  ok "btop survived being signalled for the new palette"
+else
+  bad "btop is gone after the palette switch — SIGUSR2 killed it (btop#860)"
+fi
+
+# The bar is asserted by PID, not by presence. A layer surface outlives the
+# client that owns it for as long as teardown takes, so "waybar is in hq
+# layers" a second after the kill can be the DYING bar, still drawn with the
+# old stylesheet -- which is the staleness this section exists to disprove.
+_pal_after_bar=""
+for _ in $(seq 1 20); do
+  _pal_after_bar=$(usr "pgrep -x waybar" 2>/dev/null | head -1)
+  [ -n "$_pal_after_bar" ] && [ "$_pal_after_bar" != "$_pal_before_bar" ] && break
+  sleep 1
+done
+if [ -z "$_pal_before_bar" ]; then
+  bad "waybar was not running before the switch — the session never had a bar"
+elif [ -z "$_pal_after_bar" ]; then
+  bad "waybar is gone after the palette switch — the desktop has no bar"
+elif [ "$_pal_after_bar" = "$_pal_before_bar" ]; then
+  bad "waybar kept pid $_pal_after_bar, so it is still drawing the old stylesheet"
+else
+  ok "waybar was restarted, which is the only thing that recolours the bar"
+fi
+
 for _ in $(seq 1 20); do hq layers | grep -q waybar && break; sleep 1; done
 if ! hq layers | grep -q waybar; then
   echo "     autostart did not bring up waybar; starting one by hand"
@@ -1866,7 +1899,9 @@ hq version | grep -q Hyprland && ok "and it still answers hyprctl" \
 # the daemon is there the message is still on screen. The window the job ran in
 # may have died with it, which is what makes this the only place the machine
 # says WHAT it killed.
-if usr "pgrep -x mako" >/dev/null 2>&1; then
+if [ -n "$_pal_before_mako" ] && ! usr "pgrep -x mako" >/dev/null 2>&1; then
+  bad "mako was running before the switch and is gone after it — the reload killed the notification daemon"
+elif usr "pgrep -x mako" >/dev/null 2>&1; then
   # makoctl's own status, kept. Swallowed inside the command substitution, a
   # makoctl that could not reach the daemon was indistinguishable from a mako
   # holding nothing, and both were reported as the second -- which sends the
@@ -1905,6 +1940,189 @@ if usr "systemd-run --user --scope --quiet --collect --slice=app.slice -p Memory
   ok "a user scope can be created from this session, so uwsm-app's terminals are contained here too"
 else
   note "no user scope from a serial console (cgroup v2 refuses the migration), so the uwsm-app half of the terminal path is covered only by bin/test-oom.sh and by ergon-doctor's shell-slice row on real hardware"
+fi
+
+# --- a palette switch reaches the desktop that is already up (ERGON-33) ----
+# NOTE, because it cost a run to learn: this suite tests COMMITTED work. The
+# copy of the repo it provisions from is `git clean -qfd`ed above, for the
+# reasons given there, so an untracked file is gone by the time anything below
+# runs -- while a gitignored one (every rendered config) survives. A new
+# template being tested before it is committed therefore looks exactly like a
+# renderer that skipped it.
+# The renderer runs on every one of these runs, because install.sh calls it.
+# What had never been exercised is CHANGING palette on a desktop that is
+# already drawn, which is the half that can only fail live: a surface themed
+# at install time and stale afterwards is indistinguishable from a working one
+# until someone presses the keybind.
+#
+# What is honestly assertable here, and what is not, is worth writing down.
+# mako exposes no colours on its bus -- makoctl has list, reload and mode, and
+# nothing else -- and swayosd-server exposes none either. Pixels are out: checo
+# has no render node, so grim degrades to a note on exactly the weekly runs
+# this exists to gate. So the claims below are the three that are real: the
+# COMPOSITOR's own value changed, the file each daemon reads carries the new
+# palette, and each daemon survived being told about it.
+#
+# foot is missing from that list on purpose. Recolouring an open terminal is
+# escape sequences written down its pty, which needs no compositor at all:
+# bin/test-theme.sh opens a real pty with script(1) and reads the sequences
+# back out of it, which is a stronger claim than anything available here.
+_pal_before_bg=$(hq "getoption -j misc:background_color")
+# Every daemon the apply step touches, read before it is touched. Without a
+# before-state, a daemon the switch KILLS is indistinguishable from one that
+# was never running, and the branch for the second is a note -- so the worst
+# outcome of this change would have been reported as neither a pass nor a
+# failure. btop matters most: ergon-theme signals it with SIGUSR2, upstream
+# #860 is open against exactly that path, and the btop this suite opened
+# further up is the only live one this project ever signals.
+_pal_before_osd=$(usr "pgrep -x swayosd-server" 2>/dev/null | head -1)
+_pal_before_mako=$(usr "pgrep -x mako" 2>/dev/null | head -1)
+_pal_before_btop=$(usr "pgrep -x btop" 2>/dev/null | head -1)
+_pal_before_bar=$(usr "pgrep -x waybar" 2>/dev/null | head -1)
+_pal_repo="$H/ergonOS"
+
+if usr "ergon-theme gruvbox" > /tmp/palette.log 2>&1; then
+  ok "a palette switch runs in the session"
+else
+  bad "ergon theme gruvbox failed in the session"
+  tail -20 /tmp/palette.log 2>/dev/null | sed 's/^/     /'
+fi
+
+_pal_after_bg=$(hq "getoption -j misc:background_color")
+# hq folds stderr into stdout, so "Couldn't connect to ... .socket.sock" is a
+# non-empty string that differs from the JSON captured before it -- a dead
+# compositor would have read as proof that it re-read its colours. Require an
+# answer that is shaped like one.
+_pal_answered=0
+case "$_pal_after_bg" in '{'*) _pal_answered=1 ;; esac
+if [ -z "$_pal_before_bg" ]; then
+  bad "hyprctl could not read misc:background_color before the switch"
+elif [ "$_pal_answered" = 0 ]; then
+  bad "hyprctl did not answer with an option after the switch — the compositor may be gone"
+  printf '%s\n' "$_pal_after_bg" | head -3 | sed 's/^/     /'
+elif [ "$_pal_after_bg" != "$_pal_before_bg" ]; then
+  ok "the compositor re-read its own colours (misc:background_color changed)"
+else
+  bad "misc:background_color is unchanged — hyprctl reload did not pick up the rendered config"
+  echo "     before: $_pal_before_bg"
+  echo "     after:  $_pal_after_bg"
+fi
+
+# Read through ~/.config, not through the checkout: that proves the symlink
+# install.sh made AND the render behind it, in one assertion.
+_pal_bg1=$(sed -n 's/^COOL_BG1=\(#[0-9A-Fa-f]\{6\}\).*/\1/p' "$_pal_repo/theme/gruvbox.env" | head -1)
+_pal_act=$(sed -n 's/^COOL_ACTIVE=\(#[0-9A-Fa-f]\{6\}\).*/\1/p' "$_pal_repo/theme/gruvbox.env" | head -1)
+# An empty needle makes every grep below match anything at all -- the shape a
+# drift guard takes when it stops guarding, and it would go quiet on exactly
+# the drift it is here for: a role renamed out of the palette file.
+if [ -z "$_pal_bg1" ] || [ -z "$_pal_act" ]; then
+  bad "could not read COOL_BG1/COOL_ACTIVE out of theme/gruvbox.env — the checks below would pass against any file"
+fi
+grep -q "background-color=$_pal_bg1" "$H/.config/mako/config" 2>/dev/null \
+  && ok "the config mako reads carries the new palette" \
+  || bad "$H/.config/mako/config does not carry gruvbox's $_pal_bg1"
+if [ -e "$H/.config/swayosd/style.css" ]; then
+  if grep -qi "$_pal_act" "$H/.config/swayosd/style.css" 2>/dev/null; then
+    ok "the stylesheet swayosd reads carries the new palette"
+  else
+    bad "$H/.config/swayosd/style.css does not carry gruvbox's $_pal_act"
+    # Three things can produce this and they need different fixes: the link
+    # points somewhere unexpected, the template never reached this machine, or
+    # the render skipped it. Print all three rather than sending the next
+    # reader to guess between them.
+    echo "     --- the path, and what it resolves to ---"
+    ls -l "$H/.config/swayosd/style.css" 2>&1 | sed 's/^/     /'
+    printf '     -> %s\n' "$(readlink -f "$H/.config/swayosd/style.css" 2>&1)"
+    echo "     --- what the repo holds ---"
+    ls -l "$_pal_repo/swayosd/" 2>&1 | sed 's/^/     /'
+    echo "     --- the colours the file actually carries ---"
+    grep -aoE '#[0-9A-Fa-f]{6}' "$H/.config/swayosd/style.css" 2>/dev/null \
+      | sort -u | tr '\n' ' ' | sed 's/^/     /'
+    echo
+    echo "     --- what the palette switch printed ---"
+    tail -25 /tmp/palette.log 2>/dev/null | sed 's/^/     /'
+  fi
+else
+  bad "no $H/.config/swayosd/style.css — the OSD is drawing in whatever GTK theme is set"
+  ls -l "$H/.config/swayosd/" 2>&1 | sed 's/^/     /'
+  tail -25 /tmp/palette.log 2>/dev/null | sed 's/^/     /'
+fi
+
+if usr "pgrep -x mako" >/dev/null 2>&1; then
+  if _pal_out=$(usr "makoctl reload" 2>&1); then
+    ok "mako accepted a reload of the config it was just handed"
+  else
+    bad "makoctl reload failed, so the running daemon kept the old palette"
+    printf '%s\n' "$_pal_out" | sed 's/^/     /'
+  fi
+  # The regression that adding a reload invites is a daemon that survives the
+  # command and then delivers nothing.
+  # The distinguishing text goes in the SUMMARY, not the body: makoctl list
+  # prints the summary and the app name and nothing else, which is the same
+  # thing ergon-watch's header says about why the run's name is its summary.
+  # Matching on a body here reported a notification that had arrived as
+  # missing, with the notification visible in the diagnostic right below it.
+  usr "notify-send 'ergon palette delivered' 'after the switch'" >/dev/null 2>&1
+  sleep 1
+  case "$(usr "makoctl list" 2>/dev/null)" in
+    *"ergon palette delivered"*) ok "  and still delivers notifications afterwards" ;;
+    *)
+      bad "  but nothing arrives through it afterwards"
+      echo "     --- is mako still the same process ---"
+      usr "pgrep -x mako" 2>&1 | sed 's/^/     /'
+      echo "     --- what it is holding ---"
+      usr "makoctl list" 2>&1 | head -30 | sed 's/^/     /'
+      echo "     --- sending one directly, and its exit ---"
+      usr "notify-send -u critical 'ergon palette probe' 'second attempt'" 2>&1 | sed 's/^/     /'
+      printf '     rc=%s\n' "$?"
+      sleep 1
+      usr "makoctl list" 2>&1 | head -30 | sed 's/^/     /' ;;
+  esac
+else
+  note "mako is not running here, so the reload cannot be read back"
+fi
+
+# Polled, not sampled. hyprctl dispatch returns as soon as the compositor
+# accepts it; the process then has to initialise GTK4 and gtk4-layer-shell on
+# llvmpipe, which is the slowest thing in this VM. Reading the pid immediately
+# reported the OSD as dead, and vm.yml now wakes a phone on that.
+_pal_after_osd=""
+for _ in $(seq 1 20); do
+  _pal_after_osd=$(usr "pgrep -x swayosd-server" 2>/dev/null | head -1)
+  [ -n "$_pal_after_osd" ] && [ "$_pal_after_osd" != "$_pal_before_osd" ] && break
+  sleep 1
+done
+if [ -z "$_pal_before_osd" ]; then
+  # Not a note. autostart.lua execs swayosd-server with the session, and
+  # nothing else in this suite checks that it came up -- so a note here is the
+  # difference between "the OSD is stale" and "there is no OSD", reported as
+  # green.
+  bad "swayosd-server was not running before the switch — autostart.lua never brought the OSD up"
+elif [ -z "$_pal_after_osd" ]; then
+  bad "swayosd-server is gone after the switch rather than restarted — the OSD is dead until next login"
+elif [ "$_pal_after_osd" != "$_pal_before_osd" ]; then
+  ok "swayosd-server was restarted, which is the only way it re-reads its CSS"
+else
+  bad "swayosd-server kept pid $_pal_after_osd, so it is still drawing the old palette"
+fi
+
+for _ in $(seq 1 20); do hq layers | grep -q waybar && break; sleep 1; done
+hq layers | grep -q waybar \
+  && ok "  and mapped its layer surface again" \
+  || bad "the restarted waybar never mapped a layer surface — the desktop has no bar"
+
+# Back to the shipped palette, which is also the switch nobody tests: the one
+# that has to undo the first.
+usr "ergon-theme cool" > /tmp/palette-restore.log 2>&1
+if [ "$(hq "getoption -j misc:background_color")" = "$_pal_before_bg" ]; then
+  ok "switching back restores the palette the machine shipped with"
+else
+  bad "switching back to cool did not restore misc:background_color"
+  # The forward switch keeps its log for this reason; so does this one now.
+  # Without it the only thing the job log and the phone carry is the sentence
+  # above, and "the render failed" and "hyprctl reload did not take" look the
+  # same from there.
+  tail -25 /tmp/palette-restore.log 2>/dev/null | sed 's/^/     /'
 fi
 
 # --- what the OS hands its agents -----------------------------------------

@@ -112,6 +112,10 @@ jobs:
       - name: Keep the notifier that just passed
         run: install -Dm755 "$CI_DIR/bin/ergon-alert" "$ALERTER"
 
+      # A palette switch reaches the programs that are already running. Opens a
+      # real pty to prove the terminal sequences arrive, which needs no display.
+      - name: A palette switch reaches the running desktop
+        run: cd "$CI_DIR" && ./bin/test-theme.sh
 
       # Every desktop config through the parser that will actually read it.
       # This existed and was wired into nothing, which is how a config could be

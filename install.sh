@@ -31,7 +31,7 @@ link() {  # link <repo path> <path under $HOME> [generated]
   local src="$ERGON/$1" dst="$HOME/$2"
   if [ ! -e "$src" ]; then
     # "generated" marks a file that does not exist until the render above has
-    # run. Thirteen of the sixteen rendered outputs are linked as part of a
+    # run. Thirteen of the seventeen rendered outputs are linked as part of a
     # whole directory, which always exists, so this guard never sees them; the
     # gtk pair is linked file by file, so on a never-rendered clone --check
     # reported them as "missing in the repo". They are not missing from the
@@ -63,7 +63,7 @@ else
   # Render BEFORE linking anything, and treat a failure as fatal.
   #
   # The themed configs are generated and not committed, so a fresh clone has
-  # sixteen missing files and link() would happily point $HOME at every one of
+  # seventeen missing files and link() would happily point $HOME at every one of
   # them. Two of those are not cosmetic:
   #
   #   hypr/common/looknfeel.lua  hyprland.lua requires it WITHOUT a pcall, and a
@@ -163,6 +163,12 @@ else
   # gtk.css defines both sets, so one rendered file serves both.
   link gtk/gtk.css .config/gtk-3.0/gtk.css generated
   link gtk/gtk.css .config/gtk-4.0/gtk.css generated
+  # The OSD. swayosd-server searches $XDG_CONFIG_HOME/swayosd/style.css itself
+  # and loads it over the package's own sheet, so this needs no --style flag in
+  # autostart.lua -- the file simply has to be at that path. One file rather
+  # than the directory: linking swayosd/ whole would put style.css.in in
+  # ~/.config too, and the template is not something the OSD should ever read.
+  link swayosd/style.css .config/swayosd/style.css generated
   [ -f "$ERGON/hosts/$HOST/hyprland.lua" ] && link "hosts/$HOST/hyprland.lua" ".config/hypr/hosts/$HOST.lua"
 
   # PATH for the systemd user manager, which is what launches the session under

@@ -44,6 +44,7 @@ lazygit/config.yml
 lnav/config.json
 mako/config
 newsboat/config
+swayosd/style.css
 waybar/style.css
 wezterm/wezterm.lua
 yazi/theme.toml

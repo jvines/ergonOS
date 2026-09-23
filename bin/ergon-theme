@@ -256,6 +256,71 @@ fi
 # not a separate courtesy, and its failure is the render's failure.
 ergon_ensure_user_files || rc=1
 
+# Recolour the foot windows that are already open.
+#
+# Everything else in the apply step below either re-reads a file (mako, btop)
+# or is restarted (waybar, swayosd). A terminal can do neither: it holds your
+# shell, your history and whatever is running in it. What it can do is accept
+# the colours as escape sequences on its own output stream -- OSC 4, 10, 11,
+# 12, 17 and 19, all six of which foot documents and implements
+# (foot-ctlseqs(7)).
+#
+# The sequences are built from the RENDERED foot.ini, not from the palette
+# directly. Which palette role lands in which ANSI slot is decided once, in
+# foot/foot.ini.in, and writing that mapping out a second time here is exactly
+# how the two would drift -- a palette that is right in new windows and wrong
+# in the one you are looking at is worse than one that is wrong everywhere.
+# Reading the file back also means this follows the template automatically when
+# a slot is reassigned.
+foot_osc() {
+  local ini="$ERGON/foot/foot.ini"
+  [ -f "$ini" ] || return 0
+  # [colors-dark] and [colors-light] carry the same palette -- see the
+  # template's header for why both exist -- so the first of them answers.
+  # BEL rather than ST as the terminator: both are accepted, and a lone
+  # backslash through awk, bash and a pty is three chances to be wrong.
+  awk '
+    /^\[colors-(dark|light)\]/ { sec++; next }
+    /^\[/                       { if (sec) exit }
+    sec != 1                    { next }
+    /^[ \t]*[#;]/               { next }
+    /=/ {
+      split($0, kv, "=")
+      k = kv[1]; v = kv[2]
+      gsub(/[ \t]/, "", k)
+      sub(/[#;].*/, "", v); gsub(/^[ \t]+|[ \t]+$/, "", v)
+      if (v == "") next
+      # cursor is two colours -- "text cursor" -- and OSC 12 sets the second.
+      if (k == "cursor") { n = split(v, c, /[ \t]+/); v = c[n] }
+      if      (k == "foreground")           printf "\033]10;#%s\007", v
+      else if (k == "background")           printf "\033]11;#%s\007", v
+      else if (k == "cursor")               printf "\033]12;#%s\007", v
+      else if (k == "selection-background") printf "\033]17;#%s\007", v
+      else if (k == "selection-foreground") printf "\033]19;#%s\007", v
+      else if (k ~ /^regular[0-7]$/)        printf "\033]4;%d;#%s\007", substr(k, 8) + 0, v
+      else if (k ~ /^bright[0-7]$/)         printf "\033]4;%d;#%s\007", substr(k, 7) + 8, v
+    }
+  ' "$ini" 2>/dev/null || true
+}
+
+# Every pty that a running foot is the far end of. foot's own child is the
+# shell, and the shell's controlling terminal is the slave side -- writing
+# there is indistinguishable from the shell printing, which is what makes foot
+# parse it. It is also why this cannot disturb what is running: an OSC colour
+# sequence produces no output and moves no cursor.
+foot_windows() {
+  local pid child tty
+  # -u: this user's terminals only. Run as root -- which `ergon theme` is not,
+  # but nothing stops it -- an unrestricted pgrep would reach into every foot
+  # on the machine and write escape sequences into other people's shells.
+  for pid in $(pgrep -u "$(id -u)" -x foot 2>/dev/null || true); do
+    for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+      tty=$(ps -o tty= -p "$child" 2>/dev/null | tr -d '[:space:]')
+      case "$tty" in pts/[0-9]*) printf '/dev/%s\n' "$tty" ;; esac
+    done
+  done
+}
+
 # Rendering a config is not applying it. Every running program already has the
 # old colours in memory: hyprland holds its border colours, waybar parses its
 # CSS once at startup, and the wallpaper is a PNG that has to be redrawn from
@@ -267,6 +332,23 @@ ergon_ensure_user_files || rc=1
 # a tty and from CI, where there is not.
 if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
   echo "   applying"
+  # One apply at a time, for the reason autostart.lua names in its own header:
+  # you end up with two waybars.
+  #
+  # This step kills two daemons, waits half a second, and starts them again.
+  # SUPER+T is bound to `ergon theme --next` so that nineteen palettes can be
+  # compared by holding a key, and a second press landing inside that gap finds
+  # nothing to kill and starts a second pair -- which then survive until
+  # logout, both drawing. Measured with stubs: two runs 200ms apart, two
+  # waybars.
+  #
+  # flock and not a pid check: the same shape bin/ergon-wallpaper already uses,
+  # and for the same reason -- the later press is the one whose palette should
+  # win, so it queues rather than giving up.
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"${XDG_RUNTIME_DIR:-/tmp}/ergon-theme-apply.lock"
+    flock -w 10 9 || echo "   another apply is still running; carrying on without the lock" >&2
+  fi
   # Re-colour the generated backgrounds for the palette just chosen.
   #
   # They are coloured FROM the palette, so before this a palette switch left
@@ -293,11 +375,58 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
   fi
   "$ERGON/bin/ergon-wallpaper" --force >/dev/null 2>&1 || true
   hyprctl reload >/dev/null 2>&1 || true
-  # waybar has no reload signal that re-reads the stylesheet; SIGUSR2 reloads
-  # the config but keeps the parsed CSS, which is the half that carries the
-  # palette. Restarting is the only thing that actually recolours the bar.
-  pkill -x waybar >/dev/null 2>&1 || true
+  # waybar and swayosd both parse everything they draw exactly once, at
+  # startup, and neither can be told to read it again: waybar's SIGUSR2 reloads
+  # the config and keeps the parsed CSS, which is the half carrying the
+  # palette, and swayosd-server has no signal handler at all -- it loads the
+  # system sheet and then ~/.config/swayosd/style.css in main() and never looks
+  # again. Restarting is the only thing that recolours either.
+  #
+  # Killed together and respawned together, so a palette switch costs one 0.5s
+  # gap between the keybind and a repainted desktop rather than two.
+  pkill -x waybar         >/dev/null 2>&1 || true
+  pkill -x swayosd-server >/dev/null 2>&1 || true
   sleep 0.5
-  hyprctl dispatch 'hl.dsp.exec_raw("waybar")' >/dev/null 2>&1 || true
+  hyprctl dispatch 'hl.dsp.exec_raw("waybar")'         >/dev/null 2>&1 || true
+  hyprctl dispatch 'hl.dsp.exec_raw("swayosd-server")' >/dev/null 2>&1 || true
+
+  # mako does have a reload, and it keeps the notifications already on screen.
+  makoctl reload >/dev/null 2>&1 || true
+
+  # btop rereads its THEME on SIGUSR2, not merely its config: the handler sets
+  # reload_conf, and the reload path calls Theme::updateThemes() and
+  # Theme::setTheme() (btop.cpp). So an open btop on another workspace follows
+  # the palette without being restarted under someone who is watching it.
+  #
+  # Except when the GPU box is shown. btop#860 is open: the redraw after a
+  # reload indexes past the end of a vector in Gpu::draw and the process dies
+  # with SIGABRT. Omarchy ships this exact signal and collected the bug report
+  # (omarchy#8711). A stale btop is a nuisance; a btop that disappears when you
+  # change palette is the desktop breaking in front of you, so the signal is
+  # sent only where the crash cannot happen.
+  #
+  # Read from btop.conf rather than from the running process, and btop writes
+  # that file when it EXITS -- so a box toggled on with `6` in this session and
+  # never saved is not visible here. That window is the one case this misses,
+  # and it is smaller than the one it covers.
+  _btopconf="${XDG_CONFIG_HOME:-$HOME/.config}/btop/btop.conf"
+  if ! grep -qE '^shown_boxes.*gpu' "$_btopconf" 2>/dev/null; then
+    pkill -USR2 -x btop >/dev/null 2>&1 || true
+  fi
+
+  # And the terminals, which cannot be restarted at all. Not wezterm: it
+  # watches its own config file and reloads without being asked
+  # (automatically_reload_config, which wezterm.lua.in does not override), so
+  # it is the one surface here that was never stale.
+  #
+  # Through `timeout`, because a write to a pty is a write to a buffer that a
+  # wedged terminal is not draining: the palette keybind must not be able to
+  # hang on the one window that has stopped reading. A second is four orders of
+  # magnitude more than half a kilobyte needs.
+  if _osc=$(foot_osc) && [ -n "$_osc" ]; then
+    while IFS= read -r _pts; do
+      timeout 1 sh -c 'printf "%s" "$1" > "$2"' _ "$_osc" "$_pts" 2>/dev/null || true
+    done < <(foot_windows)
+  fi
 fi
 exit $rc

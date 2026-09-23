@@ -110,15 +110,15 @@ manager does not re-read it.
 
 **Do not edit a themed config. It is generated, and your edit has a short life.**
 
-Sixteen files are rendered from a `.in` template beside them by `ergon theme`,
-which expands the active palette into `@COOL_*@` placeholders:
+Seventeen files are rendered from a `.in` template beside them by
+`ergon theme`, which expands the active palette into `@COOL_*@` placeholders:
 
     waybar/style.css      mako/config        hypr/hyprlock.conf
     gtk/gtk.css           fuzzel/fuzzel.ini  hypr/common/looknfeel.lua
     foot/foot.ini         newsboat/config    gtk/settings.ini
     yazi/theme.toml       lnav/config.json   lazygit/config.yml
     lazydocker/config.yml wezterm/wezterm.lua btop/themes/ergon.theme
-    bat/themes/ergon.tmTheme
+    bat/themes/ergon.tmTheme  swayosd/style.css
 
 They are **gitignored**, and `install.sh` renders them before it links anything.
 That is why switching palette no longer leaves the repo dirty — and it is also
@@ -126,6 +126,40 @@ why a fresh clone has none of them until something renders.
 
 To change a colour, edit `theme/<palette>.env`. To change the structure, edit
 the `.in`. Editing the output changes your desktop until the next install.
+
+### What checks them, and what does not
+
+Rendered configs are gitignored, so nobody reads them in a diff. The only thing
+standing between a template and a surface that silently stops being themed is a
+parser, and `foot` proved that is not theoretical: `[colors]` stopped being a
+section name foot knew, an unknown section takes every key inside it, and
+sixteen ANSI slots were being discarded with no error anywhere.
+
+    ./bin/test-hypr-config.sh      # what the list below is, run for real
+
+`./bin/test-hypr-config.sh` loads eight files through the parser that will
+actually read each one: `hypr/hyprland.lua` (which is what pulls in the
+rendered `looknfeel.lua`), `fuzzel.ini`, `foot.ini`, `mako/config`,
+`hypridle.conf`, `hyprlock.conf`, and the two stylesheets — `waybar/style.css`
+through GTK3 and `swayosd/style.css` through GTK4, because those two CSS
+engines do not accept the same file. `waybar/config.jsonc` is exercised
+functionally instead: the VM session suite starts a real bar and asserts it
+maps a layer surface, which is stronger than parsing it.
+
+**Ten of the seventeen rendered files are checked by nothing** — a known gap,
+ERGON-52: `gtk/gtk.css`, `gtk/settings.ini`, `newsboat/config`,
+`yazi/theme.toml`, `lnav/config.json`, `lazygit/config.yml`,
+`lazydocker/config.yml`, `btop`'s theme, `bat`'s tmTheme and
+`wezterm/wezterm.lua`. Three things are worth knowing about that list: `bat`
+compiles its tmTheme (`bat cache --build`, which `install.sh` already runs), so
+a broken one is at least loud on a real install; `lnav -C` exits 0 on a config
+it cannot use, so it is not a check; and `wezterm` is an AUR git build present
+on no machine this repo tests on, which is an environment problem rather than a
+missing script.
+
+The GTK check has a limit worth knowing: it validates syntax, property names
+and value grammar, and it catches an unexpanded `@COOL_*@`. It does **not**
+validate selectors — `#worksaces` parses perfectly.
 
 ### Your own settings: `~/.config/ergon/`
 
@@ -156,10 +190,13 @@ generated `[urgency=critical]` and friends are parsed *after* yours and win on
 any key both set. You can add criteria the repo does not define; you cannot
 restyle the ones it does.
 
-Eight surfaces have **no** include mechanism and cannot be overridden this way:
+Nine surfaces have **no** include mechanism and cannot be overridden this way:
 `gtk/settings.ini`, `yazi/theme.toml`, `lnav/config.json`, `lazygit/config.yml`,
-`lazydocker/config.yml`, `btop`'s theme, `bat`'s tmTheme, and
-`wezterm/wezterm.lua`. For those, change the template. (`lazygit` and `lnav` can
+`lazydocker/config.yml`, `btop`'s theme, `bat`'s tmTheme,
+`wezterm/wezterm.lua`, and `swayosd/style.css` — that last one because
+`~/.config/swayosd/style.css` **is** swayosd's user-override slot, and this
+repo has taken it; swayosd loads the package's own sheet first and this one
+over the top. For those, change the template. (`lazygit` and `lnav` can
 take a second config on the command line — `--use-config-file`, `-I` — which is
 a launcher change, not a file include.)
 

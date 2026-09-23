@@ -1,0 +1,89 @@
+/* GENERATED from swayosd/style.css.in — edit the .in, then run: ergon theme
+ *
+ * The volume/brightness overlay. Every volume, brightness and media key in
+ * hypr/common/media.lua routes through swayosd-client so that the change draws
+ * something on screen -- the keyboard backlight and the external monitor do
+ * not, and media.lua says why at each of them. Until this file existed, what
+ * was drawn came from whatever GTK theme gsettings happened to name:
+ * Adwaita-dark's grey on a cyan-and-magenta desktop, and a white pill on a
+ * light palette. It was the one surface the palette had never reached at all,
+ * rather than one that lagged behind it.
+ *
+ * The selectors are upstream's, from swayosd 0.3.2's /etc/xdg/swayosd/style.css,
+ * and only the colours are ours: the package's own sheet is loaded first at
+ * APPLICATION priority and this one cascades over it at USER priority, so a
+ * selector that drifts does not go unstyled, it silently keeps upstream's grey.
+ * That is the foot failure mode again, which is why swayosd/style.css is in
+ * bin/test-hypr-config.sh.
+ *
+ * GTK4, not GTK3: swayosd-server links libgtk-4 and gtk4-layer-shell. Both
+ * sheets are loaded exactly once, in main(), and the binary has no SIGHUP or
+ * SIGUSR handler — there is no reload. bin/ergon-theme restarts the server
+ * after a palette switch for that reason, and that restart is not tidiness.
+ *
+ * No `@import` of a file under ~/.config/ergon here, unlike waybar and mako:
+ * ~/.config/swayosd/style.css IS upstream's user-override slot and this repo
+ * has taken it. To restyle the OSD, edit this template. Same answer as the
+ * other surfaces with no include, and it is in knowledge/desktop-config.md.
+ */
+
+window#osd {
+  border-radius: 999px;
+  /* Upstream draws no border. The rest of this desktop — mako, fuzzel,
+   * hyprlock — marks a floating surface with one hairline of @COOL_BG2@, and
+   * the OSD sits over arbitrary content where a borderless pill at 92% alpha
+   * loses its edge against a pale wallpaper. */
+  border: 1px solid @COOL_BG2@;
+  background: alpha(@COOL_BG0@, 0.92);
+}
+
+window#osd #container {
+  margin: 16px;
+}
+
+window#osd image,
+window#osd label {
+  color: @COOL_FG0@;
+}
+
+window#osd progressbar:disabled,
+window#osd image:disabled {
+  opacity: 0.5;
+}
+
+window#osd progressbar,
+window#osd segmentedprogress {
+  min-height: 6px;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
+}
+
+/* The unfilled part of the bar, and the inactive segments of the caps-lock
+ * style indicator. @COOL_BG2@ is the same "inactive border" role waybar and
+ * mako use, so an empty volume bar reads as the same grey everywhere. */
+window#osd trough,
+window#osd segment {
+  min-height: inherit;
+  border-radius: inherit;
+  border: none;
+  background: @COOL_BG2@;
+}
+
+/* The filled part. @COOL_ACTIVE@ is what marks the focused window and the
+ * active workspace — the OSD is showing you the thing you are changing. */
+window#osd progress,
+window#osd segment.active {
+  min-height: inherit;
+  border-radius: inherit;
+  border: none;
+  background: @COOL_ACTIVE@;
+}
+
+window#osd segment {
+  margin-left: 8px;
+}
+
+window#osd segment:first-child {
+  margin-left: 0;
+}

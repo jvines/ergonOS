@@ -11,7 +11,11 @@
 font=JetBrainsMono Nerd Font:size=12
 dpi-aware=no
 prompt="  "
-icon-theme=Papirus-Dark
+# From the palette, not hardcoded. ergon-theme decides light or dark from the
+# relative luminance of COOL_BG0 and hands the same @COOL_ICON_THEME@ to
+# gtk/settings.ini -- so on a light palette GTK went to Papirus-Light and the
+# launcher alone kept handing back dark icons.
+icon-theme=@COOL_ICON_THEME@
 icons-enabled=yes
 fields=name,generic,comment,categories,filename,keywords
 # ERGON-19. Without these two lines everything the launcher starts is a child of

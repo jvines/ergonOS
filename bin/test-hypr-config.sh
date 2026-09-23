@@ -21,7 +21,15 @@ command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
 echo "== desktop configs, checked by their own parsers"
 
 out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c '
-  pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot >/dev/null 2>&1
+  # gtk3 AND gtk4, deliberately: waybar is a GTK3 app and swayosd-server links
+  # libgtk-4, and the two CSS engines do not accept the same stylesheet. GTK4
+  # rejects waybar/style.css outright over -gtk-icon-effect, which is a real
+  # GTK3 vendor property doing real work on the tray icons. Each sheet is read
+  # by the engine that will actually read it, which is the whole idea of this
+  # file. They also cannot share a process: one python may load one Gtk
+  # typelib, so the two checks below are two interpreters.
+  pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot \
+    python-gobject gtk3 gtk4 >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
   # you not to use it, so everything runs as a real user.
@@ -41,10 +49,54 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
   XDG_CONFIG_HOME=/home/t/.config XDG_STATE_HOME=/tmp/state \
     ERGON=/tmp/repo /tmp/repo/bin/ergon-theme --no-apply cool >/dev/null
 
-  cp -r /tmp/repo/hypr /home/t/.config/hypr && chown -R t:t /home/t/.config
+  # Mirrored into XDG_CONFIG_HOME rather than read from the repo copy, because
+  # that is where the paths inside them resolve. waybar/style.css ends with
+  # @import url("../ergon/waybar.css"), which GTK pops lexically off the path
+  # it was HANDED -- from /tmp/repo/waybar/style.css that is /tmp/repo/ergon/,
+  # which does not exist, and the check would fail on every run against a
+  # stylesheet that is perfectly correct on a real desktop, where
+  # ~/.config/waybar is a link and ../ergon lands on the file in
+  # ~/.config/ergon that lib/user-config.sh created.
+  cp -r /tmp/repo/hypr    /home/t/.config/hypr
+  cp -r /tmp/repo/waybar  /home/t/.config/waybar
+  cp -r /tmp/repo/swayosd /home/t/.config/swayosd
+  chown -R t:t /home/t/.config
   # hyprland.lua reads /etc/hostname for the per-host seam.
   echo "'"$HOSTNAME_FOR_TEST"'" > /etc/hostname
   run() { su t -c "XDG_RUNTIME_DIR=/tmp/rt $*" 2>&1; }
+
+  # The stylesheets, through the GTK version that will parse them. No display
+  # is needed and none is available: GtkCssProvider parses without ever
+  # reaching a seat, which is why these belong in the fast gate and not in the
+  # VM suite.
+  #
+  # The two are not the same program, and that is not a style choice. GTK3
+  # RAISES a GLib.Error from load_from_path; GTK4 returns quietly and reports
+  # only through the parsing-error signal, so the GTK3 shape applied to GTK4
+  # passes every broken stylesheet there is. Measured on both, against a
+  # missing brace, an unknown property and a bad hex colour.
+  cat > /tmp/css3.py <<"PYEOF"
+import sys, gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, GLib
+try:
+    Gtk.CssProvider().load_from_path(sys.argv[1])
+except GLib.Error as e:
+    print(e.message)
+    sys.exit(1)
+PYEOF
+  cat > /tmp/css4.py <<"PYEOF"
+import sys, gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk
+errs = []
+p = Gtk.CssProvider()
+p.connect("parsing-error", lambda prov, sec, err: errs.append(sec.to_string() + ": " + err.message))
+p.load_from_path(sys.argv[1])
+for e in errs:
+    print(e)
+sys.exit(1 if errs else 0)
+PYEOF
 
   # Each of these parses its config BEFORE it tries to reach Wayland or the bus,
   # so the expected "cannot connect" failure comes AFTER any config error. That
@@ -67,6 +119,18 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
   echo "@@foot"
   run "foot --check-config -c /tmp/repo/foot/foot.ini" || true
 
+  # The waybar and swayosd stylesheets. Neither program can be asked to check
+  # its own config: waybar exits on "cannot open display" before it reads
+  # anything, and swayosd-server has no check flag and initialises GTK before
+  # it parses argv. What CAN be checked is the thing that silently broke foot
+  # -- whether the file the palette renders is still in the grammar that
+  # parser accepts.
+  echo "@@waybar-css"
+  run "python3 /tmp/css3.py /home/t/.config/waybar/style.css" || true
+
+  echo "@@swayosd-css"
+  run "python3 /tmp/css4.py /home/t/.config/swayosd/style.css" || true
+
   echo "@@mako"
   run "timeout 5 mako --config /tmp/repo/mako/config" \
     | grep -iE "failed to parse|invalid" || true
@@ -83,7 +147,7 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
 ' 2>&1) || true
 
 rc=0
-for tool in hyprland fuzzel foot mako hypridle hyprlock; do
+for tool in hyprland fuzzel foot waybar-css swayosd-css mako hypridle hyprlock; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"
@@ -94,11 +158,14 @@ for tool in hyprland fuzzel foot mako hypridle hyprlock; do
   fi
 done
 
-printf '\n   note: waybar is NOT checked here -- it exits on "cannot open display"\n'
-printf '         before parsing anything. The only thing that checks it is the VM\n'
-printf '         session suite (test-hypr-session.sh), which starts a real bar and\n'
-printf '         asserts it maps a layer surface -- which is a stronger check than\n'
-printf '         parsing, since GTK throws away the WHOLE stylesheet on a bad\n'
-printf '         @import and waybar then exits with no surface at all.\n'
-printf '         This line used to say test-arch-vm.sh, which never mentions waybar.\n'
+printf '\n   note: waybar and swayosd are checked here only as far as their\n'
+printf '         STYLESHEETS parse. Neither program runs: waybar exits on "cannot\n'
+printf '         open display" before reading anything and swayosd-server needs a\n'
+printf '         GTK display to start at all, so what runs above is GTK own CSS\n'
+printf '         parser on the rendered file -- which catches a syntax error, an\n'
+printf '         unknown property and a bad colour, and is what would have caught\n'
+printf '         foot. It does NOT catch a selector that matches nothing: #workspaces\n'
+printf '         misspelt parses clean under both GTK3 and GTK4. Only the VM session\n'
+printf '         suite (test-hypr-session.sh) proves the bar maps a layer surface,\n'
+printf '         and only a palette switch in that suite proves the OSD is coloured.\n'
 exit $rc
