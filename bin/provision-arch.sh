@@ -402,7 +402,13 @@ fi
 # the ruleset, and the unit's own stop really did destroy it again a moment
 # later. No exit code can see that. The only claim worth making here is the one
 # doctor and the VM suite make: the chain is loaded, with policy drop.
-if sudo nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+# CAPTURED, not piped into `grep -q`. grep leaves on the first match, nft takes
+# SIGPIPE writing the rest, and this script's `set -o pipefail` then hands back
+# 141 -- so the check reported "NOTHING filters inbound" about a machine whose
+# chain was loaded, with policy drop, the whole time. Reproduced: a loaded
+# ruleset gives `pipeline rc=141` under pipefail and rc=0 through a variable.
+if _nft_chain=$(sudo nft list chain inet ergon input 2>/dev/null) \
+   && case "$_nft_chain" in *"policy drop"*) true ;; *) false ;; esac; then
   ok "nftables: input drops by default (lo, established, ICMP, DHCP, tailscale0)"
 else
   warn "the inet ergon input chain is NOT in the kernel -- NOTHING filters inbound on this machine"

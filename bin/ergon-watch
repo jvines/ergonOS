@@ -209,10 +209,21 @@ printf '{"name":"%s","cmd":"%s","cwd":"%s","git":"%s","started":"%s","seconds":%
   "$STARTED" "$SECS" "$RC" "$RSS_MB" "$OOM" "$(uname -n)" >> "$JOURNAL"
 
 human() { printf '%dh%02dm%02ds' $(( $1/3600 )) $(( ($1%3600)/60 )) $(( $1%60 )); }
+# `notify-send ... || true` swallowed every delivery failure, and for an OOM
+# kill the notification is not decoration: the window the run was started from
+# may have died with it, so this is the only place the machine says WHAT it
+# killed. Over ssh, from a timer, or from any shell with no session bus there is
+# no daemon to take it -- say so on stderr rather than leaving a person to
+# assume a notification they never saw was sent.
+say_or_not() {  # say_or_not <urgency-args...> -- <summary> <body>
+  command -v notify-send >/dev/null 2>&1 || return 0
+  notify-send "$@" && return 0
+  [ "$QUIET" = 1 ] || printf '   !!   could not deliver the desktop notification (no session bus here?)\n' >&2
+}
 if [ "$RC" -eq 0 ]; then
   MSG="$NAME finished in $(human "$SECS") (peak ${RSS_MB} MB)"
   [ "$QUIET" = 1 ] || printf '   ok   %s\n' "$MSG"
-  command -v notify-send >/dev/null && notify-send "ergon watch" "$MSG" || true
+  say_or_not "ergon watch" "$MSG"
 elif [ "$OOM" = 1 ]; then
   # Naming the run is the whole point of the notification: the window it was
   # running in may have been killed with it, so this is the only place the
@@ -220,10 +231,10 @@ elif [ "$OOM" = 1 ]; then
   # card set out to stop.
   MSG="$NAME ran out of memory and was killed after $(human "$SECS") (peak ${RSS_MB} MB, limit $MEM)"
   [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2
-  command -v notify-send >/dev/null && notify-send -u critical "ergon watch" "$MSG" || true
+  say_or_not -u critical "ergon watch" "$MSG"
 else
   MSG="$NAME FAILED after $(human "$SECS") (exit $RC)"
   [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2
-  command -v notify-send >/dev/null && notify-send -u critical "ergon watch" "$MSG" || true
+  say_or_not -u critical "ergon watch" "$MSG"
 fi
 exit "$RC"

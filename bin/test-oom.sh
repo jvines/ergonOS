@@ -417,6 +417,26 @@ check "  and the scope it kept is cleared once it has been read" \
 check "  and says so in a notification naming the run" hasf "$L/notify-send" 'fit'
 check "  at critical urgency"                          hasf "$L/notify-send" '-u critical'
 
+# A notification nobody could take used to be `|| true` -- silence, on the one
+# event whose whole point is that the machine SAYS what it killed. Over ssh,
+# from a timer, or from any shell with no session bus there is no daemon to
+# take it, and a person then assumes a notification they never saw was sent.
+cat > "$T/stub/notify-send" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/notify-send"
+exit 1
+EOF
+chmod +x "$T/stub/notify-send"
+rm -f "$L"/* "$J"
+env STUB_KILLED=1 STUB_SCOPE_RESULT=oom-kill "$REPO/bin/ergon-watch" --name fit -- true \
+  > "$T/out.nonotify" 2>&1 || true
+check "a notification that could not be delivered is reported, not swallowed" \
+  has "$T/out.nonotify" 'could not deliver'
+check "  and the run is still journalled and still says what killed it" \
+  hasf "$J" '"oom":1'
+check "  and the person still sees why on the terminal" \
+  has "$T/out.nonotify" 'ran out of memory'
+
 killed STUB_SCOPE_RESULT=exit-code
 # The manager distinguishes the two; the exit status cannot. A run that was
 # Ctrl-C'd and recorded as an OOM kill sends the next person tuning memory

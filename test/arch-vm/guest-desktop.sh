@@ -326,7 +326,7 @@ else
 fi
 # policy drop in the KERNEL, not a string in the file. --verify-config passing
 # while nothing was registered is this repo's standing lesson.
-if nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+if _chain=$(nft list chain inet ergon input 2>/dev/null) && [ -z "${_chain##*policy drop*}" ]; then
   ok "inet ergon input is loaded with policy drop"
 else
   bad "the inet ergon input chain is not loaded with policy drop"
@@ -375,7 +375,7 @@ else
   nft list chain ip nat DOCKER >/dev/null 2>&1 \
     && ok "restarting nftables keeps docker's nat chains" \
     || bad "restarting nftables destroyed docker's nat chains — every running container just lost its network"
-  if nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+  if _chain=$(nft list chain inet ergon input 2>/dev/null) && [ -z "${_chain##*policy drop*}" ]; then
     ok "  and reloads our own"
   else
     bad "  but the ergon chain did not come back after the restart"
@@ -404,7 +404,7 @@ if nft destroy table inet ergon 2>/dev/null; then
   # Put it back before anything else runs, and say whether that worked: the
   # tests after this one must not be quietly running on an unfiltered machine.
   if systemctl restart nftables >/dev/null 2>&1 \
-     && nft list chain inet ergon input 2>/dev/null | grep -q 'policy drop'; then
+     && _chain=$(nft list chain inet ergon input 2>/dev/null) && [ -z "${_chain##*policy drop*}" ]; then
     ok "and the ruleset is back after a restart"
   else
     bad "the ruleset did not come back — the rest of this run is unfiltered"
@@ -1802,8 +1802,18 @@ PY
 HYPR_BEFORE=$(pgrep -x Hyprland | head -1)
 OOMUNIT=ergon-vm-oom-probe
 usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
+# The unit is started BY the user manager, so it inherits the manager's
+# environment and not usr()'s -- and the manager has no DBUS_SESSION_BUS_ADDRESS
+# unless the session imported one. libnotify talks over GDBus, which has no
+# $XDG_RUNTIME_DIR/bus fallback, so notify-send failed to reach mako and
+# ergon-watch's `|| true` swallowed it: the kill happened, hist recorded it, and
+# the one thing the card promises -- the machine SAYING what it killed -- was
+# missing for a reason that only exists in this harness. A terminal in the real
+# session carries both.
 usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app.slice \
-     --setenv=PATH='$SESSION_PATH' -- \
+     --setenv=PATH='$SESSION_PATH' \
+     --setenv=XDG_RUNTIME_DIR=/run/user/1000 \
+     --setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus -- \
      ergon watch --name oom-probe --mem 256M -- python3 /tmp/eat-memory.py" \
   >/tmp/oomprobe.log 2>&1
 rc=$?

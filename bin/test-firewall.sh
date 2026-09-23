@@ -305,5 +305,21 @@ check "no daemon.json at all is a failure, not a skip" \
 check "  even with no root anywhere" \
   has <(STUB_SUDO=deny doctor docker-publish) '"state":"fail"'
 
+# --- the check that reported an open machine about a filtered one -------------
+# `nft list chain inet ergon input | grep -q 'policy drop'` returns 141 under
+# `set -o pipefail`: grep leaves on the first match and nft takes SIGPIPE
+# writing the rest. Reproduced against a real loaded ruleset -- 141 through the
+# pipe, 0 through a variable -- after it cost a VM run, reporting "NOTHING
+# filters inbound" about a machine whose chain was loaded with policy drop the
+# whole time. Asserted statically because no stub can catch it: a stub's output
+# fits in one write, so the stub exits before grep closes the pipe and the bug
+# does not reproduce.
+check "provisioning does not pipe the chain into a grep that leaves early" \
+  not grep -qE 'nft list chain[^|]*\| *grep -q' "$REPO/bin/provision-arch.sh"
+check "  nor does the VM suite" \
+  not grep -qE 'nft list chain[^|]*\| *grep -q' "$REPO/test/arch-vm/guest-desktop.sh"
+check "  and provisioning still asks the kernel rather than an exit code" \
+  grep -q 'nft list chain inet ergon input' "$REPO/bin/provision-arch.sh"
+
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
