@@ -33,6 +33,10 @@ check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi
 has()  { grep -qF -- "$2" "$1" 2>/dev/null; }
 not()  { ! "$@"; }
 eq()   { [ "$1" = "$2" ]; }
+# `date -u -d "" +%s` succeeds and returns today's midnight, so any check that
+# feeds an empty value to date compares two real numbers and passes -- which is
+# how two assertions here reported ok with nothing posted at all.
+rfc3339() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; }
 
 mkdir -p "$T/stub" "$T/log"
 
@@ -75,6 +79,7 @@ export TEST_ROOT="$T" PATH="$T/stub:$PATH"
 
 [ "$(command -v curl)" = "$T/stub/curl" ] \
   || { echo "stubs are not first on PATH; refusing to run anything"; exit 1; }
+export -f rfc3339
 
 cat > "$T/field.py" <<'EOF'
 import json, sys
@@ -157,10 +162,13 @@ check "  the same labelset, which is how Alertmanager matches it" \
 # sender a few seconds fast would post a state that is not over yet and the
 # merge would keep the month-long endsAt while taking the empty annotations --
 # a re-fire wearing a resolve's clothes.
+check "  carrying timestamps, not the empty strings a missing body returns" \
+  bash -c 'rfc3339 "$1" && rfc3339 "$2"' _ "$(field startsAt)" "$(field endsAt)"
 check "  with endsAt already in the past, so a fast clock cannot un-resolve it" \
-  bash -c '[ $(( $(date -u +%s) - $(date -u -d "$1" +%s) )) -ge 60 ]' _ "$(field endsAt)"
+  bash -c 'rfc3339 "$1" && [ $(( $(date -u +%s) - $(date -u -d "$1" +%s) )) -ge 60 ]' _ "$(field endsAt)"
 check "  and startsAt no later than endsAt, which Alertmanager requires" \
-  bash -c '[ $(date -u -d "$1" +%s) -le $(date -u -d "$2" +%s) ]' _ "$(field startsAt)" "$(field endsAt)"
+  bash -c 'rfc3339 "$1" && rfc3339 "$2" && [ $(date -u -d "$1" +%s) -le $(date -u -d "$2" +%s) ]' \
+  _ "$(field startsAt)" "$(field endsAt)"
 check "  carrying words, so the RESOLVED message is not blank" \
   bash -c '[ -n "$1" ]' _ "$(field annotations.summary)"
 

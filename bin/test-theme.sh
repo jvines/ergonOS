@@ -52,12 +52,22 @@ cat > "$E/bin/ergon-wallpaper" <<'EOF'
 printf '%s\n' "$*" >> "$TEST_ROOT/log/ergon-wallpaper"
 EOF
 
-for c in hyprctl pkill makoctl gsettings ergon-wallpaper-gen; do
+for c in hyprctl pkill makoctl gsettings; do
   cat > "$T/stub/$c" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "\$TEST_ROOT/log/$c"
 EOF
 done
+# This one LINGERS, because the real one does: it is detached and recolours
+# every background from cached fields, which takes seconds to minutes. That is
+# the whole point of the assertion further down -- the apply lock must not
+# still be held by it.
+cat > "$T/stub/ergon-wallpaper-gen" <<'EOF'
+#!/usr/bin/env bash
+printf '%s
+' "$*" >> "$TEST_ROOT/log/ergon-wallpaper-gen"
+exec sleep 30
+EOF
 # pgrep answers for the fake foot: -x foot gives the pty holder, -P its child.
 cat > "$T/stub/pgrep" <<'EOF'
 #!/usr/bin/env bash
@@ -69,7 +79,8 @@ esac
 EOF
 chmod +x "$T/stub"/* "$E/bin"/*
 export TEST_ROOT="$T" PATH="$T/stub:$PATH" HOME="$T/home" \
-       XDG_STATE_HOME="$T/state" XDG_CONFIG_HOME="$T/config"
+       XDG_STATE_HOME="$T/state" XDG_CONFIG_HOME="$T/config" \
+       XDG_RUNTIME_DIR="$T"
 
 # ergon-wallpaper-gen is in the list because ergon-theme resolves it through
 # PATH and detaches it: on a machine with ergonOS installed, five runs of this
@@ -120,6 +131,16 @@ check "  and started again the way autostart.lua starts it" \
   has "$T/log/hyprctl" 'exec_raw("swayosd-server")'
 check "hyprland is told to reload"            hasx "$T/log/hyprctl" "reload"
 check "the wallpaper is redrawn from the new ramp" has "$T/log/ergon-wallpaper" "--force"
+check "  and the backgrounds are recoloured for the palette just chosen" \
+  has "$T/log/ergon-wallpaper-gen" "--recolour"
+
+# The apply step takes a lock so that holding SUPER+T cannot leave two of every
+# daemon. That lock must be released when the APPLY ends, not when the
+# detached recolour does -- the recolour is still running right now (its stub
+# sleeps 30s), and if it inherited the lock fd the next palette press waits out
+# the full flock timeout before anything moves.
+check "the apply lock is not left held by the detached recolour" \
+  flock -n "$T/ergon-theme-apply.lock" true
 
 # --- foot, through a real pty -------------------------------------------------
 if [ -s "$T/footpid" ]; then

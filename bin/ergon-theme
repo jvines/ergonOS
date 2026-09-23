@@ -362,7 +362,14 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
   # keybind and the palette appearing. It sets the background itself when it
   # finishes.
   if command -v ergon-wallpaper-gen >/dev/null 2>&1; then
-    ( setsid ergon-wallpaper-gen --recolour >/dev/null 2>&1 & ) || true
+    #
+    # 9>&- closes the apply lock in the child. Without it the detached
+    # recolour INHERITS the lock fd and holds it for as long as it runs --
+    # minutes -- so the next press of the palette key waits out the whole
+    # `flock -w 10` before anything moves. Measured: 10.7s of nothing, where
+    # the unlocked code took 0.6s. A lock that outlives the thing it protects
+    # is worse than no lock, and this is the shape that does it.
+    ( setsid ergon-wallpaper-gen --recolour >/dev/null 2>&1 9>&- & ) || true
   fi
   # GTK4 and libadwaita read the theme from gsettings, NOT from settings.ini,
   # so a light palette that only rewrote the ini would leave every GTK4 app

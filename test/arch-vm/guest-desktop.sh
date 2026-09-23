@@ -1866,9 +1866,7 @@ hq version | grep -q Hyprland && ok "and it still answers hyprctl" \
 # the daemon is there the message is still on screen. The window the job ran in
 # may have died with it, which is what makes this the only place the machine
 # says WHAT it killed.
-if [ -n "$_pal_before_mako" ] && ! usr "pgrep -x mako" >/dev/null 2>&1; then
-  bad "mako was running before the switch and is gone after it — the reload killed the notification daemon"
-elif usr "pgrep -x mako" >/dev/null 2>&1; then
+if usr "pgrep -x mako" >/dev/null 2>&1; then
   # makoctl's own status, kept. Swallowed inside the command substitution, a
   # makoctl that could not reach the daemon was indistinguishable from a mako
   # holding nothing, and both were reported as the second -- which sends the
@@ -2021,7 +2019,13 @@ else
   tail -25 /tmp/palette.log 2>/dev/null | sed 's/^/     /'
 fi
 
-if usr "pgrep -x mako" >/dev/null 2>&1; then
+# A before-state, like swayosd gets. Without one, a switch that KILLS mako is
+# indistinguishable here from a mako that was never running -- and the branch
+# for the second is a note, so the worst outcome of this change would have
+# been reported as neither a pass nor a failure.
+if [ -n "$_pal_before_mako" ] && ! usr "pgrep -x mako" >/dev/null 2>&1; then
+  bad "mako was running before the switch and is gone after it — the reload killed the notification daemon"
+elif usr "pgrep -x mako" >/dev/null 2>&1; then
   if _pal_out=$(usr "makoctl reload" 2>&1); then
     ok "mako accepted a reload of the config it was just handed"
   else
