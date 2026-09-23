@@ -20,14 +20,28 @@ command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
 
 echo "== desktop configs, checked by their own parsers"
 
-out=$(docker run --rm -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c '
+out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c '
   pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
   # you not to use it, so everything runs as a real user.
   useradd -m -u 1000 t 2>/dev/null || true
   install -d -o t -g t -m 700 /tmp/rt
-  mkdir -p /home/t/.config && cp -r /df/hypr /home/t/.config/hypr && chown -R t:t /home/t/.config
+
+  # Render first, into a writable copy, because the configs these parsers read
+  # are generated and gitignored -- a fresh clone has none of them. Doing it
+  # here rather than requiring the caller to have run `ergon theme` keeps this
+  # script honest on any checkout, including CI, which clones and nothing more.
+  #
+  # XDG_CONFIG_HOME points at t: rendering also creates the user override files
+  # the generated configs include, and mako and fuzzel FAIL when those are
+  # missing rather than merely losing the override. They have to land in the
+  # home of the user that will read them, not in root'"'"'s.
+  cp -r /df /tmp/repo
+  XDG_CONFIG_HOME=/home/t/.config XDG_STATE_HOME=/tmp/state \
+    ERGON=/tmp/repo /tmp/repo/bin/ergon-theme --no-apply cool >/dev/null
+
+  cp -r /tmp/repo/hypr /home/t/.config/hypr && chown -R t:t /home/t/.config
   # hyprland.lua reads /etc/hostname for the per-host seam.
   echo "'"$HOSTNAME_FOR_TEST"'" > /etc/hostname
   run() { su t -c "XDG_RUNTIME_DIR=/tmp/rt $*" 2>&1; }
@@ -44,14 +58,14 @@ out=$(docker run --rm -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c 
     | grep -vE "^=+ Config parsing result:|^[[:space:]]*$|^config ok$" || true
 
   echo "@@fuzzel"
-  run "fuzzel --config /df/fuzzel/fuzzel.ini --check-config" || true
+  run "fuzzel --config /tmp/repo/fuzzel/fuzzel.ini --check-config" || true
 
   echo "@@mako"
-  run "timeout 5 mako --config /df/mako/config" \
+  run "timeout 5 mako --config /tmp/repo/mako/config" \
     | grep -iE "failed to parse|invalid" || true
 
   echo "@@hypridle"
-  run "timeout 5 hypridle -c /df/hypr/hypridle.conf" \
+  run "timeout 5 hypridle -c /tmp/repo/hypr/hypridle.conf" \
     | grep -iE "config error|does not exist|failed to parse" || true
 
   echo "@@hyprlock"

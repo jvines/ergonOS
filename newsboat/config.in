@@ -14,3 +14,10 @@ color end-of-text-marker  color240  default
 # only honest signal in a cool palette is brightness rather than hue.
 highlight article "^(Feed|Title|Author|Date|Link):.*$" color159 default bold
 highlight article "https?://[^ ]+" color219 default underline
+
+# Your overrides, from a file this repo never renders over. Last, because
+# newsboat's `color` and `highlight` are last-wins.
+#
+# The least forgiving of these: newsboat has no --check-config mode, so a
+# missing include is fatal on every single start. lib/user-config.sh creates it.
+include "~/.config/ergon/newsboat.conf"

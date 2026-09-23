@@ -41,6 +41,23 @@ max-icon-size=48
 group-by=app-name
 format=<b>%s</b>\n%b
 
+# Your overrides, from a file this repo never renders over.
+#
+# Here, and nowhere else. mako accepts `include` only while it is still in the
+# global section -- after any [criteria] block it is a hard parse error -- and
+# it resolves conflicts by plain source order, so this has to be the LAST line
+# before the first section to beat the keys set above it.
+#
+# What it cannot do: override the criteria blocks below. They are parsed after
+# anything this file defines, so for a key both set, the one below wins. Adding
+# a criterion the repo does not define works fine; restyling [urgency=critical]
+# does not. That is a property of mako, not a decision.
+#
+# A missing file here is not a missing override, it is a missing notification
+# daemon: mako exits EXIT_FAILURE on an unreadable include before it reaches
+# Wayland. lib/user-config.sh guarantees it exists.
+include=~/.config/ergon/mako
+
 [grouped]
 format=<b>%s</b>\n%b
 

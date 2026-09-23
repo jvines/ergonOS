@@ -120,3 +120,20 @@ input-field {
     halign = center
     valign = center
 }
+
+# Your overrides, from a file this repo never renders over -- and where an
+# enrolled fingerprint block belongs (see: ergon fingerprint). Pasting one into
+# this generated file instead means the next render eats it.
+#
+# End of file, so a scalar you set inside a singular block like general{} is
+# the last word. Note that repeated blocks (label{}, and this file ships three)
+# are ADDITIVE in hyprlock: a second background{} is another layer, not a
+# recolour of the one above.
+#
+# noerror, because most machines will never have anything here: hyprlock
+# already treats a missing source as recoverable and parses the rest, and this
+# keeps it from reporting an error for a file that is absent by design.
+# $HOME rather than ~ to match this file's other variables; both expand.
+# hyprlang noerror true
+source = $HOME/.config/ergon/hyprlock.conf
+# hyprlang noerror false

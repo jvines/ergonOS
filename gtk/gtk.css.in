@@ -180,3 +180,15 @@ tooltip, tooltip.background {
   color: @COOL_FG0@;
   border: 1px solid @COOL_BG2@;
 }
+
+/* Your overrides. Last, so they win -- see waybar/style.css.in for why.
+ *
+ * Both .config/gtk-3.0/gtk.css and .config/gtk-4.0/gtk.css are links to this
+ * one rendered file, and ../ergon/gtk.css resolves correctly from either.
+ *
+ * Gentler than waybar's: GTK loads the user stylesheet with a NULL GError,
+ * which puts its parser in warn-and-continue rather than discard-the-file. A
+ * missing import here costs a line on stderr, not the theme. It is created
+ * anyway, so the stderr line never appears.
+ */
+@import url("../ergon/gtk.css");

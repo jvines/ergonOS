@@ -178,6 +178,54 @@ done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
 [ "$help_bad" = 0 ] && echo "  ok   every command carries ergon:help=native or ergon:args"
 
 # ---------------------------------------------------------------------------
+# Nothing shipped here writes under ~/.config/ergon.
+#
+# That directory is the half of the desktop the repository does not own. Every
+# themed surface is rendered from a .in template on every install, so the only
+# place a person's own settings can survive is a file this repo never renders
+# over -- and a shipped script that appended to one would be reintroducing, by
+# hand, exactly the clobbering that mechanism exists to prevent. That is not
+# hypothetical: `ergon fingerprint` used to tell people to paste an auth block
+# into the GENERATED hyprlock.conf, and every render ate it.
+#
+# lib/user-config.sh is the single exception, and it may only CREATE a file
+# that is absent -- never write one that exists. Four of these surfaces
+# (waybar, mako, fuzzel, foot) do not start at all if their include target is
+# missing, so something has to create them; keeping that in one auditable file
+# is the point of this rule.
+#
+# Limit, stated rather than papered over: this matches a write and the path on
+# the SAME line. Assigning the path to a variable first and writing through the
+# variable later would slip past. It catches the form anyone would actually
+# write, which is worth having; it is not a proof.
+uc_bad=0
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  rel="${f#"$ERGON"/}"
+  # The one file allowed to create these, and the one that must not be flagged
+  # for doing its job.
+  [ "$rel" = "lib/user-config.sh" ] && continue
+  while IFS=: read -r ln _; do
+    [ -n "$ln" ] || continue
+    report "$rel" "$ln" \
+      "writes under ~/.config/ergon — that is the user's file; only lib/user-config.sh may create one"
+    uc_bad=$((uc_bad + 1))
+  # Comments and Lua comments dropped first: these paths are named in prose all
+  # over this repo, and a lint that fires on documentation is a lint people
+  # switch off.
+  # config(_home)?/ergon, case-insensitively: the path is written both as
+  # ~/.config/ergon and as "$XDG_CONFIG_HOME/ergon", and the second spelling
+  # does not contain the literal "config/ergon" at all. A probe caught this
+  # rule missing an `ln -sfn` through XDG_CONFIG_HOME on its first run.
+  done < <(grep -niE 'config(_home)?/ergon' "$f" 2>/dev/null \
+             | grep -vE '^[0-9]+:[[:space:]]*(#|--)' \
+             | grep -iE '(>>?[[:space:]]*"?[^|;&]*config(_home)?/ergon|(^|[^[:alnum:]_])(tee|cp|mv|ln|install|truncate|rm|dd)[[:space:]][^|;&]*config(_home)?/ergon|sed[[:space:]]+-i[^|;&]*config(_home)?/ergon)' \
+             || true)
+done < <( { find -L "$ERGON/bin" "$ERGON/lib" "$ERGON/test" -type f ! -name 'erg-*' 2>/dev/null
+            printf '%s\n' "$ERGON/install.sh"; } | sort )
+[ "$uc_bad" = 0 ] && echo "  ok   nothing writes under ~/.config/ergon but lib/user-config.sh"
+
+# ---------------------------------------------------------------------------
 # One SKILL.md, two harnesses.
 #
 # This OS ships Claude Code and Codex, and install.sh links the same skill

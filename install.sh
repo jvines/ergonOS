@@ -48,6 +48,39 @@ link() {  # link <repo path> <path under $HOME>
 if [ "${GRAPHICAL:-0}" != 1 ]; then
   skip "GRAPHICAL is not 1 in $HOSTENV — desktop not linked"
 else
+  # Render BEFORE linking anything, and treat a failure as fatal.
+  #
+  # The themed configs are generated and not committed, so a fresh clone has
+  # sixteen missing files and link() would happily point $HOME at every one of
+  # them. Two of those are not cosmetic:
+  #
+  #   hypr/common/looknfeel.lua  hyprland.lua requires it WITHOUT a pcall, and a
+  #                              Lua config is a single chunk -- so the requires
+  #                              after it never run. No keybinds, no autostart,
+  #                              no waybar, no notifications. Not an unthemed
+  #                              desktop: no desktop.
+  #   hypr/hyprlock.conf         hyprlock exits 1 before drawing anything, and
+  #                              hypridle's lock_cmd does not check that, so the
+  #                              machine silently stops locking.
+  #
+  # Both were measured against the real binaries rather than reasoned about.
+  # There is no degraded-but-usable state here the way there is for a missing
+  # wallpaper, so this is the one step in this script that aborts the install.
+  #
+  # Before the links, not after, for a second reason: a render that fails then
+  # leaves $HOME untouched instead of half-linked to a broken checkout.
+  if [ "$CHECK" != 1 ]; then
+    "$ERGON/bin/ergon-theme" --no-apply >/dev/null || {
+      warn "the palette did not render — stopping before linking anything."
+      warn "the desktop would not start. Run for the error:  ergon theme"
+      exit 1
+    }
+    ok "themed configs rendered from $("$ERGON/bin/ergon-theme" --current)"
+  else
+    "$ERGON/bin/ergon-theme" --check >/dev/null 2>&1 \
+      || printf '   would render  16 themed configs from the palette\n'
+  fi
+
   # The whole directory, not a file: Hyprland's Lua `require` resolves relative
   # to hyprland.lua, so a single-file symlink breaks every include.
   link hypr   .config/hypr
@@ -270,9 +303,12 @@ fi
 
 if [ "$CHECK" != 1 ]; then
   "$ERGON/bin/pyfleet" ensure || warn "the base python did not build"
-  if ! "$ERGON/bin/ergon-theme" --check >/dev/null 2>&1; then
-    warn "themed configs are stale — run: ergon theme"
-  fi
+  # The themed configs used to be checked here and warned about. They are
+  # rendered outright now, up in the graphical branch and before anything is
+  # linked -- which is the only ordering that works, since what they are stale
+  # RELATIVE TO on a fresh clone is a file that does not exist yet. Warning
+  # about it here would also have fired forever on a headless machine, which
+  # renders nothing and needs nothing.
 
   # The wallpaper is generated, not committed -- and until now NOTHING ever
   # generated it. hyprpaper.conf points at ~/.local/share/ergon/wallpaper.png,

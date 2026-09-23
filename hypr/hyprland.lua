@@ -33,3 +33,20 @@ if f then f:close() end
 -- link() treats a missing host file as a no-op: on a rolling compositor a
 -- broken per-host override must never take the base config down with it.
 pcall(require, "hosts." .. host)
+
+-- Yours. Last, so an hl.config() here wins over everything above it.
+--
+-- The explicit path is the whole point and a bare require("user") would be a
+-- silent bug: Hyprland seeds package.path from THIS file's directory, which is
+-- ~/.config/hypr -- a symlink into the checkout -- so a plain module name
+-- resolves back into the repo, which is the one place an untracked override
+-- must not live. A path starting with ~/ bypasses package.path entirely and is
+-- resolved against $HOME. That form needs Hyprland 0.56; on anything older the
+-- name simply does not resolve and pcall swallows it, which is the right
+-- outcome for a file that is optional anyway.
+--
+-- One thing this does NOT catch: if the file exists but has an error in it,
+-- Hyprland records that error internally and hands require an empty table, so
+-- pcall reports success. It shows up in the compositor's config-error overlay,
+-- not here. `Hyprland --verify-config` will also exit 1 on it.
+pcall(require, "~/.config/ergon/user")

@@ -7,13 +7,34 @@
 #   ergon-theme                   # render, report what changed
 #   ergon-theme --check           # exit 1 if anything is stale (for CI / pre-commit)
 #
-# Every themed config is committed as <name>.in alongside its output, with
-# @COOL_*@ placeholders. This renders, rather than reading the palette at
-# runtime, for one reason: install.sh links the repo into $HOME, so a file
-# generated into $HOME at install time would be clobbered by the next link()
-# and a file generated into the repo at install time would make every host
-# permanently dirty. Rendering here, committing the result, keeps the tree
-# clean on every machine and keeps the palette in exactly one place.
+# Every themed config is committed as <name>.in, with @COOL_*@ placeholders.
+# The rendered output beside it is NOT committed -- it is gitignored, and
+# install.sh renders it before it links anything.
+#
+# It used to be committed, and the reason given was that the alternatives were
+# worse: a file generated into $HOME would be clobbered by install.sh's link(),
+# and one generated into the repo would leave every host permanently dirty.
+# Half of that was wrong and the other half had a third option nobody took.
+#
+# link() does not clobber a real file -- it warns and returns, leaving it alone
+# (see install.sh). The actual consequence of rendering into $HOME is quieter
+# and worse: the surface is then never linked to the repo at all, so it stops
+# following the checkout without saying so.
+#
+# The dirty-tree half was true, and it was the real cost: a palette other than
+# the default rewrote sixteen tracked files, so pressing the palette keybind
+# once made `ergon sync` refuse to run on that machine. Gitignoring the outputs
+# removes that without moving where they are written. Rendering still targets
+# the repo path, which is what keeps link() pointing at something real.
+#
+# What that costs, and it is not nothing: a fresh clone has no rendered files,
+# and hypr/common/looknfeel.lua is one of them. hypr/hyprland.lua requires it
+# WITHOUT a pcall, and a Lua config is one chunk -- so a missing looknfeel.lua
+# does not mean an unthemed desktop, it means the requires after it never run:
+# no keybinds, no autostart, no waybar, no notifications. Measured, not feared.
+# That is why install.sh renders before it links and treats a failure here as
+# fatal, and why this script is the thing that creates the user override files
+# (lib/user-config.sh) rather than leaving that to a separate step.
 #
 # Unexpanded placeholders are a hard error. A silently un-substituted @COOL_X@
 # in a CSS file is invisible -- the rule is simply dropped and the surface
@@ -30,6 +51,13 @@ set -euo pipefail
 # somewhere it cannot be. ergon-wallpaper died exactly that way, under set -e,
 # before it could start hyprpaper, and the desktop had no wallpaper.
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# The user's half of the desktop, and the only code that creates it. Sourced
+# here rather than in install.sh because the include lines that point at those
+# files are written by THIS script -- keeping the two together is what stops a
+# skipped step from leaving waybar importing a stylesheet that is not there.
+# shellcheck source=../lib/user-config.sh
+. "$ERGON/lib/user-config.sh"
+
 CHECK=0; [ "${1:-}" = "--check" ] && { CHECK=1; shift; }
 # --no-apply renders the config files and stops: no wallpaper, no hyprctl
 # reload, no waybar restart. For callers that need the rendered files to be
@@ -220,6 +248,13 @@ if [ "$CHECK" = 1 ]; then
   exit $rc
 fi
 [ "$changed" = 0 ] && echo "   $rendered files already up to date"
+
+# The files the rendering above just pointed at. waybar, mako, fuzzel and foot
+# do not merely lose their override when this is missing -- they fail to start
+# or fail their own --check-config, and in waybar's case GTK throws away the
+# whole stylesheet rather than the one bad line. So this is part of rendering,
+# not a separate courtesy, and its failure is the render's failure.
+ergon_ensure_user_files || rc=1
 
 # Rendering a config is not applying it. Every running program already has the
 # old colours in memory: hyprland holds its border colours, waybar parses its

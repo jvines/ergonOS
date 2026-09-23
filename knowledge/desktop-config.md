@@ -105,3 +105,88 @@ fires, the command is not found, and there is no visible error anywhere.
 
 Changes need `systemctl --user daemon-reload` **and a new session**. The running
 manager does not re-read it.
+
+## Generated configs, and where your own edits go
+
+**Do not edit a themed config. It is generated, and your edit has a short life.**
+
+Sixteen files are rendered from a `.in` template beside them by `ergon theme`,
+which expands the active palette into `@COOL_*@` placeholders:
+
+    waybar/style.css      mako/config        hypr/hyprlock.conf
+    gtk/gtk.css           fuzzel/fuzzel.ini  hypr/common/looknfeel.lua
+    foot/foot.ini         newsboat/config    gtk/settings.ini
+    yazi/theme.toml       lnav/config.json   lazygit/config.yml
+    lazydocker/config.yml wezterm/wezterm.lua btop/themes/ergon.theme
+    bat/themes/ergon.tmTheme
+
+They are **gitignored**, and `install.sh` renders them before it links anything.
+That is why switching palette no longer leaves the repo dirty — and it is also
+why a fresh clone has none of them until something renders.
+
+To change a colour, edit `theme/<palette>.env`. To change the structure, edit
+the `.in`. Editing the output changes your desktop until the next install.
+
+### Your own settings: `~/.config/ergon/`
+
+Each surface that *can* include another file includes one from there, and
+nothing in this repo ever writes those files — `ergon-lint` enforces that, and
+`lib/user-config.sh` is the only code allowed to create one.
+
+| your file | included by | if it is missing |
+|---|---|---|
+| `waybar.css` | `waybar/style.css` | **no bar theming at all** — GTK discards the whole stylesheet |
+| `mako` | `mako/config` | **no notification daemon** — mako exits 1 |
+| `fuzzel.ini` | `fuzzel/fuzzel.ini` | fails `--check-config` |
+| `foot.ini` | `foot/foot.ini` | fails `--check-config` |
+| `newsboat.conf` | `newsboat/config` | **newsboat will not start** |
+| `gtk.css` | `gtk/gtk.css` | a warning on stderr |
+| `hyprlock.conf` | `hypr/hyprlock.conf` | nothing; it is optional by design |
+| `user.lua` | `hypr/hyprland.lua` | nothing; `pcall` covers it |
+
+The first five are why creation lives with the renderer rather than in a
+separate install step: the run that writes the include line is the run that
+guarantees the file it points at.
+
+**Your file is included last, everywhere, on purpose.** All of these formats
+resolve conflicts by source order, so last is the only position where what you
+write beats what the template wrote. One exception, and it is mako's, not a
+choice: `include` is legal only before the first `[criteria]` block, so the
+generated `[urgency=critical]` and friends are parsed *after* yours and win on
+any key both set. You can add criteria the repo does not define; you cannot
+restyle the ones it does.
+
+Eight surfaces have **no** include mechanism and cannot be overridden this way:
+`gtk/settings.ini`, `yazi/theme.toml`, `lnav/config.json`, `lazygit/config.yml`,
+`lazydocker/config.yml`, `btop`'s theme, `bat`'s tmTheme, and
+`wezterm/wezterm.lua`. For those, change the template. (`lazygit` and `lnav` can
+take a second config on the command line — `--use-config-file`, `-I` — which is
+a launcher change, not a file include.)
+
+### The Lua seam is an explicit path, and has to be
+
+    pcall(require, "~/.config/ergon/user")
+
+Not `require("user")`. Hyprland seeds `package.path` from `hyprland.lua`'s own
+directory, and that directory is `~/.config/hypr` — **a symlink into the
+checkout** — so a bare module name resolves back into the repo, which is the one
+place an untracked override must not live. The `~/` form bypasses `package.path`
+and needs Hyprland 0.56; on anything older it simply does not resolve and
+`pcall` swallows it.
+
+`pcall` returning true does **not** mean your file loaded cleanly. If it exists
+but has an error, Hyprland records the error internally and hands `require` an
+empty table, so the failure shows up in the compositor's config-error overlay
+and in `Hyprland --verify-config`, not at the call site.
+
+### Why a missing rendered file is not a cosmetic problem
+
+`hypr/hyprland.lua` requires `common.looknfeel` **without** a `pcall`, and a Lua
+config is one chunk. If that file has not been rendered, the error aborts the
+chunk and the requires after it — `windows`, `binds`, `media`, `lid`,
+`screenshot`, `autostart` — never run. The result is a session with **no
+keybinds and no autostarted daemons**, not an unthemed one. Measured in a
+container, not inferred.
+
+That is the whole reason `install.sh` renders before it links and exits non-zero
+if the render fails. It is the one step in that script that aborts the install.

@@ -176,3 +176,23 @@ tooltip {
   border-radius: 4px;
 }
 tooltip label { color: @COOL_FG0@; padding: 4px; }
+
+/* Your overrides, from a file this repo never renders over.
+ *
+ * LAST in the file on purpose. GTK3 splices an imported stylesheet into the
+ * cascade exactly where the @import sits, and ties break on source order -- so
+ * at the top the rules above would beat yours and this would silently do
+ * nothing. Measured, not assumed.
+ *
+ * Relative, and not ~ or an absolute path: ~ is never expanded (GTK looks for a
+ * directory literally named "~"), and the renderer has no $HOME to bake in.
+ * GTK resolves the path lexically against the file it was ASKED for, not the
+ * symlink's target, so from ~/.config/waybar/style.css this lands on
+ * ~/.config/ergon/waybar.css even though ~/.config/waybar is a link into the
+ * repo. Verified against GTK3 for both link shapes this repo uses.
+ *
+ * If that file is missing, waybar does not lose the override -- it loses the
+ * BAR. GTK discards the whole stylesheet on a failed import, including
+ * everything above this line. lib/user-config.sh is what guarantees it exists.
+ */
+@import url("../ergon/waybar.css");

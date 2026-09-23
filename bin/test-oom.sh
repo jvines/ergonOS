@@ -135,15 +135,19 @@ check "ergon-term forces a process per window" \
 check "  as an option of wezterm start, before the -- that ends them" \
   test -n "$(printf '%s' "$W" | grep -E 'start --always-new-process .*\{1:\+--\}')"
 
-F="$REPO/fuzzel/fuzzel.ini"
+# The TEMPLATE, not the rendered fuzzel.ini.
+#
+# This used to assert against both, because the rendered file was committed and
+# a hand-edit of it would have passed while the next `ergon theme` silently
+# reverted it. Neither half of that is true any more: the output is gitignored
+# and regenerated before every install, so there is no hand-edit for it to
+# preserve -- and in a fresh clone (which is what CI has: it clones and runs
+# this, nothing renders first) the file does not exist at all, so asserting on
+# it would fail for a reason that has nothing to do with what is being tested.
+F="$REPO/fuzzel/fuzzel.ini.in"
 check "the launcher starts apps in their own scope" has "$F" '^launch-prefix=uwsm-app --$'
 check "  and its terminal apps through ergon-term, not a shared wezterm" \
   has "$F" '^terminal=ergon-term$'
-# fuzzel.ini is GENERATED (see its first line). Asserting only the output would
-# pass on a hand-edit that the next `ergon theme` silently reverts, so the
-# template has to carry both lines as well.
-check "  and both lines come from the template, not a hand-edit of the output" \
-  test "$(grep -cE '^(launch-prefix=uwsm-app --|terminal=ergon-term)$' "$REPO/fuzzel/fuzzel.ini.in")" = 2
 
 # --- what `ergon watch` runs -------------------------------------------------
 mkdir -p "$T/stub" "$T/log" "$T/home" "$T/data"

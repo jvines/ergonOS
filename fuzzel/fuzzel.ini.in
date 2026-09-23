@@ -60,3 +60,15 @@ exit-immediately-if-empty=yes
 # Ctrl-n/p as well as arrows: same motion as every other list on this machine.
 next=Down Control+n
 prev=Up Control+p
+
+# Your overrides, from a file this repo never renders over.
+#
+# [main] is reopened because `include` has to be in a section, and last in the
+# file because fuzzel applies keys in source order with unconditional
+# overwrite -- anything after the include would clobber you instead.
+#
+# ~/ is required: fuzzel rejects a bare relative path outright, and expands ~
+# itself. A missing file is survivable at runtime but fails --check-config,
+# which is what bin/test-hypr-config.sh runs, so lib/user-config.sh creates it.
+[main]
+include=~/.config/ergon/fuzzel.ini

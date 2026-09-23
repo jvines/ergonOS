@@ -19,3 +19,31 @@ emacs/custom.el
 emacs/elpa/
 emacs/eln-cache/
 emacs/tree-sitter/
+
+# The rendered themed configs. Each is generated from the .in beside it by
+# bin/ergon-theme, and install.sh renders them before it links anything.
+#
+# They were tracked until ERGON-27. That meant choosing any palette but the
+# default rewrote sixteen tracked files, so one press of the palette keybind
+# left the machine permanently dirty and `ergon sync` refused to run on it --
+# a repo that punished you for using the feature it shipped.
+#
+# Listed one by one rather than matched by a pattern: the point of the list is
+# that you can read it and know exactly what is generated. A `*.css` style rule
+# would also swallow a file someone adds by hand later and means to commit.
+bat/themes/ergon.tmTheme
+btop/themes/ergon.theme
+foot/foot.ini
+fuzzel/fuzzel.ini
+gtk/gtk.css
+gtk/settings.ini
+hypr/common/looknfeel.lua
+hypr/hyprlock.conf
+lazydocker/config.yml
+lazygit/config.yml
+lnav/config.json
+mako/config
+newsboat/config
+waybar/style.css
+wezterm/wezterm.lua
+yazi/theme.toml

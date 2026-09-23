@@ -42,6 +42,24 @@ jobs:
           git checkout --quiet "${{ github.sha }}"
           echo "testing $(git rev-parse --short HEAD)"
 
+      # The themed configs are generated and gitignored, so what CI clones has
+      # none of them. Rendering here is cheap (about a third of a second) and
+      # proves the templates still expand -- an undefined @COOL_X@ is a hard
+      # error in ergon-theme, and the alternative is finding out from a desktop
+      # that will not start.
+      #
+      # The palette is named explicitly, and both XDG dirs are redirected into
+      # the job's own directory. This runner is in HOST mode: $HOME belongs to
+      # a real person, ergon-theme records the chosen palette under
+      # XDG_STATE_HOME and creates user override files under XDG_CONFIG_HOME,
+      # and a CI job has no business touching either. Without the explicit
+      # `cool`, it would also render whatever palette that person last chose.
+      - name: Render the default palette
+        run: |
+          cd "$CI_DIR"
+          XDG_STATE_HOME="$CI_DIR/.state" XDG_CONFIG_HOME="$CI_DIR/.config" \
+            ./bin/ergon-theme --no-apply cool
+
       - name: ergon-lint
         run: cd "$CI_DIR" && ./bin/ergon-lint
 
@@ -68,6 +86,24 @@ jobs:
 
       - name: A run that exhausts memory is contained, not the session
         run: cd "$CI_DIR" && ./bin/test-oom.sh
+
+      # Every desktop config through the parser that will actually read it.
+      # This existed and was wired into nothing, which is how a config could be
+      # rejected by Hyprland and still pass every check in this file.
+      #
+      # It matters more now than it did: the configs these parsers read are
+      # generated rather than reviewed in a diff, and each one carries an
+      # include of a user file that mako and fuzzel treat as fatal when absent.
+      # The script renders into its own container copy, so it needs nothing
+      # from the step above.
+      #
+      # It is the slow one here -- it pulls an Arch image and installs five
+      # packages, so it costs minutes where the rest of this job costs seconds,
+      # and it can fail on an Arch mirror rather than on the commit. That is
+      # the price of checking the desktop at all without a VM; move it to
+      # vm.yml if the gate stops feeling fast.
+      - name: Desktop configs parse, by their own parsers
+        run: cd "$CI_DIR" && ./bin/test-hypr-config.sh
 
       # The public mirror is worse than useless when it is stale: someone clones
       # a tree that is weeks behind and hits bugs that were fixed. Pushing it

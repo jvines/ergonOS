@@ -59,6 +59,11 @@ cat <<'NEXT'
           }
       }
 
-  to ~/.config/hypr/hyprlock.conf — and set ready_message to wherever the
+  to ~/.config/ergon/hyprlock.conf — and set ready_message to wherever the
   reader actually is on this machine, since only you can see it.
+
+  That file, and not ~/.config/hypr/hyprlock.conf. The second one is generated
+  from a template on every install and every palette switch, so a block pasted
+  there is erased the next time anything renders. The first is yours: nothing
+  in this repo ever writes it, and the generated config sources it at the end.
 NEXT

@@ -62,3 +62,11 @@ search-start=Control+Shift+f
 
 [mouse]
 hide-when-typing=yes
+
+# Your overrides. Same shape and same reasons as fuzzel -- foot and fuzzel
+# share a parser design, down to rejecting a bare relative path.
+#
+# Non-fatal at runtime, exit 230 under --check-config. lib/user-config.sh
+# creates the file so neither path ever sees it missing.
+[main]
+include=~/.config/ergon/foot.ini

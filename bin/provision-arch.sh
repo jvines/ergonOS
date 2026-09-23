@@ -645,10 +645,21 @@ else
   skip "wallpaper (imagemagick not installed)"
 fi
 
-# The themed configs are generated from theme/cool.env and committed. Rendering
-# here would dirty the tree on every provision; checking costs nothing.
-if ! "$ERGON/bin/ergon-theme" --check >/dev/null 2>&1; then
-  warn "themed configs are stale in the repo — run 'ergon theme' and commit"
+# The themed configs are generated and gitignored, so a freshly cloned machine
+# has none of them until something renders. This used to only CHECK and tell
+# you to commit the result -- which made sense while they were tracked, and on
+# a fresh clone now would warn that sixteen files are stale against nothing.
+#
+# Rendering here rather than checking, because this script ends by PRINTING
+# `~/ergonOS/install.sh` as the next step rather than running it: a machine
+# whose operator stops reading after "done" would otherwise sit with no themed
+# config at all. install.sh renders again before it links, and the render is
+# idempotent, so doing it twice costs a third of a second and nothing else.
+#
+# Not fatal here -- install.sh is where this is a hard gate, because install.sh
+# is what puts the broken result in front of the compositor.
+if ! "$ERGON/bin/ergon-theme" --no-apply >/dev/null 2>&1; then
+  warn "the palette did not render — run 'ergon theme' and read the error"
 fi
 
 # ---------------------------------------------------------------------------
