@@ -180,6 +180,33 @@ else
   printf '   ok  fast-forwarded\n'
 fi
 
+# Re-render the themed configs here, before provisioning and on every run.
+#
+# The themed configs are generated and gitignored, and the fast-forward that
+# first removed them from tracking DELETES them from the working tree. The
+# thing that renders them again is install.sh -- which runs at the bottom of
+# this file, and only when something was incoming. That left two holes, and
+# both end at a machine whose compositor has no keybinds and whose lock screen
+# silently stops locking:
+#
+#   * provisioning runs first, and it is the slow step: pacman -Syu, a sudo
+#     prompt, a y/N question. Every second of it passed with the desktop's
+#     configs missing from disk.
+#   * a sync interrupted anywhere in there leaves BEHIND=0 on the next run, so
+#     install.sh never runs again and nothing ever re-renders. Permanently.
+#
+# Rendering is idempotent and takes about a third of a second, so doing it
+# unconditionally costs nothing and closes both. install.sh renders again and
+# remains the hard gate: this one is best-effort, that one refuses to link.
+HOSTENV="$ERGON/hosts/$(hostname -s)/host.env"
+GRAPHICAL=0
+# shellcheck disable=SC1090
+[ -f "$HOSTENV" ] && . "$HOSTENV"
+if [ "${GRAPHICAL:-0}" = 1 ]; then
+  "$ERGON/bin/ergon-theme" --no-apply >/dev/null 2>&1 \
+    || printf '   !!  the palette did not render — run: ergon theme\n'
+fi
+
 # Asked on a run with nothing incoming too: this is about what the machine HAS,
 # and the run that raises it is the one least likely to have answered it.
 PROVISIONED=1
