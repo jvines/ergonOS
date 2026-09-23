@@ -95,5 +95,10 @@ for tool in hyprland fuzzel foot mako hypridle hyprlock; do
 done
 
 printf '\n   note: waybar is NOT checked here -- it exits on "cannot open display"\n'
-printf '         before parsing. Its JSON and module list are checked in test-arch-vm.sh.\n'
+printf '         before parsing anything. The only thing that checks it is the VM\n'
+printf '         session suite (test-hypr-session.sh), which starts a real bar and\n'
+printf '         asserts it maps a layer surface -- which is a stronger check than\n'
+printf '         parsing, since GTK throws away the WHOLE stylesheet on a bad\n'
+printf '         @import and waybar then exits with no surface at all.\n'
+printf '         This line used to say test-arch-vm.sh, which never mentions waybar.\n'
 exit $rc
