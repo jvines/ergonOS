@@ -125,7 +125,14 @@ git fetch --quiet origin 2>/dev/null || { echo "ergon-sync: cannot reach the rem
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 BEHIND=$(git rev-list --count "HEAD..origin/$BRANCH" 2>/dev/null || echo 0)
 AHEAD=$(git rev-list --count "origin/$BRANCH..HEAD" 2>/dev/null || echo 0)
-DIRTY=$(git status --porcelain | wc -l)
+# TRACKED changes only. This gates the fast-forward below, and what a
+# fast-forward can actually stomp is a tracked file you have edited -- an
+# untracked file is one git will not touch either way. Counting untracked files
+# here meant any stray scratch file in the checkout refused every sync until it
+# was cleaned up: four work-in-progress wallpaper generators did exactly that,
+# and the rendered theme outputs would have done it permanently once a palette
+# switch started rewriting them.
+DIRTY=$(git status --porcelain --untracked-files=no | wc -l)
 
 printf '   branch    %s\n' "$BRANCH"
 printf '   behind    %s commit(s)\n' "$BEHIND"
