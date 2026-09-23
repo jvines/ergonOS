@@ -398,8 +398,49 @@ else
   rec warn "firmware" "fwupd not installed — nothing updates this machine's firmware, BIOS included"
 fi
 
+# --- what happens when a run exhausts memory -------------------------------
+# Not "is systemd-oomd installed": it ships inside the systemd package, so that
+# question is answered yes on every machine here and means nothing. The two
+# that matter are whether anything is watching memory pressure, and whether it
+# is allowed to act where the jobs are.
+if systemctl is-active --quiet systemd-oomd 2>/dev/null; then
+  rec ok "oomd" "systemd-oomd is watching memory pressure"
+else
+  rec fail "oomd" "systemd-oomd is not running — a run that exhausts memory takes the session with it (sudo systemctl enable --now systemd-oomd)"
+fi
+
+# The property the RUNNING user manager holds, not the drop-in file: a file
+# under /etc/systemd/user that no manager has reloaded is a policy this machine
+# does not have yet, and reading the file would certify it anyway. An empty
+# --value means there was no manager to ask, which is a different answer from
+# "auto" and must not be reported as one.
+if oom_app=$(systemctl --user show -p ManagedOOMMemoryPressure --value app.slice 2>/dev/null) \
+   && [ -n "$oom_app" ]; then
+  case "$oom_app" in
+    kill) rec ok "oom-policy" "app.slice is monitored; oomd may kill a runaway app, never the compositor (session.slice)" ;;
+    *)    rec fail "oom-policy" "app.slice ManagedOOMMemoryPressure=$oom_app — oomd is allowed to act on nothing; re-run provisioning, then systemctl --user daemon-reload" ;;
+  esac
+else
+  rec ok "oom-policy" "no user manager here to ask about app.slice"
+fi
+
 # --- the session -----------------------------------------------------------
 if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  # WHERE THIS SHELL IS, which decides what a job started in it can cost. Under
+  # uwsm the compositor is wayland-wm@hyprland.service in session.slice, with
+  # OOMPolicy=stop and OnFailure=wayland-session-shutdown.target -- so a
+  # terminal that ended up in there is one where the kernel killing a sampler
+  # ends the whole session. A terminal launched through uwsm-app is in its own
+  # scope under app.slice, where oomd kills it and nothing else.
+  #
+  # cgroup v2 writes one "0::<path>" line; tail -1 is the v1 fallback picking
+  # the last controller rather than nothing at all.
+  cg=$(tail -1 "${ERGON_SYSROOT:-}/proc/self/cgroup" 2>/dev/null)
+  case "$cg" in
+    */session.slice/*) rec fail "shell-slice" "this shell is inside the compositor's unit — a job that exhausts memory here ends the session. Was the terminal started from a bind without uwsm-app?" ;;
+    */app.slice/*)     rec ok   "shell-slice" "under app.slice as ${cg##*/} — a runaway job here is killed on its own" ;;
+    *)                 rec warn "shell-slice" "${cg:-no cgroup} — outside app.slice, so oomd will not contain a runaway job started here" ;;
+  esac
   case ":$PATH:" in
     *":$ERGON/bin:"*) rec ok "session-path" "repo bin is on PATH" ;;
     *) rec fail "session-path" "repo bin NOT on PATH — every ergon-* in the bar is a no-op. Is environment.d/10-ergon-path.conf linked?" ;;

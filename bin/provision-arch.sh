@@ -834,6 +834,111 @@ else
   warn "polkit rule written but the daemon was not reloaded; it applies after a reboot"
 fi
 
+# ---------------------------------------------------------------------------
+say "out-of-memory containment"
+# ERGON-19. A sampler that exhausted memory used to cost the whole session, and
+# every link in that chain is a default nobody chose.
+#
+# uwsm runs the compositor as wayland-wm@hyprland.service with Slice=session.slice,
+# no Delegate= and no OOMPolicy=, so it takes the manager default OOMPolicy=stop
+# -- and the unit carries OnFailure=wayland-session-shutdown.target with
+# OnFailureJobMode=replace-irreversibly. One process killed by the kernel inside
+# that unit therefore stops the unit, and stopping it ends the session: every
+# terminal, every Emacs buffer, every unsaved notebook. Terminals used to be
+# started straight from a keybind, which put them and everything they ran in
+# exactly that unit.
+#
+# Three files, each answering a different half:
+#
+#   oomd.conf.d   act on memory PRESSURE. The kernel OOM killer only fires when
+#                 an allocation actually fails, which on a machine with swap is
+#                 minutes after it stopped being usable.
+#   app.slice.d   where systemd-oomd is allowed to act.
+#   wayland-wm@   the kernel killing something that IS still in the compositor's
+#                 unit must not end the session.
+#
+# app.slice and NOT app-graphical.slice, worked out rather than copied from
+# Omarchy: systemd-oomd(8) says only DESCENDANTS of a monitored cgroup are
+# candidates, the monitored unit itself never is, and "only leaf cgroups and
+# cgroups with memory.oom.group set to 1 are eligible candidates". uwsm puts
+# each uwsm-app launch in its own scope under app-graphical.slice, which is a
+# child of app.slice -- so monitoring app.slice reaches each app's scope
+# individually, two levels down, and can never kill app-graphical.slice as a
+# whole because a slice with children is not a leaf. app.slice also covers the
+# transient scope `ergon watch` puts each run in; app-graphical.slice would not,
+# since `systemd-run --user` defaults to the ROOT slice (ergon-watch asks for
+# --slice=app.slice for that reason). The compositor is in session.slice, which
+# is monitored by nothing here and is the point of the whole arrangement.
+#
+# zram is deliberately NOT part of this. It changes what hibernation resumes
+# from, and bin/test-hibernate.sh needs a VM to say whether that still works.
+_oomd_reload=0; _user_reload=0
+if _changed /etc/systemd/oomd.conf.d/10-ergon.conf <<'OOMD'
+# Written by provision-arch.sh.
+#
+# oomd.conf(5) defaults to 60% pressure sustained for 30s. On a laptop that is
+# half a minute in which nothing redraws and no keystroke lands -- the state
+# this is supposed to prevent, arrived at on the way to preventing it. 50%/20s
+# is the same pair Omarchy settled on.
+#
+# SwapUsedLimit= is left at its default on purpose: it only governs cgroups with
+# ManagedOOMSwap=kill, and nothing here sets that. Swap on this machine is where
+# the hibernation image goes, so "swap is full" is not by itself a reason to
+# kill anything.
+[OOM]
+DefaultMemoryPressureLimit=50%
+DefaultMemoryPressureDurationSec=20s
+OOMD
+then _oomd_reload=1; fi
+
+if _changed /etc/systemd/user/app.slice.d/10-ergon-oomd.conf <<'OOMAPP'
+# Written by provision-arch.sh.
+#
+# Everything uwsm-app starts -- every terminal, every launcher hit, and the
+# scope `ergon watch` wraps a run in -- lands under this slice, so this is the
+# one line that decides whether a runaway job is killed on its own or takes the
+# machine with it. The compositor is in session.slice and is deliberately not
+# covered: it must never be a candidate.
+[Slice]
+ManagedOOMMemoryPressure=kill
+OOMAPP
+then _user_reload=1; fi
+
+if _changed /etc/systemd/user/wayland-wm@.service.d/10-ergon-oom.conf <<'OOMWM'
+# Written by provision-arch.sh.
+#
+# uwsm's unit sets no OOMPolicy=, so it gets the default, stop -- and it stops
+# with a failure, which its own OnFailure=wayland-session-shutdown.target turns
+# into the end of the session. Anything still started inside the compositor's
+# unit (an exec-once daemon, the foot escape hatch, anything forked from either)
+# would therefore cost the whole desktop the moment the kernel picked it.
+# continue logs the kill and keeps the session.
+[Service]
+OOMPolicy=continue
+OOMWM
+then _user_reload=1; fi
+
+if sudo systemctl enable --now systemd-oomd >/dev/null 2>&1; then
+  # Restart only when the config moved: this runs on every provision, and
+  # bouncing the daemon for bytes that did not change costs a window in which
+  # nothing is watching pressure at all.
+  [ "$_oomd_reload" = 0 ] || sudo systemctl restart systemd-oomd >/dev/null 2>&1 || true
+  ok "systemd-oomd watches memory pressure; a runaway app is killed, the session is not"
+else
+  # Not fatal. A kernel without PSI, or a container, has no pressure to watch --
+  # and the rest of this script has nothing to do with that.
+  warn "systemd-oomd would not start; nothing contains a run that exhausts memory"
+fi
+# The user manager has already read app.slice; a drop-in it has not reloaded is
+# a policy this machine does not have yet. There is no user bus during a
+# provision from a serial console, hence the fallback message rather than a
+# failure.
+if [ "$_user_reload" = 1 ]; then
+  systemctl --user daemon-reload >/dev/null 2>&1 \
+    && ok "user units reloaded (ergon doctor says whether this session's manager took it)" \
+    || warn "no user manager to reload here; the oomd policy applies at the next login"
+fi
+
 say "shell"
 # oh-my-zsh and zplug are git clones, not packages. Deliberately not from the
 # AUR: both are a checkout and a source line, and an AUR wrapper would add a

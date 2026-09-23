@@ -21,6 +21,22 @@
 local term    = "ergon-term"
 local launch  = "uwsm-app -- "        -- own systemd scope; survives a Hyprland reload
 
+-- EVERY terminal goes through `launch` too (ERGON-19), not only the GUI apps
+-- below. uwsm runs the compositor as wayland-wm@hyprland.service with
+-- OnFailure=wayland-session-shutdown.target and no OOMPolicy=, so it takes the
+-- manager default OOMPolicy=stop: one process killed by the kernel inside that
+-- unit stops it, and stopping it ends the session. A terminal started straight
+-- from a bind lives in that unit, so a sampler that ate the machine's memory
+-- cost every other terminal, Emacs buffer and unsaved notebook. uwsm-app puts
+-- each window in app-graphical.slice instead, which is where systemd-oomd is
+-- allowed to kill and the compositor (session.slice) is not.
+--
+-- The prefix is only half of it: `wezterm start` by default asks an
+-- ALREADY-RUNNING wezterm to open the window, so every terminal would share one
+-- process and one cgroup and one kill would still take them all. bin/ergon-term
+-- passes --always-new-process for that reason, and `ergon watch` puts each run
+-- in a scope of its own.
+
 -- Small wrapper so every line reads (keys, what it does, how).
 local function bind(keys, desc, dispatcher, opts)
   opts = opts or {}
@@ -31,16 +47,21 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Session
-bind("SUPER + RETURN",       "Terminal",            term)
+bind("SUPER + RETURN",       "Terminal",            launch .. term)
 -- Floating via a WINDOW RULE keyed on a distinct app_id, not via a chained
 -- `hyprctl dispatch togglefloating` -- that runs the moment the command is
 -- issued, against whatever currently has focus, which is a race the new window
 -- usually loses. See windows.lua for the rule.
-bind("SUPER + SHIFT + RETURN", "Floating terminal",  "ergon-term --class ergon-float")
+bind("SUPER + SHIFT + RETURN", "Floating terminal",  launch .. "ergon-term --class ergon-float")
 -- Escape hatch, kept even though ergon-term now falls back automatically: that
 -- fallback triggers on wezterm being ABSENT, and cannot help when wezterm is
 -- present but broken. This one names foot directly. Deliberately an awkward
 -- chord -- it should never be reached by accident.
+--
+-- The ONE terminal bind with no `launch` prefix, and that is the same argument:
+-- an escape hatch must not depend on uwsm-app being installed and working
+-- either. It costs the containment above, which is the right trade for a chord
+-- you only reach when something is already broken.
 bind("SUPER + SHIFT + ALT + RETURN", "Terminal (fallback)", "foot")
 bind("SUPER + SPACE",        "Launcher",            "fuzzel")
 bind("SUPER + ESCAPE",       "Lock",                "loginctl lock-session")
@@ -175,10 +196,10 @@ bind("SUPER + SHIFT + code:49", "Send to scratchpad", hl.dsp.window.move({ works
 -- Apps. Short list on purpose: everything that is not a GUI starts from a shell
 -- that is already open.
 bind("SUPER + B", "Browser",    launch .. "firefox")
-bind("SUPER + E", "Files",      term .. " yazi")
+bind("SUPER + E", "Files",      launch .. term .. " yazi")
 bind("SUPER + D", "Discord",    launch .. "discord")
 bind("SUPER + M", "Moonlight",  launch .. "moonlight")
-bind("SUPER + N", "Notes",      term .. " emacs -nw")
+bind("SUPER + N", "Notes",      launch .. term .. " emacs -nw")
 
 -- ---------------------------------------------------------------------------
 -- Clipboard. cliphist stores; fuzzel picks; wl-copy puts it back.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Run something long: keep the machine awake, journal it, say when it ends
 # ergon:group=data
-# ergon:args=[--name N] [--quiet] -- <command>...
+# ergon:args=[--name N] [--mem SIZE] [--quiet] -- <command>...
 # ergon:help=native
 #
 #   ergon watch --name fit-toi5205 -- python fit.py
@@ -20,15 +20,24 @@
 #   it must be in the journal.  Command, commit, duration, exit code, peak
 #     memory. "Which run in March was the one that worked" is a question
 #     everyone has and nobody can answer. See `ergon hist`.
+#
+#   it must not take the machine with it when it goes wrong. A nested sampler
+#     that runs out of memory is the normal failure of the normal job here, and
+#     it used to end the session -- every terminal, every unsaved buffer. The
+#     run gets a systemd scope of its own, under app.slice, with MemoryHigh set
+#     (--mem, default 80% of RAM): systemd-oomd then kills THAT scope and
+#     nothing else. See provision-arch.sh's out-of-memory stage. A job that
+#     genuinely needs the whole machine takes --mem infinity and gets it.
 set -euo pipefail
 
-NAME=""; QUIET=0
+NAME=""; QUIET=0; MEM="80%"
 while [ $# -gt 0 ]; do
   case "$1" in
     --name)  NAME="${2:?--name needs a value}"; shift 2 ;;
+    --mem)   MEM="${2:?--mem needs a value, e.g. 12G or 50%}"; shift 2 ;;
     --quiet) QUIET=1; shift ;;
     --)      shift; break ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)       break ;;
   esac
 done
@@ -86,8 +95,68 @@ done
 [ -n "$TIMER" ] || [ "$QUIET" = 1 ] || \
   printf '   !!   GNU time not installed; peak memory will not be recorded\n' >&2
 
-# shellcheck disable=SC2086  # both are deliberate word lists, or empty
-$INHIBIT $TIMER "$@"
+# A SCOPE of its own, which is the part that changes the outcome of a real run.
+#
+# systemd-oomd kills whole cgroups. Without this the biggest cgroup on the
+# machine is whatever the run happens to share -- one wezterm process holding
+# every terminal window, or the compositor's own unit -- so the kill that should
+# cost one job costs all of them. A scope makes the job its own cgroup and the
+# obvious candidate; MemoryHigh makes it throttle and reclaim before the rest of
+# the machine feels anything, which is what builds the pressure oomd acts on.
+#
+# --slice=app.slice is NOT decoration: `systemd-run --user` defaults to the
+# user manager's ROOT slice, and the drop-in that lets oomd act is on app.slice.
+# A scope in the root slice is a scope oomd is not allowed to touch.
+#
+# MemoryHigh rather than MemoryMax, deliberately: MemoryMax hands the cgroup to
+# the KERNEL OOM killer, which kills the biggest single task in it. For a
+# multiprocessing pool that is one worker, and the run then hangs forever
+# waiting on a queue nobody will answer. oomd kills the scope entire.
+#
+# PROBED, exactly like the inhibitor above and for the same reason: systemd-run
+# needs a user manager, and memory delegation for -p MemoryHigh. Where it has
+# neither it fails WITHOUT running the command -- and a six-hour job that did
+# not start because its containment was refused is the worst outcome available
+# here. The probe asks for everything the real invocation asks for, or it
+# certifies a call that is not the one that gets made.
+#
+# NOT --collect on the real call, unlike the probe: a collected unit is unloaded
+# the instant it dies, taking the manager's verdict on it -- the only witness
+# below that a kill was for memory -- with it. The failed scope is cleared by
+# hand once it has been read.
+SCOPE=""; UNIT=""
+if command -v systemd-run >/dev/null 2>&1; then
+  # A unit name, so the manager can be asked afterwards WHY the run died. tr -cs
+  # because a name is a command's basename and carries dots and slashes.
+  UNIT="ergon-watch-$(printf '%s' "$NAME" | tr -cs 'A-Za-z0-9' '-')-$$"
+  if systemd-run --user --scope --quiet --collect --slice=app.slice \
+       -p MemoryHigh="$MEM" -- true >/dev/null 2>&1; then
+    SCOPE="systemd-run --user --scope --quiet --slice=app.slice --unit=$UNIT -p MemoryHigh=$MEM --"
+    # A LIMIT IS NOT A KILLER, and the scope succeeding does not say anything
+    # about whether one is there: app.slice is a stock systemd user unit that
+    # exists on every machine, so the call above succeeds just as happily on a
+    # host that has never been provisioned -- where MemoryHigh only makes the
+    # job reclaim and stall at the limit and nothing ever ends it. Silent in
+    # both directions: slower than no limit at all, and still uncontained. The
+    # inhibitor and GNU time above both say so when what they asked for is
+    # missing, and this probe has to ask for the killer as well as the cgroup.
+    if ! systemctl is-active --quiet systemd-oomd 2>/dev/null \
+       || [ "$(systemctl --user show -p ManagedOOMMemoryPressure --value app.slice 2>/dev/null)" != kill ]; then
+      [ "$QUIET" = 1 ] || printf '   !!   scope created but nothing watches its pressure; the limit throttles and never kills — ergon doctor\n' >&2
+    fi
+  else
+    UNIT=""
+    [ "$QUIET" = 1 ] || printf '   !!   no scope here; if this run exhausts memory it takes the terminal with it\n' >&2
+  fi
+fi
+
+# Order matters and is not arbitrary. The inhibitor is outermost so it lasts as
+# long as the run. The TIMER sits OUTSIDE the scope so that a run oomd kills
+# still reports the peak memory it died at -- GNU time inside the scope is
+# SIGKILLed with everything else and writes nothing, losing exactly the number
+# the next run needs.
+# shellcheck disable=SC2086  # all three are deliberate word lists, or empty
+$INHIBIT $TIMER $SCOPE "$@"
 RC=$?
 set -e
 
@@ -96,19 +165,62 @@ SECS=$(( END - START ))
 RSS_KB=$(tail -1 "$RSSFILE" 2>/dev/null | tr -dc '0-9')
 RSS_MB=$(( ${RSS_KB:-0} / 1024 ))
 
+# Killed FOR memory, or just killed? The exit status cannot tell them apart --
+# oomd's kill is a userspace SIGKILL, so it looks exactly like `kill -9`.
+#
+# The witness is the USER MANAGER's verdict on the scope, and NOT the system
+# journal. `journalctl -u systemd-oomd` and `journalctl -k` print nothing and
+# exit 0 for a user outside `adm` -- which is every user this repo builds:
+# arch-bootstrap.sh creates the owner with -G wheel and provisioning adds only
+# video and input, while systemd's tmpfiles grants the journal ACL to `adm`
+# alone. Grepping the journal therefore recorded every real kill as an ordinary
+# exit 137 on the one machine it was written for, which is the whole thing this
+# card claims to have fixed. The manager owns the scope, answers without
+# privilege and without a group change, and says oom-kill for BOTH killers: the
+# kernel's, off the cgroup's memory.events, and oomd's, off the user.oomd_ooms
+# xattr it sets before it kills.
+#
+# With no scope there is no unit to ask, and the answer stays "no" rather than a
+# guess: a run recorded as an OOM kill that was actually a Ctrl-C would send the
+# next person tuning memory limits for hours.
+OOM=0
+if [ "$RC" -ne 0 ] && [ -n "$UNIT" ] && command -v systemctl >/dev/null 2>&1; then
+  # POLLED, because systemd-run --scope IS the command and returns with it: the
+  # manager only books the scope's fate on the cgroup-empty event a moment
+  # later, and asking too early gets "success" for a run that was killed.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$(systemctl --user show --value -p Result "$UNIT.scope" 2>/dev/null)" = oom-kill ] && { OOM=1; break; }
+    case "$(systemctl --user show --value -p ActiveState "$UNIT.scope" 2>/dev/null)" in
+      activating|active|deactivating) sleep 0.2 ;;
+      *) break ;;
+    esac
+  done
+  # Leaving the scope loaded is what made it askable; leaving it loaded FOREVER
+  # is a corpse in `systemctl --user` per killed run.
+  systemctl --user reset-failed "$UNIT.scope" >/dev/null 2>&1 || true
+fi
+
 # One JSON object per line: appendable, greppable, survives a partial write,
 # and needs nothing installed to read. A database would be a dependency for a
 # file that is only ever appended to and read back in order.
 esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-printf '{"name":"%s","cmd":"%s","cwd":"%s","git":"%s","started":"%s","seconds":%d,"exit":%d,"peak_mb":%d,"host":"%s"}\n' \
+printf '{"name":"%s","cmd":"%s","cwd":"%s","git":"%s","started":"%s","seconds":%d,"exit":%d,"peak_mb":%d,"oom":%d,"host":"%s"}\n' \
   "$(esc "$NAME")" "$(esc "$*")" "$(esc "$PWD")" "$(esc "$GIT")" \
-  "$STARTED" "$SECS" "$RC" "$RSS_MB" "$(uname -n)" >> "$JOURNAL"
+  "$STARTED" "$SECS" "$RC" "$RSS_MB" "$OOM" "$(uname -n)" >> "$JOURNAL"
 
 human() { printf '%dh%02dm%02ds' $(( $1/3600 )) $(( ($1%3600)/60 )) $(( $1%60 )); }
 if [ "$RC" -eq 0 ]; then
   MSG="$NAME finished in $(human "$SECS") (peak ${RSS_MB} MB)"
   [ "$QUIET" = 1 ] || printf '   ok   %s\n' "$MSG"
   command -v notify-send >/dev/null && notify-send "ergon watch" "$MSG" || true
+elif [ "$OOM" = 1 ]; then
+  # Naming the run is the whole point of the notification: the window it was
+  # running in may have been killed with it, so this is the only place the
+  # machine says WHAT it killed, and an unexplained dead terminal is what this
+  # card set out to stop.
+  MSG="$NAME ran out of memory and was killed after $(human "$SECS") (peak ${RSS_MB} MB, limit $MEM)"
+  [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2
+  command -v notify-send >/dev/null && notify-send -u critical "ergon watch" "$MSG" || true
 else
   MSG="$NAME FAILED after $(human "$SECS") (exit $RC)"
   [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2

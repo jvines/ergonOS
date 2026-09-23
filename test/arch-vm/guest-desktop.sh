@@ -741,11 +741,36 @@ pgrep -x seatd >/dev/null && ok "seatd running" || bad "seatd did not start"
 
 # --- start the compositor --------------------------------------------------
 echo "--- starting Hyprland ---"
+# A USER MANAGER, before anything else touches /run/user/1000.
+#
+# This harness has never had one: it is driven from a serial console, so there
+# is no logind session, and without a session there is no user@1000.service, no
+# session bus, no app.slice and no oomd policy in it. The out-of-memory section
+# far below was gated on asking that manager a question, so it asked nothing and
+# asserted nothing on every run. Lingering starts the manager with no session at
+# all, which is exactly the gap.
+#
+# FIRST, and not later: user-runtime-dir@1000.service mounts a tmpfs on
+# /run/user/1000, so lingering after the compositor has put its socket there
+# hides the socket and takes the rest of this suite with it.
+loginctl enable-linger "$U" >/dev/null 2>&1 || true
+for _ in $(seq 1 30); do [ -S /run/user/1000/bus ] && break; sleep 1; done
+if [ -S /run/user/1000/bus ]; then
+  ok "systemd --user is running for $U (lingering), so this session has a bus and an app.slice"
+else
+  note "no user manager here: the containment checks below can only be asked of one"
+fi
 install -d -o "$U" -g "$U" -m 700 /run/user/1000
 cat > /tmp/start-hypr.sh <<'EOF'
 export XDG_RUNTIME_DIR=/run/user/1000
 export LIBSEAT_BACKEND=seatd
 export XDG_CURRENT_DESKTOP=Hyprland
+
+# The session bus, which exists here only because the harness lingers the user
+# above. mako, notify-send and everything else that speaks D-Bus find the bus
+# through this variable and nothing else: without it a notification is dropped
+# with no error anywhere, which reads as "the notification code is broken".
+[ -S "$XDG_RUNTIME_DIR/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 
 # PATH comes from the same file systemd --user would read, not from a
 # convenient reimplementation of it. This session is started by hand and so has
@@ -819,6 +844,7 @@ esac
 # Run something as the user, inside the session, the way the session would.
 usr() {
   su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 \
+                DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
                 HYPRLAND_INSTANCE_SIGNATURE=$SIG \
                 WAYLAND_DISPLAY=$WLD \
                 XDG_CURRENT_DESKTOP=Hyprland \
@@ -1554,6 +1580,123 @@ else
   sleep 1
   hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b' | sed 's/^/     after: /'
   echo "     --- end ---"
+fi
+
+# --- a runaway job must not take the session with it (ERGON-19) ------------
+# The acceptance no parser and no stub can reach: allocate until the machine is
+# under memory pressure, and see what is still alive afterwards. bin/test-oom.sh
+# has the files, the scope and the doctor rows; this has a compositor to kill.
+echo "--- out-of-memory containment ---"
+if systemctl is-active --quiet systemd-oomd; then
+  ok "systemd-oomd is running (provisioning enabled it)"
+else
+  bad "systemd-oomd is not running — nothing watches memory pressure"
+  systemctl status systemd-oomd --no-pager -l 2>&1 | tail -8 | sed 's/^/     /'
+fi
+
+# The policy as the USER MANAGER holds it, which is the only form that reaches
+# oomd: a drop-in under /etc/systemd/user that no manager has read is a policy
+# this machine does not have yet. There is a manager to ask because the harness
+# lingers the user before it starts anything (see "starting Hyprland"), which is
+# what turned this from a note that asserted nothing into an assertion.
+oom_app=$(usr "systemctl --user show -p ManagedOOMMemoryPressure --value app.slice" 2>/dev/null | tr -d '\r')
+case "$oom_app" in
+  kill) ok "app.slice is monitored by oomd in this session" ;;
+  *)    bad "app.slice ManagedOOMMemoryPressure='${oom_app:-no user manager to ask}' — oomd is allowed to kill nothing" ;;
+esac
+
+# A REAL ALLOCATION, run the way `ergon watch` runs one: through the user
+# manager, under app.slice, with MemoryHigh forcing the scope to reclaim hard so
+# that the pressure oomd acts on actually builds.
+#
+# The OUTER unit is a transient service rather than a scope, and that is this
+# harness's shape rather than a shortcut. cgroup v2 refuses a migration unless
+# the mover can write the cgroup.procs of the COMMON ANCESTOR of source and
+# destination; everything here descends from a root-owned serial-console cgroup
+# rather than from user@1000.service, so `systemd-run --user --scope` -- which
+# is what both `ergon watch` and uwsm-app use -- cannot move its own caller in,
+# and fails before running anything. A service is started BY the manager, inside
+# its own tree, so nothing is migrated. `ergon watch` then runs from inside
+# user@1000.service, where its scope IS allowed, and the cgroup, the slice, the
+# pressure and the kill below are all the real ones.
+cat > /tmp/eat-memory.py <<'PY'
+# bytearray, not a reservation: it writes zeroes, so every page is resident and
+# the cgroup is really under pressure rather than merely over-committed.
+blocks = []
+while True:
+    blocks.append(bytearray(64 * 1024 * 1024))
+PY
+HYPR_BEFORE=$(pgrep -x Hyprland | head -1)
+OOMUNIT=ergon-vm-oom-probe
+usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
+usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app.slice \
+     --setenv=PATH='$SESSION_PATH' -- \
+     ergon watch --name oom-probe --mem 256M -- python3 /tmp/eat-memory.py" \
+  >/tmp/oomprobe.log 2>&1
+rc=$?
+# timeout kills systemd-run --wait, never the unit it is waiting on, so an
+# unkilled allocation would go on eating the VM for the rest of the suite.
+usr "systemctl --user stop $OOMUNIT.service" >/dev/null 2>&1 || true
+
+# THE MECHANISM, not the mortality. Any non-zero exit used to count as a pass
+# here, so `python3` missing (127), `ergon` off the PATH (127) or a typo in the
+# allocator (1) all read as "the machine ended it" -- and so did a run that
+# nothing contained at all, because MemoryHigh only throttles and an unkilled
+# job climbs until the GLOBAL kernel OOM killer picks the biggest task on the
+# machine, which also exits 137. The manager's verdict on the scope is the one
+# answer that separates those: oom-kill, from ergon-watch's own scope, is the
+# thing this card claims to have built.
+# Captured rather than piped into `grep -q`: grep leaves on the first match, su
+# takes SIGPIPE for the rest, and this file's `set -o pipefail` then hands back
+# 141 for the very output that matched.
+hist=$(usr "ergon hist --json --name oom-probe" 2>/dev/null)
+case "$hist" in
+  *'"oom": 1'*)
+    ok "ergon watch's own scope was killed for memory, and hist says so rather than exit 137" ;;
+  *)
+    bad "the run was not recorded as an OOM kill — nothing contained it, or the kill was not attributed"
+    printf '%s\n' "$hist" | tail -20 | sed 's/^/     /'
+    tail -10 /tmp/oomprobe.log | sed 's/^/     /' ;;
+esac
+case "$rc" in
+  0)   bad "the allocation returned 0 — it was never stopped" ;;
+  124) bad "nothing killed the run in 300s; the timeout ended it, which proves no containment at all" ;;
+esac
+usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
+
+HYPR_AFTER=$(pgrep -x Hyprland | head -1)
+if [ -n "$HYPR_BEFORE" ] && [ "$HYPR_BEFORE" = "$HYPR_AFTER" ]; then
+  ok "the compositor is the same process it was (PID $HYPR_AFTER)"
+else
+  bad "Hyprland PID changed: $HYPR_BEFORE -> ${HYPR_AFTER:-gone}"
+  dump_log
+fi
+# A PID survives a compositor that has stopped answering, so ask it something.
+hq version | grep -q Hyprland && ok "and it still answers hyprctl" \
+                              || bad "the compositor is alive but not answering"
+
+# mako holds a critical notification until it is dismissed (mako/config), so if
+# the daemon is there the message is still on screen. The window the job ran in
+# may have died with it, which is what makes this the only place the machine
+# says WHAT it killed.
+if usr "pgrep -x mako" >/dev/null 2>&1; then
+  case "$(usr "makoctl list" 2>/dev/null)" in
+    *oom-probe*) ok "a notification names the run that was killed" ;;
+    *)           bad "mako is running but holds no notification naming the run" ;;
+  esac
+else
+  note "mako is not running here, so the notification cannot be read back"
+fi
+
+# The path a person actually takes, and the one thing this harness cannot walk:
+# SUPER+RETURN goes through uwsm-app, which is `systemd-run --user --scope` and
+# so hits the same migration rule as above from a compositor that logind never
+# put inside user@1000.service. Reported rather than skipped silently, so that a
+# harness that one day starts the session through greetd turns it into a pass.
+if usr "systemd-run --user --scope --quiet --collect --slice=app.slice -p MemoryHigh=64M -- true" >/dev/null 2>&1; then
+  ok "a user scope can be created from this session, so uwsm-app's terminals are contained here too"
+else
+  note "no user scope from a serial console (cgroup v2 refuses the migration), so the uwsm-app half of the terminal path is covered only by bin/test-oom.sh and by ergon-doctor's shell-slice row on real hardware"
 fi
 
 # --- what the OS hands its agents -----------------------------------------

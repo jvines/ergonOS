@@ -110,8 +110,14 @@ because it started six daemons is a distro people uninstall. `ergon-svc up <name
 
 **Out.** Figure compliance checking against journal specs — not useful enough.
 
-**Parked.** `ergon-run --mem` (systemd scope + oomd to stop a runaway sampler
-taking the session down). Sound in theory, unconvinced it works in practice.
+**Done, as `ergon watch`** (ERGON-19). The parked `ergon-run --mem` — a systemd
+scope plus oomd, so a runaway sampler does not take the session down — is now
+what every `ergon watch` does: a scope of its own under `app.slice`, with
+`--mem` for the limit. What made it work in practice rather than in theory was
+the part the proposal did not have: a shared wezterm process means one cgroup
+for every terminal, so the scope, not the slice drop-in, is what contains a run.
+zram is still parked — it changes what hibernation resumes from, and that needs
+`test-hibernate.sh` in a VM before it goes anywhere near a machine.
 
 ## Round three
 
