@@ -648,7 +648,7 @@ fi
 # The themed configs are generated and gitignored, so a freshly cloned machine
 # has none of them until something renders. This used to only CHECK and tell
 # you to commit the result -- which made sense while they were tracked, and on
-# a fresh clone now would warn that sixteen files are stale against nothing.
+# a fresh clone now would warn that every one of them is stale against nothing.
 #
 # Rendering here rather than checking, because this script ends by PRINTING
 # `~/ergonOS/install.sh` as the next step rather than running it: a machine

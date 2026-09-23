@@ -59,11 +59,12 @@ ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pw
 . "$ERGON/lib/user-config.sh"
 
 CHECK=0; [ "${1:-}" = "--check" ] && { CHECK=1; shift; }
-# --no-apply renders the config files and stops: no wallpaper, no hyprctl
-# reload, no waybar restart. For callers that need the rendered files to be
-# correct but must not disturb a session someone is using -- the VM harness
-# re-renders after syncing the repo, and restarting the bar under someone who
-# is looking at it is not an acceptable side effect of a file sync.
+# --no-apply renders the config files and stops: nothing is reloaded, nothing
+# is signalled, nothing is restarted and no terminal is written to. For callers
+# that need the rendered files to be correct but must not disturb a session
+# someone is using -- the VM harness re-renders after syncing the repo, and
+# restarting the bar under someone who is looking at it is not an acceptable
+# side effect of a file sync.
 APPLY=1; [ "${1:-}" = "--no-apply" ] && { APPLY=0; shift; }
 
 # ONE palette, and that is a decision rather than an unfinished job.

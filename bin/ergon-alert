@@ -103,10 +103,11 @@ DESCRIPTION="${3:-}"
 # delivered the literal string "--url" as the description and dropped the link,
 # the labels and the severity, leaving an alert nothing could resolve.
 [ $# -le 3 ] || die "unexpected argument after the description: $4"
-case "${SUMMARY}${DESCRIPTION}" in
-  -*) die "options go before the name: ergon-alert [options] <name> <summary> [description]" ;;
-esac
-case "$DESCRIPTION" in -*) die "options go before the name, not after the summary" ;; esac
+for _pos in "$SUMMARY" "$DESCRIPTION"; do
+  case "$_pos" in
+    -?*) die "options go before the name: ergon-alert [options] <name> <summary> [description]" ;;
+  esac
+done
 [ "$RESOLVE" = 1 ] || [ -n "$SUMMARY" ] || die "needs a summary"
 
 # An alertname is a Prometheus label value and reaches a Telegram template that
@@ -190,6 +191,7 @@ firing_count() {
   # firing for a month -- silently, in the script whose reason to exist is not
   # failing silently. A non-2xx counts as unasked too: an error page contains
   # no fingerprints either.
+  #
   # Silenced and inhibited alerts are INCLUDED. A silence is the release valve
   # this file's own header points at, so it is the ordinary state of a red CI
   # somebody has acknowledged -- and an alert that is silenced is still firing.

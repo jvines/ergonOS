@@ -2022,7 +2022,13 @@ grep -q "background-color=$_pal_bg1" "$H/.config/mako/config" 2>/dev/null \
   && ok "the config mako reads carries the new palette" \
   || bad "$H/.config/mako/config does not carry gruvbox's $_pal_bg1"
 if [ -e "$H/.config/swayosd/style.css" ]; then
-  if grep -qi "$_pal_act" "$H/.config/swayosd/style.css" 2>/dev/null; then
+  # Anchored on the declaration. The template renders @COOL_ACTIVE@ into the
+  # comment that documents the rule as well as into the rule, so a bare colour
+  # match passes with the rule deleted -- and the OSD falls through to
+  # upstream's grey, which is the exact failure the template's header warns
+  # about. This is the only assertion anywhere that looks at the OSD in a real
+  # session.
+  if grep -qi "background: $_pal_act;" "$H/.config/swayosd/style.css" 2>/dev/null; then
     ok "the stylesheet swayosd reads carries the new palette"
   else
     bad "$H/.config/swayosd/style.css does not carry gruvbox's $_pal_act"

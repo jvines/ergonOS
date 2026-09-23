@@ -50,6 +50,14 @@ jobs:
           cd "$CI_DIR"
           # The exact commit, not whatever main points at by the time this runs.
           git checkout --quiet "${{ github.sha }}"
+          # Armed here, but only if there is nothing to arm. "Keep the notifier
+          # that just passed" below is what normally installs this, after
+          # ./bin/test-alert.sh -- which is the tenth step, so on a runner that
+          # has never got that far there would be no notifier at all, and the
+          # first failing run would report itself to the web UI and nowhere
+          # else. An unvalidated notifier beats none; a validated one replaces
+          # it minutes later.
+          [ -x "$ALERTER" ] || install -Dm755 "$CI_DIR/bin/ergon-alert" "$ALERTER"
           echo "testing $(git rev-parse --short HEAD)"
 
       # The themed configs are generated and gitignored, so what CI clones has

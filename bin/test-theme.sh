@@ -52,7 +52,7 @@ cat > "$E/bin/ergon-wallpaper" <<'EOF'
 printf '%s\n' "$*" >> "$TEST_ROOT/log/ergon-wallpaper"
 EOF
 
-for c in hyprctl pkill makoctl gsettings; do
+for c in hyprctl pkill makoctl gsettings ergon-wallpaper-gen; do
   cat > "$T/stub/$c" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "\$TEST_ROOT/log/$c"
@@ -71,8 +71,14 @@ chmod +x "$T/stub"/* "$E/bin"/*
 export TEST_ROOT="$T" PATH="$T/stub:$PATH" HOME="$T/home" \
        XDG_STATE_HOME="$T/state" XDG_CONFIG_HOME="$T/config"
 
-[ "$(command -v pkill)" = "$T/stub/pkill" ] && [ "$(command -v hyprctl)" = "$T/stub/hyprctl" ] \
-  || { echo "stubs are not first on PATH; refusing to signal anything"; exit 1; }
+# ergon-wallpaper-gen is in the list because ergon-theme resolves it through
+# PATH and detaches it: on a machine with ergonOS installed, five runs of this
+# file would leave five real numpy recolours running after it exits, holding
+# the same lock a real palette switch uses.
+for c in pkill hyprctl makoctl gsettings ergon-wallpaper-gen; do
+  [ "$(command -v "$c")" = "$T/stub/$c" ] \
+    || { echo "stub for $c is not first on PATH; refusing to run anything"; exit 1; }
+done
 
 # --- a real pty, standing in for an open foot window -------------------------
 # script(1) holds the master and writes everything the slave receives into a
@@ -177,17 +183,25 @@ check "a btop without it is signalled again"     hasx "$T/log/pkill" "-USR2 -x b
 # --- and the render itself still follows the palette --------------------------
 reset_logs
 run gruvbox >/dev/null 2>&1
+check "switching to another palette exits 0" test "$?" = 0
 bg=$(sed -n 's/^COOL_BG1=\(#[0-9A-Fa-f]*\).*/\1/p'    "$E/theme/gruvbox.env" | head -1)
 act=$(sed -n 's/^COOL_ACTIVE=\(#[0-9A-Fa-f]*\).*/\1/p' "$E/theme/gruvbox.env" | head -1)
-# An empty needle would make every grep below pass against any file at all,
-# which is the shape a check takes when it stops checking.
-check "the palette names the colours these assertions look for" test -n "$bg$act"
-check "naming another palette rewrites the surfaces" has "$E/mako/config" "background-color=$bg"
+# One check per needle, not one for both. An empty needle makes every grep
+# below match any file at all, and "$bg$act" is non-empty while either half is
+# -- so a palette missing exactly one role passed, against a renderer that had
+# refused to render anything.
+check "the palette names the background these assertions look for" test -n "$bg"
+check "  and the accent"                                            test -n "$act"
+# ${x:-<unset>} rather than $x: an empty needle would leave a prefix that both
+# files always contain, so the check would pass against the stale render it is
+# meant to catch. The placeholder cannot match anything.
+check "naming another palette rewrites the surfaces" \
+  has "$E/mako/config" "background-color=${bg:-<unset>}"
 # Anchored on the declaration, not on the hex: the template renders @COOL_ACTIVE@
 # into its own comment as well, so a bare colour match would pass with the rule
 # it is about deleted -- and the OSD would fall through to upstream's white.
 check "  including the one that had never been themed at all" \
-  has "$E/swayosd/style.css" "background: $act;"
+  has "$E/swayosd/style.css" "background: ${act:-<unset>};"
 # A dark palette computes the same icon theme the launcher used to hardcode, so
 # only a light one can tell the fix from the bug.
 run gruvbox-light >/dev/null 2>&1
