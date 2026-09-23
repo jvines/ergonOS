@@ -43,8 +43,17 @@ backup_roundtrip() {  # backup_roundtrip LABEL REPO [ALLOW_LOCAL]
     && ok "$label: the snapshot records /home, not the btrfs snapshot's path" || bad "$label: snapshot paths wrong"
   grep -q "^ergon-backup: from snapshot" /var/lib/ergon/backup/last-run.log \
     && ok "$label: backed up from a read-only btrfs snapshot" || bad "$label: backed up the live tree, not a snapshot"
-  btrfs subvolume list / 2>/dev/null | grep -q 'ergon-backup' \
-    && bad "$label: the btrfs snapshot was left behind" || ok "$label: the btrfs snapshot was removed"
+  # The listing, then the question. As `btrfs subvolume list / | grep -q ... || ok`
+  # a btrfs command that failed came out as "the snapshot was removed" -- the one
+  # answer this assertion exists to disprove. @home anchors it: the listing of a
+  # machine this suite installed always has it, so an empty or broken listing
+  # cannot be mistaken for a clean one.
+  _subvols=$(btrfs subvolume list / 2>&1)
+  case "$_subvols" in
+    *ergon-backup*) bad "$label: the btrfs snapshot was left behind" ;;
+    *@home*)        ok "$label: the btrfs snapshot was removed" ;;
+    *)              bad "$label: could not list subvolumes, so nothing was checked: $(printf '%s' "$_subvols" | head -1)" ;;
+  esac
   rm -f "$canary"
   out=$("$B" restore "$canary" --to "/var/tmp/restore-$label" 2>&1) || { bad "$label: restore failed"; printf '%s\n' "$out" | tail -5; }
   [ "$(su - "$U" -c "sha256sum '/var/tmp/restore-$label$canary'" 2>/dev/null | cut -d' ' -f1)" = "$sum" ] \

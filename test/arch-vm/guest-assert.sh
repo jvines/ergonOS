@@ -22,7 +22,11 @@ check "hostname was set at install"  '[ "$(cat /etc/hostname)" = "$EXPECT_HOSTNA
 
 # THE one the fstab bug would have broken. If root is pinned to a subvolume in
 # fstab, `snapper rollback` completes and changes nothing.
-check "root fstab entry has no subvol" '! grep -E "^[^#].*[[:space:]]/[[:space:]].*subvol" /etc/fstab'
+# `[ -r ... ] &&` in front of this one and the HOOKS one below: grep answers 1
+# for "no such line" and 2 for "no such file", and the `!` turns BOTH into a
+# pass -- so a missing or unreadable file satisfied the two assertions here that
+# exist to prove what is NOT in one.
+check "root fstab entry has no subvol" '[ -r /etc/fstab ] && ! grep -E "^[^#].*[[:space:]]/[[:space:]].*subvol" /etc/fstab'
 check "/home still pins its subvol"    'grep -E "^[^#].*[[:space:]]/home[[:space:]].*subvol=/@home" /etc/fstab'
 
 # The default subvolume must point at @. ergon-rollback resets it after replacing
@@ -45,7 +49,7 @@ check "swap is big enough for RAM"   '[ "$(awk "/SwapTotal/{print \$2}" /proc/me
 
 # sd-encrypt, and NOT a duplicated resume hook.
 check "initramfs uses sd-encrypt"    'grep -q "sd-encrypt" /etc/mkinitcpio.conf'
-check "no legacy resume hook"        '! grep -E "^HOOKS=.*[( ]resume[ )]" /etc/mkinitcpio.conf'
+check "no legacy resume hook"        '[ -r /etc/mkinitcpio.conf ] && ! grep -E "^HOOKS=.*[( ]resume[ )]" /etc/mkinitcpio.conf'
 
 # Snapshots: the reason this machine is btrfs at all.
 check "snapper root config exists"   '[ -f /etc/snapper/configs/root ]'

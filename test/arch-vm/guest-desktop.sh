@@ -171,6 +171,26 @@ sed -i 's/^DOCKER_GROUP=0/DOCKER_GROUP=1/' "$H/ergonOS/hosts/$(hostname -s)/host
 # going forward exercises the new code over the same range.
 G="$H/ergonOS"
 STAMP=/var/lib/ergon/provisioned
+
+# ONE row of doctor's JSON, and no verdict on the machine as a whole.
+#
+# `ergon-doctor` exits 1 when ANY check fails, so its status answers "does this
+# whole machine pass" and never "is this row ok". Piped straight into `grep -q`
+# under this file's `set -o pipefail`, that status became the pipeline's, and an
+# assertion about one row was silently a verdict on every other row. Both of
+# this harness's row assertions were written that way and both misreported on
+# the run that found nftables.service inactive: "doctor does not call the
+# machine current after a sync" failed while printing a provisioned row that was
+# ok, and "doctor did not fail the firewall row" failed while printing a row
+# whose state WAS fail -- that one, being about a row doctor must fail, could
+# never have passed at all. Same defect and same fix as bin/test-provisioning.sh's
+# doctor() helper. The whole-machine question is still asked, deliberately and by
+# exit status, at "ergon-doctor reports no failures" far below: they are two
+# different questions and both are worth asking.
+doctor_row() {  # doctor_row <row> <command...> -> that row's JSON object, or ''
+  local row=$1; shift
+  "$@" 2>/dev/null | grep -o "{\"name\":\"$row\"[^}]*}" || true
+}
 if grep -qx "commit=$(su - "$U" -c "git -C $G rev-parse HEAD")" "$STAMP" 2>/dev/null; then
   ok "provisioning recorded the commit it ran from in $STAMP"
 else
@@ -231,13 +251,20 @@ then
     bad "sync did not re-provision — the stamp is still $(sed -n 's/^commit=//p' "$STAMP" 2>/dev/null), the repo is at $ahead"
     tail -15 /tmp/sync.log | sed 's/^/     /'
   fi
-  if su - "$U" -c "$G/bin/ergon-doctor --json" 2>/dev/null | grep -q '"name":"provisioned","state":"ok"'; then
-    ok "ergon doctor reports the machine as provisioned at the current commit"
-  else
-    bad "doctor does not call the machine current after a sync"
-    su - "$U" -c "$G/bin/ergon-doctor" 2>/dev/null \
-      | grep -E 'provisioned|base-packages' | sed 's/^/     /'
-  fi
+  _prov_row=$(doctor_row provisioned su - "$U" -c "$G/bin/ergon-doctor --json")
+  case "$_prov_row" in
+    *'"state":"ok"'*)
+      ok "ergon doctor reports the machine as provisioned at the current commit" ;;
+    # An absent row is its own failure: a check that never ran proves nothing,
+    # and must not fall through into the message about the stamp being stale.
+    "")
+      bad "doctor printed no 'provisioned' row at all — the check did not run"
+      su - "$U" -c "$G/bin/ergon-doctor" 2>&1 | tail -5 | sed 's/^/     /' ;;
+    *)
+      bad "doctor does not call the machine current after a sync: $_prov_row"
+      su - "$U" -c "$G/bin/ergon-doctor" 2>/dev/null \
+        | grep -E 'provisioned|base-packages' | sed 's/^/     /' ;;
+  esac
   # ERGON-21, other half: this re-provision ran with DOCKER_GROUP=1 (flipped
   # above), so it must have added the group this time.
   if id -nG "$U" | grep -qw docker; then
@@ -315,9 +342,27 @@ fi
 # survive the verb people actually type. (Arch ships no ExecStop at all, so on
 # THIS distro the drop-in is not narrowing a flush, it is supplying the teardown
 # the unit does not have -- which is why it must also set RemainAfterExit=yes.)
-systemctl show nftables -p ExecStop 2>/dev/null | grep -q 'flush ruleset' \
-  && bad "nftables.service still stops with 'nft flush ruleset' — a restart would wipe docker's chains" \
-  || ok "nftables.service stops by destroying only the ergon table"
+# Read the property, THEN judge it, and require the scoped teardown rather than
+# merely the absence of the wide one. As `systemctl show ... | grep -q 'flush
+# ruleset' || ok` this answered "stops by destroying only the ergon table" for
+# three machines that do not: one where systemctl itself failed, one where the
+# unit is unknown, and -- the case that matters on Arch, which ships NO ExecStop
+# -- one where the drop-in never reached the unit, so stopping nftables leaves
+# the ergon table loaded and `is-active` lies about it. grep's 1 for "that string
+# is absent" was standing in for a positive claim it cannot make.
+_execstop=$(systemctl show nftables -p ExecStop 2>/dev/null)
+case "$_execstop" in
+  *'flush ruleset'*)
+    bad "nftables.service still stops with 'nft flush ruleset' — a restart would wipe docker's chains" ;;
+  *'destroy table inet ergon'*)
+    ok "nftables.service stops by destroying only the ergon table" ;;
+  ExecStop=)
+    bad "nftables.service has no ExecStop at all — the drop-in never reached the unit, so a stop leaves the ergon table loaded"
+    firewall_why ;;
+  *)
+    bad "could not read nftables.service's ExecStop, so its teardown was not checked: '${_execstop:-systemctl printed nothing}'"
+    firewall_why ;;
+esac
 if ! nft list chain ip nat DOCKER >/dev/null 2>&1; then
   note "no ip nat DOCKER chain on this machine — nothing for a reload to wipe, so that claim is untested"
 else
@@ -345,14 +390,17 @@ fi
 # and answered ok — as root, on a machine with an empty ruleset. Asserted with
 # root in hand, which is the only way to reach that branch at all.
 if nft destroy table inet ergon 2>/dev/null; then
-  if ERGON="$G" "$G/bin/ergon-doctor" --json 2>/dev/null \
-     | grep -q '"name":"firewall","state":"fail"'; then
-    ok "as root and with no ergon table, doctor fails the firewall row"
-  else
-    bad "doctor did not fail the firewall row on a machine where nothing filters inbound"
-    ERGON="$G" "$G/bin/ergon-doctor" --json 2>/dev/null \
-      | grep -o '{"name":"firewall"[^}]*}' | sed 's/^/     /'
-  fi
+  # `env`, not an ERGON= prefix on the function call: in bash a prefix assignment
+  # to a SHELL FUNCTION stays set after it returns, and ERGON is read again below.
+  _fw_row=$(doctor_row firewall env ERGON="$G" "$G/bin/ergon-doctor" --json)
+  case "$_fw_row" in
+    *'"state":"fail"'*)
+      ok "as root and with no ergon table, doctor fails the firewall row" ;;
+    "")
+      bad "doctor printed no 'firewall' row at all — the check did not run" ;;
+    *)
+      bad "doctor did not fail the firewall row on a machine where nothing filters inbound: $_fw_row" ;;
+  esac
   # Put it back before anything else runs, and say whether that worked: the
   # tests after this one must not be quietly running on an unfiltered machine.
   if systemctl restart nftables >/dev/null 2>&1 \
@@ -540,9 +588,16 @@ else
   bad "kb_layout not scaffolded per host (expected '${_kb:-us}')"
   grep -n kb_layout "$H/ergonOS/hosts/$(hostname -s)/hyprland.lua" 2>/dev/null | sed 's/^/     /'
 fi
-grep -rq 'kb_layout = "us"' "$H/.config/hypr/common/" 2>/dev/null \
-  && bad "the shared config still hardcodes a keyboard layout" \
-  || ok "no keyboard layout hardcoded in the shared config"
+# The directory first. `grep -rq ... && bad || ok` reported "no keyboard layout
+# hardcoded" for a common/ that install.sh had never linked, because grep's 2 for
+# "no such directory" and its 1 for "no match" both skip the bad and land on ok.
+if [ ! -d "$H/.config/hypr/common" ]; then
+  bad "no $H/.config/hypr/common — the shared config was never linked, so nothing was checked"
+elif grep -rq 'kb_layout = "us"' "$H/.config/hypr/common/"; then
+  bad "the shared config still hardcodes a keyboard layout"
+else
+  ok "no keyboard layout hardcoded in the shared config"
+fi
 
 # Microcode belongs to the CPU that is present.
 case "$(awk -F': ' '/^vendor_id/ { print $2; exit }' /proc/cpuinfo)" in
@@ -985,7 +1040,12 @@ set_layout() {
 }
 key_of() { printf '%s\n' "$1" | awk -F'  +' -v d="$2" '$2 == d { sub(/^SUPER \+ /, "", $1); print $1 }'; }
 IFS=$'\t' read -r KB0 KV0 < <(kb_main)
-if grep -q 'code:' <<<"$KEYS_OUT"; then bad "ergon-keys shows a raw code:N"; else ok "ergon-keys shows no raw code:N"; fi
+# KEYS_OUT is captured with `|| true` above, so an ergon-keys that died leaves it
+# empty -- and "no raw code:N" was then true of no rows at all rather than of the
+# cheatsheet. An empty answer is a failure, not a clean one.
+if [ -z "$KEYS_OUT" ]; then bad "ergon-keys printed nothing, so 'no raw code:N' would be a claim about no rows"
+elif grep -q 'code:' <<<"$KEYS_OUT"; then bad "ergon-keys shows a raw code:N"
+else ok "ergon-keys shows no raw code:N"; fi
 # Without this, a dead first source would pass below as "session" on the fallback.
 # Captured, not piped into grep -q. Under pipefail, grep -q exits at the first
 # match, the dump (~70K) dies of SIGPIPE mid-write, and the pipeline reports a
@@ -1027,8 +1087,15 @@ if [ -z "$KEYS_DUPS" ]; then ok "no chord is bound twice"; else bad "chords boun
 # source below; description, key and locked are real Hyprland-side bind
 # properties that DO survive and are checked against the live compositor.
 # Code lines only: binds.lua's own comment records what the bind USED to be.
-if grep -v '^[[:space:]]*--' "$H/.config/hypr/common/binds.lua" 2>/dev/null \
-     | grep 'hl\.dsp\.exit()' >/dev/null; then
+# The file first: `grep -v <file> | grep <pattern>` exits non-zero both when
+# binds.lua is clean AND when it is missing, unreadable or empty, so an install
+# that never linked the compositor config read as "no direct hl.dsp.exit() left".
+# (`grep ... >/dev/null` and not `grep -q`: -q leaves on the first match, the
+# left grep takes SIGPIPE, and under pipefail a match comes back as a miss.)
+_binds_lua="$H/.config/hypr/common/binds.lua"
+if [ ! -s "$_binds_lua" ]; then
+  bad "no binds.lua at $_binds_lua — the session has no binds, and nothing was checked"
+elif grep -v '^[[:space:]]*--' "$_binds_lua" | grep 'hl\.dsp\.exit()' >/dev/null; then
   bad "binds.lua still calls hl.dsp.exit() directly -- SUPER+SHIFT+E must open the session menu instead"
 else
   ok "no direct hl.dsp.exit() left in binds.lua"
@@ -1460,12 +1527,19 @@ if systemctl is-active --quiet power-profiles-daemon; then
   _n=$(su - "$U" -c 'powerprofilesctl list' 2>/dev/null | grep -cE '^[* ]*[a-z-]+:')
   [ "${_n:-0}" -ge 2 ] && ok "$_n power profiles to cycle between" \
                        || bad "only ${_n:-0} power profile — the button has nothing to switch to"
-  if pkaction --action-id org.freedesktop.UPower.PowerProfiles.switch-profile --verbose 2>/dev/null \
-     | grep -A1 'implicit active' | grep -qi 'yes\|auth_admin_keep\|auth_self_keep'; then
-    ok "polkit lets an active session switch profile"
-  else
-    note "could not read the polkit policy for switch-profile (pkaction missing?)"
-  fi
+  # Read the value, then judge it. As one pipeline, "pkaction is not installed"
+  # and "polkit REFUSES an active session" were the same non-zero status and both
+  # came out as a note -- so a policy that had stopped permitting the switch would
+  # have been reported as a thing this run could not ask about. Only a missing
+  # pkaction, or an action polkit does not know, is a note now; an answer that is
+  # not a grant is a failure.
+  _pk_active=$(pkaction --action-id org.freedesktop.UPower.PowerProfiles.switch-profile --verbose 2>/dev/null \
+    | sed -n 's/^[[:space:]]*implicit active:[[:space:]]*//p' | tr -d '[:space:]')
+  case "$_pk_active" in
+    "")                                 note "could not read the polkit policy for switch-profile (pkaction missing?)" ;;
+    yes|auth_admin_keep|auth_self_keep) ok "polkit lets an active session switch profile ($_pk_active)" ;;
+    *)                                  bad "polkit's implicit active for switch-profile is '$_pk_active' — the profile button cannot work even from a real session" ;;
+  esac
 else
   bad "power-profiles-daemon is not running — clicking the profile icon does nothing"
 fi
@@ -1783,9 +1857,18 @@ hq version | grep -q Hyprland && ok "and it still answers hyprctl" \
 # may have died with it, which is what makes this the only place the machine
 # says WHAT it killed.
 if usr "pgrep -x mako" >/dev/null 2>&1; then
-  case "$(usr "makoctl list" 2>/dev/null)" in
+  # makoctl's own status, kept. Swallowed inside the command substitution, a
+  # makoctl that could not reach the daemon was indistinguishable from a mako
+  # holding nothing, and both were reported as the second -- which sends the
+  # next reader to the notification code over a broken bus address.
+  _mako=$(usr "makoctl list" 2>/dev/null); _mako_rc=$?
+  case "$_mako" in
     *oom-probe*) ok "a notification names the run that was killed" ;;
-    *)           bad "mako is running but holds no notification naming the run" ;;
+    *) if [ "$_mako_rc" != 0 ]; then
+         bad "makoctl could not read mako back (exit $_mako_rc) — whether a notification names the run is untested"
+       else
+         bad "mako is running but holds no notification naming the run"
+       fi ;;
   esac
 else
   note "mako is not running here, so the notification cannot be read back"
