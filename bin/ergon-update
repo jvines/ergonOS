@@ -60,6 +60,8 @@ warn() { printf '   !!   %s\n' "$*" >&2; }
 die()  { printf '   FAIL %s\n' "$*" >&2; exit 1; }
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# shellcheck source=../lib/transaction.sh
+. "$ERGON/lib/transaction.sh"
 MIN_ROOT_GIB="${ERGON_UPDATE_MIN_ROOT_GIB:-8}"
 # ERGON_SYSROOT is the seam bin/test-update.sh uses, the same one ergon-hardware
 # and ergon-sync read: the paths that say whether the running kernel and
@@ -268,27 +270,12 @@ report_restart() {
 }
 
 upgrade() {
-  local confirm="" scope=() inhibit=() rc=0
+  local confirm="" rc=0
   [ "$ASSUME_YES" = 0 ] || confirm="--noconfirm"
 
-  # PROBE both wrappers rather than assuming they work -- the same lesson as
-  # ergon-watch's inhibitor. systemd-run --scope and systemd-inhibit need a
-  # system manager and, for the inhibitor, logind's blessing; in a container or
-  # a chroot they fail WITHOUT running the command. An upgrade that did not
-  # happen because its wrapper refused is worse than one that ran unwrapped.
-  if command -v systemd-run >/dev/null 2>&1 \
-     && sudo systemd-run --scope --quiet --collect -- true >/dev/null 2>&1; then
-    scope=(systemd-run --scope --quiet --collect --description=ergon-update --)
-  else
-    warn "no transient scope here — a compositor or systemd restart could kill this upgrade"
-  fi
-  if command -v systemd-inhibit >/dev/null 2>&1 \
-     && sudo systemd-inhibit --what=sleep --who=ergon --why=probe true >/dev/null 2>&1; then
-    inhibit=(systemd-inhibit --what=sleep:shutdown:handle-lid-switch
-             --who=ergon --why=system-upgrade --)
-  else
-    warn "cannot inhibit sleep here — do not close the lid until this finishes"
-  fi
+  # The probe and the wrapper are in lib/transaction.sh, because provisioning
+  # opens a transaction too and had none of this.
+  ergon_txn_wrap ergon-update system-upgrade upgrade
 
   # One command, so all of it is inside the one scope and the one inhibitor.
   #
@@ -309,7 +296,7 @@ upgrade() {
   local txn="pacman -Sy $confirm || exit 10"
   txn="$txn; pacman -S --needed $confirm archlinux-keyring || true"
   txn="$txn; pacman -Su $confirm"
-  sudo "${scope[@]}" "${inhibit[@]}" bash -c "$txn" || rc=$?
+  sudo "${ERGON_TXN[@]}" bash -c "$txn" || rc=$?
   case "$rc" in
     0) ;;
     10) die "could not synchronize the package databases — nothing was upgraded;" \

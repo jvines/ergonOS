@@ -30,6 +30,8 @@ fi
 
 ERGON="${ERGON:-$HOME/ergonOS}"
 export PATH="$HOME/.local/bin:$PATH"
+# shellcheck source=../lib/transaction.sh
+. "$ERGON/lib/transaction.sh"
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   ok  %s\n' "$*"; }
 skip() { printf '   ·   %s\n' "$*"; }
@@ -113,7 +115,14 @@ mapfile -t PKGS < <(_pkglist "$ERGON/packages/pacman")
 mapfile -t MISSING < <(pacman -T "${PKGS[@]}" 2>/dev/null || true)
 if [ "${#MISSING[@]}" -gt 0 ]; then
   warn "${#MISSING[@]} package(s) missing — installing them upgrades the system (pacman -Syu)"
-  sudo pacman -Syu --needed --noconfirm "${PKGS[@]}"
+  # The guards ergon-update puts around ITS transaction, because this is the
+  # same transaction. They were only on that side while this one ran bare, and
+  # ERGON-22 turned that into a real difference: `ergon sync` now re-runs
+  # provisioning on a machine that is in use, so this is the copy that upgrades
+  # a laptop with a session open and a lid to close.
+  ergon_txn_space 8 "Run 'sudo paccache -rk1', then provision again." || exit 1
+  ergon_txn_wrap ergon-provision provisioning "package install"
+  sudo "${ERGON_TXN[@]}" pacman -Syu --needed --noconfirm "${PKGS[@]}"
   ok "${#PKGS[@]} packages"
 else
   ok "${#PKGS[@]} packages already installed; nothing to upgrade here (use: ergon update)"

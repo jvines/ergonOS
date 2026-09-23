@@ -156,7 +156,11 @@ chmod +x "$T/stub"/*
 
 # ergon-update reaches its sibling by $ERGON/bin, the way ergon-bundle does, so
 # the seam is a throwaway repo rather than PATH.
-mkdir -p "$T/ergon/bin"
+mkdir -p "$T/ergon/bin" "$T/ergon/lib"
+# The REAL lib, not a stub: the scope and the inhibitor the assertions below
+# pin down are built in there, and a throwaway tree missing it would only
+# prove that a missing file makes the script exit.
+cp "$REPO/lib/transaction.sh" "$T/ergon/lib/transaction.sh"
 cat > "$T/ergon/bin/ergon-aur" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/aur"
