@@ -220,10 +220,15 @@ say_or_not() {  # say_or_not <urgency-args...> -- <summary> <body>
   notify-send "$@" && return 0
   [ "$QUIET" = 1 ] || printf '   !!   could not deliver the desktop notification (no session bus here?)\n' >&2
 }
+# The run's NAME is the summary, not the body. mako renders the summary as the
+# title and `makoctl list` prints only that, so "ergon watch" in the title was
+# a critical popup that did not say which of your runs had died -- on the one
+# event where the window it was started from may have died with it. The body
+# carries the numbers.
 if [ "$RC" -eq 0 ]; then
   MSG="$NAME finished in $(human "$SECS") (peak ${RSS_MB} MB)"
   [ "$QUIET" = 1 ] || printf '   ok   %s\n' "$MSG"
-  say_or_not "ergon watch" "$MSG"
+  say_or_not "$NAME finished" "in $(human "$SECS"), peak ${RSS_MB} MB"
 elif [ "$OOM" = 1 ]; then
   # Naming the run is the whole point of the notification: the window it was
   # running in may have been killed with it, so this is the only place the
@@ -231,10 +236,11 @@ elif [ "$OOM" = 1 ]; then
   # card set out to stop.
   MSG="$NAME ran out of memory and was killed after $(human "$SECS") (peak ${RSS_MB} MB, limit $MEM)"
   [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2
-  say_or_not -u critical "ergon watch" "$MSG"
+  say_or_not -u critical "$NAME ran out of memory" \
+    "killed after $(human "$SECS") — peak ${RSS_MB} MB against a limit of $MEM"
 else
   MSG="$NAME FAILED after $(human "$SECS") (exit $RC)"
   [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2
-  say_or_not -u critical "ergon watch" "$MSG"
+  say_or_not -u critical "$NAME failed" "exit $RC, after $(human "$SECS")"
 fi
 exit "$RC"

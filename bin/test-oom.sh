@@ -414,7 +414,13 @@ check "  and the scope it kept is cleared once it has been read" \
   hasf "$L/systemctl" 'reset-failed'
 # The window it ran in may have gone with it, so this is the only place the
 # machine says what it killed.
+# Named in the SUMMARY, which is what mako renders as the title and the only
+# field `makoctl list` prints. With the name in the body instead, a critical
+# popup said "ergon watch" and did not say which run had died -- and the VM
+# assertion that was supposed to catch that read a field the name was not in.
 check "  and says so in a notification naming the run" hasf "$L/notify-send" 'fit'
+check "  with the run named in the summary, not buried in the body" \
+  hasf "$L/notify-send" '-u critical fit ran out of memory'
 check "  at critical urgency"                          hasf "$L/notify-send" '-u critical'
 
 # A notification nobody could take used to be `|| true` -- silence, on the one
