@@ -394,6 +394,31 @@ check "  and it names the cause a person can act on" \
 printf '0::/user.slice/user-1000.slice/session-3.scope\n' > "$CG"
 check "a shell outside app.slice altogether is a warning, not a pass" \
   has <(doctor shell-slice) '"state":"warn"'
+
+# --- the answer a ROOT shell can honestly give -------------------------------
+# doctor tells you to run itself under sudo for the rows that need root, and
+# under sudo these two are about a user manager and a shell that are not the
+# ones being asked about. Both used to answer anyway, one of them ok.
+printf '0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-graphical.slice/app-graphical-ergon\\x2dterm-1234.scope\n' > "$CG"
+check "under sudo, oom-policy says it cannot answer rather than reporting ok" \
+  has <(SUDO_USER=someone STUB_OOM_APP= doctor oom-policy) '"state":"warn"'
+check "  and it names the user to ask as" \
+  has <(SUDO_USER=someone STUB_OOM_APP= doctor oom-policy) 'as someone'
+check "under sudo, shell-slice does not answer for the root shell" \
+  has <(SUDO_USER=someone doctor shell-slice) '"state":"warn"'
+
+# --- the JSON is JSON --------------------------------------------------------
+# systemd escapes a dash in a unit name as \x2d, so the scope name of every
+# uwsm-app terminal -- which this round creates -- carries a backslash. doctor
+# escaped the quote and not the backslash, so `ergon doctor --json` on a
+# working machine emitted a string no parser accepts. Asserted by PARSING, not
+# by grepping: a grep cannot tell valid JSON from a near miss.
+command -v jq >/dev/null \
+  || { echo "jq is missing; it is in packages/pacman and this asserts with it"; exit 1; }
+check "--json parses when a scope name carries a backslash" \
+  sh -c '"$0"/bin/ergon-doctor --json 2>/dev/null | jq -e . >/dev/null' "$REPO"
+check "  and the note survives the escaping intact" \
+  sh -c '"$0"/bin/ergon-doctor --json 2>/dev/null | jq -er ".checks[]|select(.name==\"shell-slice\").note" | grep -q "ergon.x2dterm-1234.scope"' "$REPO"
 unset WAYLAND_DISPLAY
 check "outside a graphical session the row is not asked at all" \
   test -z "$(doctor shell-slice)"

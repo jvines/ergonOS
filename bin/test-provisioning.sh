@@ -132,6 +132,12 @@ cat > "$T/stub/groups" <<'EOF'
 # names a user, exactly as a real stale session only sees a live answer that
 # way too.
 [ $# -ge 1 ] || { echo "t wheel"; exit 0; }
+# $STUB_DOCKER_USER puts the membership on ONE name, which is how the sudo
+# case below can tell whose groups doctor actually asked for.
+if [ -n "${STUB_DOCKER_USER:-}" ]; then
+  [ "$1" = "$STUB_DOCKER_USER" ] && echo "t docker wheel" || echo "t wheel"
+  exit 0
+fi
 [ "${STUB_IN_DOCKER:-0}" = 1 ] && echo "t docker wheel" || echo "t wheel"
 EOF
 chmod +x "$T/stub/ergon-bundle" "$T/stub/pacman" "$T/stub/hostname" "$T/stub/groups"
@@ -337,6 +343,20 @@ printf 'DOCKER_GROUP=0\n' > "$M/hosts/testhost/host.env"
 case "$(STUB_IN_DOCKER=1 doctor docker-group)" in
   *'"state":"warn"'*"DOCKER_GROUP=0"*) ok "in the group despite DOCKER_GROUP=0 is reported as drift, not silently accepted" ;;
   *) bad "DOCKER_GROUP=0, in the group anyway: doctor said $(STUB_IN_DOCKER=1 doctor docker-group)" ;;
+esac
+
+# Under sudo -- which doctor's own firewall row tells you to use, because the
+# nftables chain cannot be read without root -- $(id -un) is root, root is in
+# no docker group, and this row reported ok about a machine whose real user
+# can become root without a password. The row that exists to catch exactly
+# that, saying the opposite, under the invocation doctor itself suggests.
+case "$(SUDO_USER=jose STUB_DOCKER_USER=jose doctor docker-group)" in
+  *'"state":"warn"'*) ok "under sudo the row is about the invoking user, not root" ;;
+  *) bad "under sudo, in the group: doctor said $(SUDO_USER=jose STUB_DOCKER_USER=jose doctor docker-group)" ;;
+esac
+case "$(SUDO_USER=jose STUB_DOCKER_USER=jose doctor docker-group)" in
+  *'gpasswd -d jose docker'*) ok "  and the command it prints names that user" ;;
+  *) bad "  the fix it printed did not name jose" ;;
 esac
 
 # Regression: this warn message used to interpolate bare $USER under

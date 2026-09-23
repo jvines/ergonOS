@@ -94,11 +94,17 @@ if [ -f "$HOSTENV" ]; then
   # shellcheck disable=SC1090
   DG=$( . "$HOSTENV" 2>/dev/null; printf '%s' "${DOCKER_GROUP:-0}" )
 fi
-if groups "$(id -un)" | grep -qw docker; then
+# And $SUDO_USER before either, because the firewall row below prints
+# "run: sudo ergon doctor" -- under which $(id -un) is root, root is in no
+# docker group, and this row would answer ok about a machine where the real
+# user can become root without a password. The one row that exists to catch
+# that, saying the opposite, under the invocation doctor itself suggests.
+WHO="${SUDO_USER:-$(id -un)}"
+if groups "$WHO" | grep -qw docker; then
   if [ "$DG" = 1 ]; then
     rec warn "docker-group" "any process in this session can become root -- the trade-off DOCKER_GROUP=1 chose for this host"
   else
-    rec warn "docker-group" "any process in this session can become root, and host.env does not declare it (DOCKER_GROUP=$DG) -- set DOCKER_GROUP=1 if that's intended, otherwise sudo gpasswd -d $(id -un) docker"
+    rec warn "docker-group" "any process in this session can become root, and host.env does not declare it (DOCKER_GROUP=$DG) -- set DOCKER_GROUP=1 if that's intended, otherwise sudo gpasswd -d $WHO docker"
   fi
 else
   rec ok "docker-group" "not in the docker group — docker needs sudo"
@@ -414,7 +420,13 @@ fi
 # does not have yet, and reading the file would certify it anyway. An empty
 # --value means there was no manager to ask, which is a different answer from
 # "auto" and must not be reported as one.
-if oom_app=$(systemctl --user show -p ManagedOOMMemoryPressure --value app.slice 2>/dev/null) \
+# Under sudo there is no user manager to ask -- `systemctl --user` exits 1 with
+# nothing on stdout, which is indistinguishable here from a machine that has no
+# user session at all. Reporting that as ok certified the policy on a laptop
+# that did not have it, under the very invocation the firewall row asks for.
+if [ -n "${SUDO_USER:-}" ]; then
+  rec warn "oom-policy" "a root shell cannot see your user manager — run 'ergon doctor' as $WHO for this row"
+elif oom_app=$(systemctl --user show -p ManagedOOMMemoryPressure --value app.slice 2>/dev/null) \
    && [ -n "$oom_app" ]; then
   case "$oom_app" in
     kill) rec ok "oom-policy" "app.slice is monitored; oomd may kill a runaway app, never the compositor (session.slice)" ;;
@@ -436,7 +448,12 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
   # cgroup v2 writes one "0::<path>" line; tail -1 is the v1 fallback picking
   # the last controller rather than nothing at all.
   cg=$(tail -1 "${ERGON_SYSROOT:-}/proc/self/cgroup" 2>/dev/null)
+  # Same reason as oom-policy above: under sudo this reads the cgroup of the
+  # sudo process in the login session, not the shell you are asking about, and
+  # would report a terminal that IS contained as one that is not.
+  [ -z "${SUDO_USER:-}" ] || cg=sudo
   case "$cg" in
+    sudo) rec warn "shell-slice" "a root shell is not the shell you are asking about — run 'ergon doctor' as $WHO for this row" ;;
     */session.slice/*) rec fail "shell-slice" "this shell is inside the compositor's unit — a job that exhausts memory here ends the session. Was the terminal started from a bind without uwsm-app?" ;;
     */app.slice/*)     rec ok   "shell-slice" "under app.slice as ${cg##*/} — a runaway job here is killed on its own" ;;
     *)                 rec warn "shell-slice" "${cg:-no cgroup} — outside app.slice, so oomd will not contain a runaway job started here" ;;
@@ -469,7 +486,7 @@ if [ "$JSON" = 1 ]; then
   for i in $(seq 0 $((n-1))); do
     [ "$i" -gt 0 ] && printf ','
     printf '{"name":"%s","state":"%s","note":"%s"}' \
-      "${R_NAME[i]}" "${R_STATE[i]}" "$(printf '%s' "${R_NOTE[i]}" | sed 's/"/\\"/g')"
+      "${R_NAME[i]}" "${R_STATE[i]}" "$(printf '%s' "${R_NOTE[i]}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   done
   printf '],"warnings":%d,"failures":%d}\n' "$warns" "$fails"
 else
