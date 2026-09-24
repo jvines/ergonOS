@@ -59,6 +59,53 @@ def load_palette(path):
     return out
 
 
+def is_light(palette):
+    """Is this palette's ground light?
+
+    The SAME test bin/ergon-theme makes (Rec. 709 relative luminance of
+    COOL_BG0, gamma-encoded, against half of 255), and deliberately so: a
+    palette that the desktop treats as light while the wallpaper treats it as
+    dark would put a Papirus-Light icon theme over a wallpaper built for a dark
+    ground, which is the mismatch this function exists to stop.
+    """
+    h = palette["COOL_BG0"].lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return (2126 * r + 7152 * g + 722 * b) / 10000 > 127
+
+
+# How far a light palette's ramp is pulled toward its own ground.
+#
+# The dark palettes arrive pre-quietened: theme/cool.env is the `cool` colormap
+# pastelised toward WHITE at 0.68, so its ramp is already soft against a dark
+# ground. The light palettes are not -- they borrow a scheme's ACCENTS, which
+# were chosen to carry small text on paper, so they are saturated mid-darks.
+# Dropped into the same pipeline they produce a magenta nodal line on cream:
+# every complaint the pastelisation was invented to answer, in reverse.
+#
+# So they get the mirror of that treatment, toward the ground instead of toward
+# white. 0.55 is where solarized-light's #D33682 stops reading as a warning and
+# starts reading as a wallpaper.
+LIGHT_CALM = 0.55
+
+# PNG encoder settings for every wallpaper this module writes.
+#
+# The encode, not the colour, is what a recolour spends its time on. Measured on
+# a real 1280x800 wallpaper, the whole palette-dependent computation -- lookup,
+# ground, blend, dither -- costs 0.17s, against 0.52s to write the file.
+#
+# compress_level 3 rather than Pillow's default 6, and the two save paths here
+# pay differently for it:
+#
+#   uncaptioned (plt.imsave)   0.429s -> 0.110s   1256 KB -> 1162 KB
+#   captioned   (fig.savefig)  0.523s -> 0.242s   1256 KB -> 1398 KB
+#
+# So it is free on the first and costs about 10% on disk on the second, which is
+# the one nearly every generator takes. That is the right side of the trade for
+# a file written once and read by a compositor: 0.28s per image per palette
+# against 140 KB, on a set where switching palette re-writes every background.
+PNG_KW = {"compress_level": 3}
+
+
 def ramp_cmap(palette, reverse=False, ramp="full"):
     """A colormap from the palette's five-step ramp, grounded in BG0.
 
@@ -66,6 +113,11 @@ def ramp_cmap(palette, reverse=False, ramp="full"):
     regions of the field land exactly on the desktop background and the image
     has no edge. A wallpaper whose corners are a slightly different dark from
     the compositor's is worse than one with no structure at all.
+
+    On a LIGHT palette the same construction inverts: the ground is the bright
+    end and the ramp runs downward into saturated accents, so sparse structure
+    disappears into the paper while dense structure becomes a hard coloured
+    line. See LIGHT_CALM.
     """
     # How many of the palette's colours the image may use.
     #
@@ -84,6 +136,25 @@ def ramp_cmap(palette, reverse=False, ramp="full"):
         stops = [palette["COOL_BG0"]] + [palette[f"COOL_{i}"] for i in range(5)]
     if reverse:
         stops = [stops[0]] + stops[1:][::-1]
+
+    # Calm a light palette's ramp toward its own ground. See LIGHT_CALM.
+    #
+    # Applied to the ramp stops only, never to stops[0]: that one IS the ground
+    # and blending it toward itself is a no-op that would only obscure the
+    # intent. Done here rather than in the palette files because it is a
+    # property of putting a scheme's accents on a wallpaper, not a correction to
+    # the scheme -- theme/solarized-light.env still reproduces Solarized's
+    # published values exactly, which theme/LICENSES.md commits us to.
+    if is_light(palette):
+        ground = stops[0].lstrip("#")
+        g_rgb = [int(ground[i:i + 2], 16) for i in (0, 2, 4)]
+        calmed = []
+        for s in stops[1:]:
+            c = s.lstrip("#")
+            v = [int(c[i:i + 2], 16) for i in (0, 2, 4)]
+            calmed.append("#%02X%02X%02X" % tuple(
+                int(round(x + (gx - x) * LIGHT_CALM)) for x, gx in zip(v, g_rgb)))
+        stops = [stops[0]] + calmed
 
     # Interpolated in LINEAR LIGHT, not in sRGB.
     #
@@ -236,22 +307,56 @@ def normalise(field, gamma=0.45, clip=99.5, scale="linear"):
     return np.clip(field / hi, 0.0, 1.0) ** gamma
 
 
+def prepare(field, gamma=0.45, scale="linear", soften=0.0, hue_smooth=0.0):
+    """The half of a render that the palette has nothing to do with.
+
+    Returns (v, hue, alpha). `alpha` is None when hue_smooth is off, which is
+    the signal to colour straight from `v`.
+
+    THIS IS THE EXPENSIVE HALF, and it is the reason this function exists
+    separately from the colouring. It holds the field (295 MB at 4K), its
+    downsample, SOFTEN's Gaussian and HUE_SMOOTH's two more -- and 47 of the 61
+    generators ask for hue_smooth, 46 for soften, so that is the normal case
+    rather than a corner of it. None of it depends on a single palette value.
+
+    Re-deriving it per palette is what made `ergon theme <name>` re-render every
+    background from scratch: measured at 1.9s per image per palette, against
+    0.4s to do this once and about half a second to colour it afterwards. Cache
+    this, colour on demand, and a palette switch stops being a render at all.
+    """
+    if soften > 0:
+        field = smooth(np.asarray(field, dtype=np.float32), soften)
+    v = normalise(field, gamma=gamma, scale=scale)
+    if hue_smooth <= 0:
+        return v, v, None
+    # DEFRINGE: hue from the neighbourhood, opacity from the pixel.
+    #
+    # The colormap reads one number as both brightness and hue, so the soft
+    # edge of a line -- lower in value than its core -- came out a different
+    # COLOUR as well as dimmer: pink core, blue edge, cyan rim. Here the hue is
+    # the value-weighted mean over a few pixels, which is the same across a
+    # line's width and along its length, and the pixel's own value only sets
+    # how far it is laid over the ground. An edge is then the line's colour
+    # fading out, not another colour. In a uniform region the two agree and
+    # nothing changes.
+    vv = v.astype(np.float32)
+    den = smooth(vv, hue_smooth)
+    num = smooth(vv * vv, hue_smooth)
+    hue = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0)
+    alpha = np.where(hue > 1e-6, np.clip(v / np.maximum(hue, 1e-6), 0, 1), 0.0)
+    return v, hue, alpha
+
+
 def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
            scale="linear", title=None, subtitle=None,
            saturation=1.0, exposure=1.0, ramp="full", soften=0.0,
            hue_smooth=0.0):
     """Write `field` as a wallpaper PNG in the palette's colours.
 
-    `blend` is how far toward full colour the structure is taken. It is well
-    below 1 on purpose: this is a surface that windows sit on top of all day,
-    and it has to stay quiet. The existing gradient uses 18%; structure carries
-    more visual weight than a gradient, so it gets less headroom than the
-    number alone suggests.
+    Thin on purpose: it is prepare() then colourise(), and it exists so that
+    generating a wallpaper for the first time and re-colouring a cached one
+    cannot drift apart. A recolour calls the second half alone.
     """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
     # SOFTEN: band-limit the field before any nonlinearity touches it.
     #
     # A line one pixel wide is not equally bright wherever it lies: centred on
@@ -263,32 +368,39 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
     # that no downsampling can remove, because it is in the image rather than
     # in the resampling. A Gaussian of ~0.8 px makes every line wide enough
     # that where it falls between pixels no longer changes its profile.
-    if soften > 0:
-        field = smooth(np.asarray(field, dtype=np.float32), soften)
-    v = normalise(field, gamma=gamma, scale=scale)
+    v, hue, alpha = prepare(field, gamma=gamma, scale=scale, soften=soften,
+                            hue_smooth=hue_smooth)
+    return colourise(v, hue, alpha, palette, out, blend=blend, reverse=reverse,
+                     ramp=ramp, saturation=saturation, exposure=exposure,
+                     title=title, subtitle=subtitle)
+
+
+def colourise(v, hue, alpha, palette, out, blend=0.55, reverse=False,
+              ramp="full", title=None, subtitle=None,
+              saturation=1.0, exposure=1.0):
+    """The half of a render that IS the palette: a lookup, a ground, a caption.
+
+    Takes prepare()'s output rather than a field, so a palette switch never
+    touches the field, the downsample or any Gaussian. Everything here is a
+    per-pixel operation on the panel-sized arrays.
+
+    `blend` is how far toward full colour the structure is taken. It is well
+    below 1 on purpose: this is a surface that windows sit on top of all day,
+    and it has to stay quiet. The existing gradient uses 18%; structure carries
+    more visual weight than a gradient, so it gets less headroom than the
+    number alone suggests.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     cmap = ramp_cmap(palette, reverse=reverse, ramp=ramp)
-    if hue_smooth > 0:
-        # DEFRINGE: hue from the neighbourhood, opacity from the pixel.
-        #
-        # The colormap reads one number as both brightness and hue, so the
-        # soft edge of a line -- lower in value than its core -- came out a
-        # different COLOUR as well as dimmer: pink core, blue edge, cyan rim.
-        # Here the hue is the value-weighted mean over a few pixels, which is
-        # the same across a line's width and along its length, and the
-        # pixel's own value only sets how far it is laid over the ground. An
-        # edge is then the line's colour fading out, not another colour. In a
-        # uniform region the two agree and nothing changes.
-        vv = v.astype(np.float32)
-        den = smooth(vv, hue_smooth)
-        num = smooth(vv * vv, hue_smooth)
-        hue = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0)
-        alpha = np.where(hue > 1e-6, np.clip(v / np.maximum(hue, 1e-6), 0, 1), 0.0)
-        del vv, den, num
+    if alpha is not None:
         g0 = np.asarray(cmap(0.0)[:3])
         rgb = g0 + (cmap(hue)[..., :3] - g0) * alpha[..., None]
-        del hue, alpha
     else:
         rgb = cmap(v)[..., :3]
+    del hue, alpha
 
     # The ground is a GRADIENT, not a flat fill.
     #
@@ -343,7 +455,7 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
     rgb = np.clip(rgb + (rng.random(rgb.shape) - 0.5) / 255.0 * 2.0, 0, 1)
 
     if not title:
-        plt.imsave(out, rgb)
+        plt.imsave(out, rgb, pil_kwargs=PNG_KW)
         return out
 
     # Caption, bottom left.
@@ -399,7 +511,7 @@ def render(field, palette, out, blend=0.55, reverse=False, gamma=0.45,
                 family="monospace", fontsize=size, va="bottom", ha="left",
                 weight="bold", path_effects=stroke)
 
-    fig.savefig(out, dpi=dpi, pad_inches=0)
+    fig.savefig(out, dpi=dpi, pad_inches=0, pil_kwargs=PNG_KW)
     plt.close(fig)
     return out
 
