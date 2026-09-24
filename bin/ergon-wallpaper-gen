@@ -51,7 +51,13 @@ case "$_want" in
   /*|./*|../*) PALETTE="$_want" ;;
   *)           PALETTE="$ERGON/theme/$_want.env" ;;
 esac
-[ -f "$PALETTE" ] || PALETTE="$ERGON/theme/cool.env"
+# Refuse, as ergon-theme and ergon-wallpaper do. This fell back to cool.env,
+# which here is worse than a wrong colour: OUTDIR is named after PAL_NAME, so an
+# unresolvable palette rendered cool-coloured images and FILED THEM UNDER cool,
+# where they then look like a legitimate cache for a palette nobody asked for.
+[ -f "$PALETTE" ] || {
+  echo "no palette '$_want' (try: ergon theme --list)" >&2; exit 1
+}
 PAL_NAME=$(basename "$PALETTE" .env)
 
 OUTDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/backgrounds/$PAL_NAME"

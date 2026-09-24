@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# The background follows the palette. That is the whole subject of this file.
+#
+#   ./bin/test-wallpaper.sh
+#
+# Seconds, no compositor, no imagemagick, no VM. `magick` is a stub that records
+# the arguments it was handed and writes its output file, so every assertion
+# here is about the colours that WOULD have been painted -- which is the claim,
+# and is not the same claim as "a wallpaper.png exists".
+#
+# That distinction is why this file exists. The VM suite has asserted since the
+# beginning that the wallpaper is generated and that hyprpaper maps a background
+# layer (test/arch-vm/guest-desktop.sh:1619-1645), and both were true the whole
+# time the background was ignoring the palette:
+#
+#   - the generated gradient was cached with `[ "$OUT" -nt "$PALETTE" ]`, and a
+#     palette SWITCH does not touch any mtime -- theme/gruvbox.env was written
+#     when the repo was cloned -- so a gradient rendered from cool was "newer
+#     than the palette" and kept. Only ergon-theme's --force rebuilt it, and
+#     that call is gated on HYPRLAND_INSTANCE_SIGNATURE, so `ergon theme` from
+#     a tty, over ssh, or with --no-apply (install.sh, the VM harness) left the
+#     desktop on the previous palette's background.
+#   - a chosen IMAGE is remembered as an absolute path into a per-palette
+#     directory, and the only test applied to it was that the file still
+#     existed. backgrounds/cool/clifford.png exists after switching to gruvbox,
+#     so it stayed selected while backgrounds/gruvbox/clifford.png sat there.
+#   - and an unresolvable palette silently became cool in both ergon-wallpaper
+#     and ergon-wallpaper-gen, where ergon-theme refuses and says so.
+#
+# COVERS: the gradient carries the active palette's own colours; a switch, an
+# edit and a resize each rebuild it; an unchanged palette does not; a chosen
+# image follows the switch to the same image under the new palette, and falls
+# back to the gradient when there is none; a deleted image still falls back; an
+# unknown palette is refused rather than silently answered with cool.
+#
+# DOES NOT COVER: that the resulting image looks good, that imagemagick's
+# sparse-color produces the ramp the arguments describe, or that hyprpaper maps
+# it. The VM suite owns the last of those; the first is a person's judgement.
+set -uo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+PASS=0; FAIL=0
+ok()  { PASS=$((PASS + 1)); printf '   ok   %s\n' "$*"; }
+bad() { FAIL=$((FAIL + 1)); printf '   FAIL %s\n' "$*"; }
+check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi; }
+
+# --- a throwaway ergonOS holding only what the wallpaper path reads ----------
+E=$T/ergon
+mkdir -p "$E/bin" "$E/theme" "$T/stub" "$T/home" "$T/log"
+cp "$REPO/bin/ergon-wallpaper" "$REPO/bin/ergon-wallpaper-gen" "$E/bin/"
+# Three palettes with visibly different grounds and ramps, so an assertion that
+# the wrong one was used cannot pass by coincidence.
+cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/nord.env" "$E/theme/"
+
+# The stub records its whole argv and writes the file it was asked for, because
+# both halves are load-bearing: the colours prove which palette was used, and
+# the file existing is what the caching path then reasons about.
+cat > "$T/stub/magick" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/magick"
+printf 'PNGSTUB\n' > "${@: -1}"
+EOF
+# Nothing here may reach a real compositor. hyprpaper in particular is STARTED
+# by ergon-wallpaper, so an unstubbed run would leave one behind per assertion.
+#
+# These SUCCEED, and that is not laziness. ergon-wallpaper's delivery path ends
+# in `for _ in $(seq 15); do hyprctl ... || sleep 1; done`, so a stub that fails
+# costs fifteen seconds per invocation -- with the twenty-odd runs below, this
+# file took over five minutes and was killed by its own timeout before it was
+# written this way. A pgrep that says hyprpaper is already up and an hyprctl
+# that accepts the image take the preload path, which has no sleep in it at all.
+# Nothing here asserts on hyprpaper; the VM suite owns that.
+for c in hyprctl pkill pgrep; do
+  cat > "$T/stub/$c" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "\$TEST_ROOT/log/$c"
+EOF
+done
+# Except this one, which must never run: reaching it means the fast path above
+# was not taken and a real daemon would have been spawned.
+cat > "$T/stub/hyprpaper" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/hyprpaper"
+EOF
+chmod +x "$T/stub"/* "$E/bin"/*
+
+export TEST_ROOT="$T" PATH="$T/stub:$PATH" HOME="$T/home" \
+       XDG_STATE_HOME="$T/state" XDG_CONFIG_HOME="$T/config" \
+       XDG_DATA_HOME="$T/data" XDG_RUNTIME_DIR="$T"
+mkdir -p "$T/state/ergon"
+
+# Same guard test-theme.sh uses, and for the same reason: a stub that is not
+# first on PATH turns this file into a slow way of rendering real wallpapers.
+for c in magick hyprpaper pgrep; do
+  [ "$(command -v "$c")" = "$T/stub/$c" ] \
+    || { echo "stub for $c is not first on PATH; refusing to run anything"; exit 1; }
+done
+
+pal()  { printf '%s\n' "$1" > "$T/state/ergon/palette"; }
+run()  { ERGON="$E" "$E/bin/ergon-wallpaper" "$@" >/dev/null 2>&1; }
+# The colours the last magick run was handed, as one string.
+cols() { grep -oE '#[0-9A-Fa-f]{6}' <<<"$(tail -1 "$T/log/magick" 2>/dev/null)" | tr '\n' ' '; }
+runs() { wc -l < "$T/log/magick" 2>/dev/null || echo 0; }
+bgst() { cat "$T/state/ergon/background" 2>/dev/null; }
+
+# Read out of the palette files rather than written here, so this cannot drift
+# from theme/ the way a second copy of a mapping always does.
+hex() { sed -n "s/^$2=\(#[0-9A-Fa-f]\{6\}\).*/\1/p" "$E/theme/$1.env" | head -1; }
+want() { printf '%s %s %s ' "$(hex "$1" COOL_BG0)" "$(hex "$1" COOL_0)" "$(hex "$1" COOL_4)"; }
+
+echo
+echo "== the generated gradient carries the ACTIVE palette"
+for p in cool gruvbox nord; do
+  pal "$p"; run
+  check "$p renders $(want "$p")" test "$(cols)" = "$(want "$p")"
+done
+
+# The regression itself. Ordering matters: cool is rendered, then gruvbox is
+# selected without --force, which is exactly what `ergon theme gruvbox` from a
+# tty leaves behind.
+echo
+echo "== switching palette rebuilds it, without --force"
+pal cool;    run
+pal gruvbox; run
+check "cool -> gruvbox repaints the background" test "$(cols)" = "$(want gruvbox)"
+
+echo
+echo "== and an unchanged palette does NOT"
+pal cool; run
+_n=$(runs); run
+check "a second run paints nothing" test "$(runs)" = "$_n"
+
+echo
+echo "== editing the palette in use rebuilds it"
+sed -i 's/^COOL_0=.*/COOL_0=#00FF00/' "$E/theme/cool.env"
+run
+check "an edited ramp reaches the gradient" test "${cols:-$(cols)}" = "$(want cool)"
+check "  and the edit is the colour asserted"  test "$(hex cool COOL_0)" = "#00FF00"
+
+echo
+echo "== a resize rebuilds it"
+# Through the state stamp, not through an argument: passing WIDTHxHEIGHT always
+# rebuilds, so it would prove nothing about the cache.
+_n=$(runs)
+sed -i 's/ [0-9]*x[0-9]* / 1280x800 /' "$T/data/ergon/wallpaper.png.from" 2>/dev/null \
+  || sed -i 's/ [0-9]*x[0-9]* / 1280x800 /' "$T/home/.local/share/ergon/wallpaper.png.from"
+run
+check "a panel size that does not match the stamp repaints" test "$(runs)" -gt "$_n"
+
+echo
+echo "== a chosen image follows the palette"
+D="$T/data/ergon/backgrounds"
+mkdir -p "$D/cool" "$D/gruvbox"
+printf 'PNGSTUB\n' > "$D/cool/clifford.png"
+printf 'PNGSTUB\n' > "$D/gruvbox/clifford.png"
+pal cool; run --next
+check "an image is selected under cool"          test "$(bgst)" = "$D/cool/clifford.png"
+pal gruvbox; run
+check "  and the SAME image under gruvbox after the switch" \
+  test "$(bgst)" = "$D/gruvbox/clifford.png"
+pal nord; run
+check "  falling back to the gradient where the palette has none" \
+  test "$(bgst)" = ":generated:"
+
+echo
+echo "== a remembered image that was deleted still falls back"
+pal cool; run --next
+rm -f "$D/cool/clifford.png"
+run
+check "a deleted background does not leave the desktop bare" test "$(bgst)" = ":generated:"
+
+echo
+echo "== an unknown palette is refused, not answered with cool"
+pal nonesuch
+# Counted, not compared against cool's colours: nothing was painted, so the last
+# line of the log is still the PREVIOUS run's -- which was cool, so a colour
+# comparison here passes whether the refusal works or not. The only honest
+# question is whether magick ran at all.
+_n=$(runs)
+_out=$(ERGON="$E" "$E/bin/ergon-wallpaper" --force 2>&1); _rc=$?
+check "ergon-wallpaper exits non-zero"   test "$_rc" -ne 0
+check "  and names the palette"          grep -q "nonesuch" <<<"$_out"
+check "  and painted nothing at all"     test "$(runs)" = "$_n"
+# ergon-wallpaper-gen files its output under the palette's NAME, so falling back
+# to cool there wrote cool-coloured images into cool's own cache directory,
+# where nothing afterwards could tell them from legitimate ones.
+#
+# Its venv guard runs before the palette resolves -- correctly, it needs numpy
+# either way -- so the stub below is what lets this reach the check under test
+# rather than stopping at "no python".
+mkdir -p "$T/data/pyfleet/bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$T/data/pyfleet/bin/python"
+chmod +x "$T/data/pyfleet/bin/python"
+_out=$(ERGON="$E" "$E/bin/ergon-wallpaper-gen" --recolour 2>&1); _rc=$?
+check "ergon-wallpaper-gen exits non-zero" test "$_rc" -ne 0
+check "  and names the palette"            grep -q "nonesuch" <<<"$_out"
+
+# --- negative control --------------------------------------------------------
+# Everything above is a string comparison against a palette file, and a bug in
+# hex()/want() would make every one of them compare "" with "" and pass. Prove
+# the comparison can fail before believing that it passed.
+echo
+echo "== the assertions can fail"
+pal cool; run
+check "cool's gradient is NOT gruvbox's colours" test "$(cols)" != "$(want gruvbox)"
+check "the palette reader returns something"     test -n "$(want cool)"
+
+printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

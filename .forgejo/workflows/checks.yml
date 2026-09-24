@@ -125,6 +125,16 @@ jobs:
       - name: A palette switch reaches the running desktop
         run: cd "$CI_DIR" && ./bin/test-theme.sh
 
+      # And the background follows the palette, which is the half the step above
+      # does not touch. The wallpaper is the largest surface on the screen and
+      # the only themed one that is not rendered from a .in template, so nothing
+      # in the render or parse checks looks at it: it cached on an mtime that a
+      # palette switch does not move, and it kept the previous palette's image
+      # because that file still existed. Both passed every check in this file.
+      # Stubs magick, so it costs no render and needs no imagemagick.
+      - name: The background follows the palette
+        run: cd "$CI_DIR" && ./bin/test-wallpaper.sh
+
       # Every desktop config through the parser that will actually read it.
       # This existed and was wired into nothing, which is how a config could be
       # rejected by Hyprland and still pass every check in this file.

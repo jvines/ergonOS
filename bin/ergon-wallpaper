@@ -80,7 +80,19 @@ case "$_want" in
   /*|./*|../*) PALETTE="$_want" ;;
   *)           PALETTE="$ERGON/theme/$_want.env" ;;
 esac
-[ -f "$PALETTE" ] || PALETTE="$ERGON/theme/cool.env"
+# NOT a fallback to cool.env, which is what this line was.
+#
+# ergon-theme refuses a palette it cannot find and says which one. This drew the
+# cool gradient instead and said nothing, so a machine whose palette had been
+# renamed, removed, or hand-written into the state file came up in cool under a
+# desktop rendered from something else -- the one failure mode that is
+# indistinguishable from the feature working. The state file is written only by
+# ergon-theme, which validates before writing it, so reaching here means the
+# selection is genuinely broken and the background is the last thing that should
+# paper over it.
+[ -f "$PALETTE" ] || {
+  echo "no palette '$_want' (try: ergon theme --list)" >&2; exit 1
+}
 # shellcheck source=/dev/null
 . "$PALETTE"
 
@@ -161,12 +173,40 @@ case "$ACTION" in
       fi
     fi ;;
   *)
-    # A remembered image that has since been deleted must not leave the desktop
-    # with no wallpaper at all; fall back to the one thing that always exists.
-    if [ "$_cur" != "$GENERATED" ] && [ ! -f "$_cur" ]; then
+    # The remembered background has to BELONG TO the palette in use, and until
+    # now the only thing asked of it was that the file still existed.
+    #
+    # It is stored as an absolute path, and generated backgrounds live in
+    # per-palette directories, so after `ergon theme gruvbox` the remembered
+    # path still points into backgrounds/cool/. That file does exist, so the
+    # old test kept it and the palette switch was invisible on the largest
+    # surface on the screen. Measured: cool -> gruvbox left
+    # backgrounds/cool/clifford.png selected with backgrounds/gruvbox/clifford.png
+    # already rendered and sitting there unused.
+    #
+    # So the question is membership of CANDIDATES, which is already built from
+    # the active palette's directories. When the remembered image is not in it,
+    # the SAME IMAGE under the new palette is what was meant -- the choice was
+    # Clifford, not that path, and ergon-wallpaper-gen renders every cached
+    # field into every palette's directory under the same basename. Failing
+    # that, the generated gradient, which is the one candidate that always
+    # exists. Deleting the remembered image still lands on the same fallback,
+    # which is what this branch did before and still has to do.
+    if [ "$_cur" = "$GENERATED" ]; then
       WANT="$GENERATED"
     else
-      WANT="$_cur"
+      WANT=""
+      for _k in "${CANDIDATES[@]}"; do
+        [ "$_k" = "$_cur" ] && { WANT="$_cur"; break; }
+      done
+      if [ -z "$WANT" ]; then
+        _base=${_cur##*/}
+        for _k in "${CANDIDATES[@]}"; do
+          [ "$_k" = "$GENERATED" ] && continue
+          [ "${_k##*/}" = "$_base" ] && { WANT="$_k"; break; }
+        done
+      fi
+      [ -n "$WANT" ] || WANT="$GENERATED"
     fi ;;
 esac
 
@@ -208,14 +248,33 @@ mkdir -p "$(dirname "$OUT")"
 # PNG's filters completely and takes this file from 324 KB to 29 MB. At an 18%
 # blend the tonal range is narrow enough that there is nothing much to band.
 # Rendering is a multi-megapixel magick run, and autostart calls this on every
-# session. Skip it when the file is already there and no older than the palette
-# it came from -- edit theme/cool.env and the next run rebuilds it.
+# session, so it is skipped when the image on disk is already the one this run
+# would produce.
 if [ "$WANT" = "$GENERATED" ]; then
 ACTIVE="$OUT"
-# Compared against $PALETTE, not theme/cool.env. Hardcoding cool.env meant
-# switching palettes did not make the rendered gradient stale, so it was only
-# ever rebuilt because ergon-theme passes --force.
-if [ "$FORCE" = 0 ] && [ -z "${1:-}" ] && [ -s "$OUT" ] && [ "$OUT" -nt "$PALETTE" ]; then
+# WHAT the cached gradient was made from, not HOW OLD it is.
+#
+# This was `[ "$OUT" -nt "$PALETTE" ]`, and an mtime comparison cannot see a
+# palette SWITCH. theme/gruvbox.env was written when the repo was cloned, so a
+# wallpaper.png rendered from cool minutes ago is "newer than the palette" and
+# was kept: measured with a stubbed magick, cool -> gruvbox printed
+# "(unchanged)" and left #1A1A2E/#ADFFFF/#FFADFF on a gruvbox desktop. Changing
+# the comparand from cool.env to $PALETTE, which is what the note here used to
+# describe, fixed EDITING a palette and never fixed switching to one.
+#
+# It stayed hidden because ergon-theme's apply step passes --force -- and that
+# step is gated on HYPRLAND_INSTANCE_SIGNATURE, so every --no-apply caller
+# (install.sh, the VM harness) and every `ergon theme` run from a tty or over
+# ssh left the background on the previous palette until something forced it.
+#
+# A stamp of what actually went into the image answers both questions the mtime
+# was standing in for -- switched palette and edited palette -- and adds the
+# panel size, which the mtime never covered at all: docking to a larger monitor
+# kept the smaller render.
+STAMP="$OUT.from"
+_stamp="$_pal_name $COOL_BG0 $COOL_0 $COOL_4 $SIZE $DITHER_PCT"
+if [ "$FORCE" = 0 ] && [ -z "${1:-}" ] && [ -s "$OUT" ] \
+   && [ "$(cat "$STAMP" 2>/dev/null || true)" = "$_stamp" ]; then
   echo "  $OUT  (unchanged)"
 else
   # DITHER is the last step and it is not optional: an 18% blend spans only a
@@ -251,6 +310,10 @@ else
       -compose blend -define compose:args="$DITHER_PCT" -composite \
       "$OUT"
   fi
+  # AFTER the render, never before: a magick that dies half way through leaves
+  # a truncated PNG, and a stamp written up front would then certify it as
+  # current for every later run.
+  printf '%s\n' "$_stamp" > "$STAMP"
   echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
 fi
 fi
