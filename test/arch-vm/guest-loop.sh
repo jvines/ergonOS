@@ -332,7 +332,16 @@ PTEST
       # sync stays with `theme`.
       rsync -a /mnt/bin/ "$H/ergonOS/bin/" 2>/dev/null || true
       rsync -a /mnt/theme/ "$H/ergonOS/theme/" 2>/dev/null || true
-      chown -R "$U:$U" "$H/ergonOS/bin" "$H/ergonOS/theme"
+      # wallpaper/ too, and it is not optional. The background is the largest
+      # themed surface and NONE of the code that re-colours it lives in bin/:
+      # wallpaper/lib.py decides how a field becomes colour, render.py bakes the
+      # palette-independent half and recolour.py applies the palette. Leaving it
+      # out meant a palette switch ran whatever was copied in at boot -- measured
+      # on 2026-09-24, the guest held 9 generator modules against 61 on the
+      # share, so every palette got 9 backgrounds and no amount of fixing the
+      # renderer on the host changed what the VM did with it.
+      rsync -a /mnt/wallpaper/ "$H/ergonOS/wallpaper/" 2>/dev/null || true
+      chown -R "$U:$U" "$H/ergonOS/bin" "$H/ergonOS/theme" "$H/ergonOS/wallpaper"
       run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme $_arg" >> /out/reply 2>&1
       sleep 3
       ;;
