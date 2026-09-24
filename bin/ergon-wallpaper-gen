@@ -42,25 +42,33 @@ _generators() {
 
 # The palette resolves exactly as it does in ergon-theme and ergon-wallpaper,
 # so a generated image is filed under the palette that coloured it.
-_state="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette"
-if [ -n "${ERGON_PALETTE:-}" ]; then _want="$ERGON_PALETTE"
-elif [ -f "$_state" ];          then _want=$(cat "$_state")
-else                                 _want=cool
-fi
-case "$_want" in
-  /*|./*|../*) PALETTE="$_want" ;;
-  *)           PALETTE="$ERGON/theme/$_want.env" ;;
-esac
-# Refuse, as ergon-theme and ergon-wallpaper do. This fell back to cool.env,
-# which here is worse than a wrong colour: OUTDIR is named after PAL_NAME, so an
-# unresolvable palette rendered cool-coloured images and FILED THEM UNDER cool,
-# where they then look like a legitimate cache for a palette nobody asked for.
-[ -f "$PALETTE" ] || {
-  echo "no palette '$_want' (try: ergon theme --list)" >&2; exit 1
+#
+# A FUNCTION, because this run does not keep the answer it started with. The
+# expensive work is done under a lock, and whoever holds that lock serves
+# whichever palette is current when it gets there -- see _recolour().
+PALETTE_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette"
+_resolve_palette() {
+  local _want
+  if [ -n "${ERGON_PALETTE:-}" ]; then _want="$ERGON_PALETTE"
+  elif [ -f "$PALETTE_STATE" ];   then _want=$(cat "$PALETTE_STATE")
+  else                                 _want=cool
+  fi
+  case "$_want" in
+    /*|./*|../*) PALETTE="$_want" ;;
+    *)           PALETTE="$ERGON/theme/$_want.env" ;;
+  esac
+  # Refuse, as ergon-theme and ergon-wallpaper do. This fell back to cool.env,
+  # which here is worse than a wrong colour: OUTDIR is named after PAL_NAME, so
+  # an unresolvable palette rendered cool-coloured images and FILED THEM UNDER
+  # cool, where they then look like a legitimate cache for a palette nobody
+  # asked for.
+  [ -f "$PALETTE" ] || {
+    echo "no palette '$_want' (try: ergon theme --list)" >&2; return 1
+  }
+  PAL_NAME=$(basename "$PALETTE" .env)
+  OUTDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/backgrounds/$PAL_NAME"
 }
-PAL_NAME=$(basename "$PALETTE" .env)
-
-OUTDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/backgrounds/$PAL_NAME"
+_resolve_palette || exit 1
 
 # Fields are kept, and they are PALETTE-INDEPENDENT.
 #
@@ -117,10 +125,16 @@ fi
 _render() {
   local gen="$1" seed="${2:-0}"
   mkdir -p "$OUTDIR" "$FIELDDIR"
+  # --save-prepared alongside --save-field, because this is the only command in
+  # the tree that ever creates a field, and a field without its prepared entry
+  # means the NEXT palette switch has to bake all of them -- which is the
+  # two-minute lock hold that starved every other palette of its backgrounds.
+  mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/ergon/prepared"
   "$PY" "$GENDIR/render.py" \
     --generator "$gen" --palette "$PALETTE" \
     --size "$SIZE" --seed "$seed" \
     --save-field "$FIELDDIR/$gen-$seed-$SIZE.npy" \
+    --save-prepared "${XDG_DATA_HOME:-$HOME/.local/share}/ergon/prepared/$gen-$seed.npz" \
     --out "$OUTDIR/$gen-$seed.png"
 }
 
@@ -140,28 +154,54 @@ _still_current() {
 }
 
 _recolour() {
-  local made=0 gen seed fsize f base
+  local gen seed fsize f base
 
   # One at a time. flock is not about corruption -- two runs write different
   # palettes' files -- but about not having four of them competing for the CPU
   # of a machine whose desktop is meant to stay responsive.
   local lock="${XDG_RUNTIME_DIR:-/tmp}/ergon-recolour.lock"
-  # WAIT for the lock rather than giving up on it.
-  #
-  # Skipping when busy looked right and was wrong: cycling palettes starts a
-  # run per switch, the first one holds the lock, and every later run -- 
-  # including the one for the palette actually chosen -- exits immediately. The
-  # desktop then keeps whichever palette happened to win the race, which reads
-  # exactly like the background reverting.
-  #
-  # Queue instead. Each run re-checks the active palette once it holds the
-  # lock, so the superseded ones cost a process and nothing else, and the last
-  # switch is the one that does the work.
+  # WAIT for the lock, and KEEP waiting while this palette is still the one in
+  # use. `flock -w 120 || return 0` was a silent no-op dressed as a wait: a full
+  # pass measured 119.4s in the VM, so a switch landing during one timed out at
+  # the finish line and returned having generated nothing -- and nothing ever
+  # came back for it. Measured, on chiki, 2026-09-24: of nineteen palettes, six
+  # had zero backgrounds, four had two or nine, three had the full sixty-nine.
   if command -v flock >/dev/null 2>&1; then
     exec 9>"$lock"
-    flock -w 120 9 || { echo "  timed out waiting for another recolour"; return 0; }
+    local _waited=0
+    until flock -w 20 9; do
+      _waited=$((_waited + 20))
+      # Give up only when this palette is no longer wanted -- then the run that
+      # IS current owns the problem, and a second worker would only fight it.
+      _still_current || { echo "  another recolour has the lock and the palette has moved on"; return 0; }
+      [ "$_waited" -ge 300 ] && { echo "  gave up waiting for the recolour lock after ${_waited}s" >&2; return 0; }
+      echo "  waiting for another recolour (${_waited}s)"
+    done
   fi
-  _still_current || { echo "  palette changed before starting; nothing to do"; return 0; }
+
+  # WHOEVER HOLDS THE LOCK SERVES WHOEVER IS CURRENT.
+  #
+  # This run resolved a palette at startup and then spent its life asking
+  # whether it was still wanted -- and answering "no" by doing nothing at all,
+  # before even creating the output directory. Every palette flicked past during
+  # a comparison got exactly that: no directory, no images, and no second
+  # chance. Inverted here: take the lock first, then ask what to paint, and if
+  # the answer changes while painting, paint the new one rather than exiting.
+  local _rounds=0
+  while :; do
+    _resolve_palette || return 1
+    _recolour_once
+    _rounds=$((_rounds + 1))
+    _still_current && break
+    if [ "$_rounds" -ge 4 ]; then
+      echo "  the palette is still moving after $_rounds rounds; leaving the rest to the next switch"
+      break
+    fi
+  done
+}
+
+_recolour_once() {
+  local made=0 gen seed fsize f base
   [ -d "$FIELDDIR" ] || { echo "  no cached fields yet"; return 0; }
   mkdir -p "$OUTDIR"
   # The one currently on screen FIRST. Re-colouring the whole set takes as long
@@ -196,7 +236,11 @@ _recolour() {
     gen=${base%-*-*}; seed=${base#"$gen"-}; seed=${seed%-*}
     _generators | grep -qx "$gen" || continue
     [ -s "$PREPDIR/$gen-$seed.npz" ] && continue
-    _still_current || { echo "  palette changed; stopping"; return 0; }
+    # A switch, mid-bake. BREAK rather than return: everything baked so far is
+    # kept (the prepared cache is palette-independent, so it is never wasted),
+    # and the caller re-resolves and comes straight back for whoever is current
+    # now. Returning here is what left a palette with no directory at all.
+    _still_current || break
     # nice + ionice: this is bulk work that must never make the session it is
     # decorating feel slow. Eight 4K matplotlib renders will saturate a laptop
     # -- measured by doing exactly that inside the test VM and making its
@@ -209,6 +253,14 @@ _recolour() {
       --from-field "$f" --save-prepared "$PREPDIR/$gen-$seed.npz" \
       --out "$OUTDIR/$gen-$seed.png" >/dev/null && made=$((made+1))
   done
+
+  if [ "$made" -gt 0 ]; then echo "  baked $made new prepared field(s)"; fi
+
+  # Superseded during the bake: go back to the caller, which re-resolves and
+  # runs again for the palette that is current now. Doing the 120-second full
+  # pass for a palette nobody is looking at is exactly what made the next one
+  # wait out `flock -w 120` and give up.
+  _still_current || return 0
 
   # THE ONE BEING LOOKED AT, on its own and first.
   #
@@ -226,10 +278,27 @@ _recolour() {
   fi
 
   # And the rest, in ONE process rather than one per image.
-  _still_current || { echo "  palette changed; stopping"; return 0; }
+  #
+  # --expect/--palette-state make that process INTERRUPTIBLE, which is the
+  # difference between this working and not. Measured in the VM: 69 images in
+  # 119.4 seconds, against the `flock -w 120` above -- so every switch arriving
+  # during a full pass waited out the entire set and then timed out having done
+  # nothing, and its palette ended up with an empty directory. Now the holder
+  # stops within one image of a switch and hands the lock over.
+  local _rc=0
   nice -n 19 ionice -c3 "$PY" "$GENDIR/recolour.py" \
-    --palette "$PALETTE" --cache "$PREPDIR" --out "$OUTDIR" | sed 's/^/  /'
-  echo "  backgrounds for $PAL_NAME are in $OUTDIR"
+    --palette "$PALETTE" --cache "$PREPDIR" --out "$OUTDIR" \
+    --expect "$PAL_NAME" --palette-state "$PALETTE_STATE" | sed 's/^/  /' || _rc=$?
+  [ "$_rc" = 0 ] || echo "  the recolour exited $_rc; see above" >&2
+
+  # N of M, out loud. The count was computed and dropped on the floor before,
+  # and the only way to find out that a palette had two backgrounds and another
+  # had sixty-nine was to cycle through them and notice. A palette short of the
+  # prepared set is a fact this script knows and should say.
+  local _have _want
+  _have=$(find "$OUTDIR" -maxdepth 1 -name '*.png' 2>/dev/null | wc -l)
+  _want=$(find "$PREPDIR" -maxdepth 1 -name '*.npz' 2>/dev/null | wc -l)
+  echo "  $_have of $_want backgrounds for $PAL_NAME in $OUTDIR"
 
   # Put the equivalent background back on screen: the user was looking at, say,
   # lorenz, and after a palette switch they should still be looking at lorenz

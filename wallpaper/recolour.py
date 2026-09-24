@@ -48,7 +48,33 @@ def main():
                     help="one <gen>-<seed>, for the background actually on screen")
     ap.add_argument("--force", action="store_true",
                     help="rewrite images that are already newer than their cache entry")
+    # Interruptible, because this run holds a lock that the NEXT palette switch
+    # has to wait for. Measured in the VM: 69 images in 119.4s, against a
+    # `flock -w 120` in ergon-wallpaper-gen -- so a switch arriving one image in
+    # waits out the whole set and then gives up having done nothing, and its
+    # palette gets no backgrounds at all. One stat per image ends that: this
+    # process stops within one image of a switch, the waiter gets the lock in
+    # seconds, and the palette the user actually chose is the one that is served.
+    ap.add_argument("--expect", default=None,
+                    help="the palette name this run is for; with --palette-state, stop "
+                         "as soon as a different palette is chosen")
+    ap.add_argument("--palette-state", default=None,
+                    help="file holding the active palette name or path")
     args = ap.parse_args()
+
+    def superseded():
+        """The active palette, if it is no longer the one this run is for."""
+        if not (args.expect and args.palette_state):
+            return None
+        try:
+            with open(args.palette_state) as fh:
+                now = fh.read().strip()
+        except OSError:
+            return None
+        now = os.path.basename(now)
+        if now.endswith(".env"):
+            now = now[:-4]
+        return now if now and now != args.expect else None
 
     palette = lib.load_palette(args.palette)
     for key in ("COOL_BG0", "COOL_0", "COOL_4"):
@@ -65,6 +91,11 @@ def main():
     t0 = time.time()
     done = skipped = failed = 0
     for name in names:
+        other = superseded()
+        if other:
+            print(f"   {args.expect} superseded by {other} after {done} "
+                  f"re-coloured; stopping so it can have the lock")
+            break
         src = os.path.join(args.cache, name + ".npz")
         dst = os.path.join(args.out, name + ".png")
         # Newer than its input is up to date. The palette is part of the input

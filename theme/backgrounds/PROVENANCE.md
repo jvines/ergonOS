@@ -33,6 +33,23 @@ theirs and is never touched by this repo.
     theme/backgrounds/<file>              shown for every palette
     theme/backgrounds/<palette>/<file>    shown only for that palette
 
+## In the cycle, but not shipped
+
+`bin/ergon-wallpaper` also offers `/usr/share/hypr/wall*.png` — the mascot art
+the **hyprland package** installs, the same images its
+`misc:disable_hyprland_logo` option turns off as an automatic background. They
+are in the cycle so they can be chosen deliberately.
+
+This is not an exception to the rule above, it is outside it. Nothing here
+copies, renames or redistributes them: they are on the machine because hyprland
+is installed, hyprpaper is handed the package's own path, and removing the
+package removes them. The rule governs what **this repository** hands to someone
+who installs it.
+
+`ERGON_HYPR_WALLPAPERS` repoints that directory; on a machine without hyprland
+it is absent and is skipped. Only `wall*.png` is taken: the same directory
+holds `lockdead.png`, which is what hyprlock shows when it has crashed.
+
 ## Table
 
 | file | source | author | licence | notes |

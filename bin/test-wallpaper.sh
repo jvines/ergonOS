@@ -263,6 +263,93 @@ _out=$(ERGON="$E" "$E/bin/ergon-wallpaper-gen" --recolour 2>&1); _rc=$?
 check "ergon-wallpaper-gen exits non-zero" test "$_rc" -ne 0
 check "  and names the palette"            grep -q "nonesuch" <<<"$_out"
 
+# --- a palette switched to mid-recolour is served, not discarded ---------------
+# The bug this is here for: ergon-wallpaper-gen resolved its palette at startup
+# and then, if a switch had landed, returned 0 before even creating the output
+# directory. Measured on chiki 2026-09-24, cycling nineteen palettes: six had
+# zero backgrounds, four had two or nine, three had the full set. The worker now
+# takes the lock FIRST and serves whoever is current, round after round.
+echo
+echo "== a palette switched to mid-recolour still gets its backgrounds"
+V=$T/venv/bin; mkdir -p "$V"
+FIELDS=$T/data/ergon/fields          # XDG_DATA_HOME, as exported at the top
+PREP=$T/data/ergon/prepared
+BGS=$T/data/ergon/backgrounds
+mkdir -p "$FIELDS" "$PREP" "$E/wallpaper"
+for g in lorenz clifford ikeda; do
+  : > "$FIELDS/$g-0-100x100.npy"
+  echo cached > "$PREP/$g-0.npz"
+  printf 'def generate():\n    pass\n' > "$E/wallpaper/$g.py"
+done
+
+# Stands in for recolour.py. It writes one PNG per cache entry, and on its FIRST
+# full pass it flips the palette state and stops -- which is exactly what the
+# real one now does when --expect stops matching --palette-state.
+cat > "$V/python" <<'PYEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+script=${1:-}; shift || true
+out=""; expect=""; state=""; only=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out)           out=$2;    shift 2 ;;
+    --expect)        expect=$2; shift 2 ;;
+    --palette-state) state=$2;  shift 2 ;;
+    --only)          only=$2;   shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$script" in
+  *recolour.py)
+    echo "$expect" >> "$TEST_ROOT/log/recolour-rounds"
+    mkdir -p "$out"
+    if [ -n "$only" ]; then : > "$out/$only.png"; exit 0; fi
+    if [ "$(wc -l < "$TEST_ROOT/log/recolour-rounds")" = 1 ] && [ -n "$state" ]; then
+      echo nord > "$state"                      # a switch lands mid-pass
+      echo "   $expect superseded by nord"
+      exit 0
+    fi
+    for f in "$TEST_ROOT/data/ergon/prepared"/*.npz; do
+      : > "$out/$(basename "$f" .npz).png"
+    done ;;
+esac
+PYEOF
+chmod +x "$V/python"
+
+pal cool                              # the state file this suite already owns
+: > "$T/log/recolour-rounds"
+# env -u ERGON_PALETTE: an earlier case exports it as an unresolvable name, and
+# it takes precedence over the state file this case is about.
+env -u ERGON_PALETTE PYFLEET_VENV=$T/venv XDG_RUNTIME_DIR=$T ERGON="$E" \
+  "$E/bin/ergon-wallpaper-gen" --recolour > "$T/log/gen.out" 2>&1 || true
+
+check "the palette switched to mid-pass gets a directory" test -d "$BGS/nord"
+check "  and all of its backgrounds"  test "$(find "$BGS/nord" -name '*.png' | wc -l)" -eq 3
+check "  because the worker came back for it" \
+      test "$(wc -l < "$T/log/recolour-rounds")" -ge 2
+check "  and it says how many of how many" grep -q "of 3 backgrounds for nord" "$T/log/gen.out"
+
+# --- the compositor's own wallpapers ------------------------------------------
+# hyprland ships wall0-2.png, and ergon-wallpaper offers them so they can be
+# chosen. The same directory ships lockdead.png and lockdead2.png, which are
+# what hyprlock draws when it has CRASHED -- a directory sweep took those too,
+# and only running it said so. Hence a test, by name.
+echo
+echo "== the wallpapers hyprland ships"
+HW=$T/usr-share-hypr
+mkdir -p "$HW"
+: > "$HW/wall0.png"; : > "$HW/wall1.png"; : > "$HW/wall2.png"
+: > "$HW/lockdead.png"; : > "$HW/lockdead2.png"
+pal cool
+_list=$(ERGON_HYPR_WALLPAPERS="$HW" HOME=$T/home XDG_RUNTIME_DIR=$T ERGON="$E" \
+        "$E/bin/ergon-wallpaper" --list 2>&1)
+check "wall0-2 are offered"                 test "$(grep -c '/wall[0-9]\.png$' <<<"$_list")" -eq 3
+check "  lockdead is NOT offered"           test "$(grep -c 'lockdead' <<<"$_list")" -eq 0
+check "  the generated one is still first"  grep -q 'generated' <<<"$_list"
+_none=$(ERGON_HYPR_WALLPAPERS="$T/nowhere" HOME=$T/home XDG_RUNTIME_DIR=$T ERGON="$E" \
+        "$E/bin/ergon-wallpaper" --list 2>&1)
+check "a machine without hyprland is unaffected" test "$(grep -c 'wall[0-9]' <<<"$_none")" -eq 0
+
 # --- negative control --------------------------------------------------------
 # Everything above is a string comparison against a palette file, and a bug in
 # hex()/want() would make every one of them compare "" with "" and pass. Prove

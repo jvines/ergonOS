@@ -15,6 +15,7 @@
 #   $XDG_DATA_HOME/ergon/backgrounds/<palette>/     generated (ergon-wallpaper-gen)
 #   $ERGON/theme/backgrounds/<palette>/             shipped, for one palette
 #   $ERGON/theme/backgrounds/                       shipped, any palette
+#   /usr/share/hypr/wall*.png                       the compositor's own, any palette
 #
 # The user directories come first so a shipped image can be overridden without
 # touching the repo, and nothing here ever writes to them.
@@ -26,6 +27,22 @@
 # copy would be a 300 KB blob wrong for every machine but one. Shipped images
 # under theme/backgrounds/ are a different thing and do belong in the repo --
 # with their provenance recorded next to them.
+#
+# /usr/share/hypr/ is LAST, and it is the hyprland package's own wall0-2.png:
+# the mascot art the compositor bundles, which its own config option describes,
+# in the binary's words, as "the random Hyprland logo / anime girl background".
+# hypr/common/looknfeel.lua sets misc:disable_hyprland_logo, which stops that
+# being drawn AT you on every empty workspace -- a different question from
+# whether the images are worth having, and they are, so this puts them in the
+# cycle as something you pick rather than something that happens to you.
+#
+# They are NOT copied into this repo and must not be: 48 MB of PNG, and
+# theme/backgrounds/PROVENANCE.md governs what WE redistribute. These are
+# already on the machine because hyprland is installed, hyprpaper is handed the
+# package's own path, and nothing is republished. ERGON_HYPR_WALLPAPERS
+# repoints it for a distribution that puts them elsewhere; on a machine without
+# hyprland the directory is simply absent and the loop skips it, exactly as it
+# skips an absent theme/backgrounds/.
 set -euo pipefail
 
 # readlink -f: this is reached through /usr/local/bin/<name>, which is a symlink
@@ -166,6 +183,18 @@ do
              \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \
                 -o -iname '*.webp' -o -iname '*.avif' \) 2>/dev/null | sort)
 done
+
+# The compositor's own, last, and BY NAME rather than by directory: the same
+# /usr/share/hypr also holds lockdead.png and lockdead2.png, which are what
+# hyprlock puts on screen when it has CRASHED. An image whose job is to say
+# "your lock screen died" is not a wallpaper, and a plain directory sweep put
+# both of them in the cycle -- found by running it, not by reading it.
+_hypr_walls="${ERGON_HYPR_WALLPAPERS:-/usr/share/hypr}"
+if [ -d "$_hypr_walls" ]; then
+  while IFS= read -r _f; do
+    [ -n "$_f" ] && CANDIDATES+=("$_f")
+  done < <(find -L "$_hypr_walls" -maxdepth 1 -type f -iname 'wall*.png' 2>/dev/null | sort)
+fi
 
 if [ "$ACTION" = list ]; then
   _cur=$( [ -f "$BG_STATE" ] && cat "$BG_STATE" || echo "$GENERATED" )
