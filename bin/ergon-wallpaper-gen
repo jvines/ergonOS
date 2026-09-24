@@ -172,37 +172,64 @@ _recolour() {
   case "$want" in */*) want=$(basename "$want" .png) ;; *) want="" ;; esac
   [ -n "$want" ] && first=$(ls "$FIELDDIR"/"$want"-*.npy 2>/dev/null | head -1)
 
-  for f in $first $(ls "$FIELDDIR"/*.npy 2>/dev/null); do
+  # The PREPARED cache: lib.prepare()'s output, which is everything about an
+  # image that the palette has nothing to do with.
+  #
+  # This loop used to call render.py once per background, and render.py redid
+  # the whole palette-independent half every time: open the field, downsample
+  # it, run SOFTEN's Gaussian, normalise, run HUE_SMOOTH's two more. 46 of the
+  # 61 generators ask for the first and 47 for the second, so that was the
+  # normal path, and it is ALL the same answer for every palette.
+  #
+  # Measured per image: 1.9s that way; 0.26s of it preparation, 0.17s the
+  # actual palette work, and a further 1.1s of it PYTHON STARTUP, because one
+  # process per image imports matplotlib sixty-nine times. Hence both changes
+  # below -- cache the preparation, and do the colouring in ONE process.
+  PREPDIR="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/prepared"
+  mkdir -p "$PREPDIR"
+
+  # Bake anything not cached yet, from the field, once ever. This is the only
+  # step that still reads a field, and after it a palette switch never does.
+  for f in $(ls "$FIELDDIR"/*.npy 2>/dev/null); do
     [ -e "$f" ] || continue
-    # Skip the prioritised one when the loop reaches it again.
-    [ -n "$first" ] && [ "$f" = "$first" ] && [ "$made" -gt 0 ] && continue
     base=$(basename "$f" .npy)              # <gen>-<seed>-<WxH>
-    fsize=${base##*-}; gen=${base%-*-*}; seed=${base#"$gen"-}; seed=${seed%-*}
+    gen=${base%-*-*}; seed=${base#"$gen"-}; seed=${seed%-*}
     _generators | grep -qx "$gen" || continue
+    [ -s "$PREPDIR/$gen-$seed.npz" ] && continue
     _still_current || { echo "  palette changed; stopping"; return 0; }
-    # Skip when the PNG is already newer than the field it came from.
-    if [ -s "$OUTDIR/$gen-$seed.png" ] && [ "$OUTDIR/$gen-$seed.png" -nt "$f" ]; then
-      continue
-    fi
     # nice + ionice: this is bulk work that must never make the session it is
     # decorating feel slow. Eight 4K matplotlib renders will saturate a laptop
     # -- measured by doing exactly that inside the test VM and making its
     # shells crawl -- and none of it is urgent.
-    # Rendered at the PANEL size, not the field's 4K. A re-coloured background
-    # is for showing now; the 4K master is what ergon-wallpaper-gen produces
-    # when a generator is actually run. See render.py --from-field.
+    # At the PANEL size, not the field's 4K: a re-coloured background is for
+    # showing now, and the cache only has to serve what will be shown.
     nice -n 19 ionice -c3 "$PY" "$GENDIR/render.py" \
       --generator "$gen" --palette "$PALETTE" \
       --size "${PANEL:-$SIZE}" --seed "$seed" \
-      --from-field "$f" \
+      --from-field "$f" --save-prepared "$PREPDIR/$gen-$seed.npz" \
       --out "$OUTDIR/$gen-$seed.png" >/dev/null && made=$((made+1))
-    # Put it on screen the moment the one being looked at is ready.
-    if [ "$made" = 1 ] && [ -n "$want" ] && [ "$gen-$seed" = "$want" ] \
-       && _still_current && command -v ergon-wallpaper >/dev/null 2>&1; then
-      ergon-wallpaper --set "$OUTDIR/$gen-$seed.png" >/dev/null 2>&1 || true
-    fi
   done
-  echo "  $made background(s) recoloured for $PAL_NAME"
+
+  # THE ONE BEING LOOKED AT, on its own and first.
+  #
+  # Re-colouring the whole set takes as long as it takes, but the user is
+  # looking at ONE background and it should follow the palette immediately;
+  # the rest can arrive while they carry on. --only is what makes that a
+  # half-second rather than a place in a queue of sixty-nine.
+  if [ -n "$want" ] && [ -s "$PREPDIR/$want.npz" ] && _still_current; then
+    if nice -n 19 ionice -c3 "$PY" "$GENDIR/recolour.py" \
+         --palette "$PALETTE" --cache "$PREPDIR" --out "$OUTDIR" \
+         --only "$want" >/dev/null 2>&1; then
+      command -v ergon-wallpaper >/dev/null 2>&1 && _still_current \
+        && ergon-wallpaper --set "$OUTDIR/$want.png" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  # And the rest, in ONE process rather than one per image.
+  _still_current || { echo "  palette changed; stopping"; return 0; }
+  nice -n 19 ionice -c3 "$PY" "$GENDIR/recolour.py" \
+    --palette "$PALETTE" --cache "$PREPDIR" --out "$OUTDIR" | sed 's/^/  /'
+  echo "  backgrounds for $PAL_NAME are in $OUTDIR"
 
   # Put the equivalent background back on screen: the user was looking at, say,
   # lorenz, and after a palette switch they should still be looking at lorenz

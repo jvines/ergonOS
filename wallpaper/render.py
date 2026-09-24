@@ -48,6 +48,19 @@ def main():
     # served from one simulation.
     ap.add_argument("--from-field", default=None,
                     help="colour this saved .npy instead of simulating")
+    # And the step after that. A field still has to be downsampled, softened,
+    # normalised and de-fringed before a palette can touch it, and 46 of the 61
+    # generators ask for SOFTEN and 47 for HUE_SMOOTH -- three Gaussians over a
+    # panel of pixels, none of which depends on a single palette value.
+    #
+    # Measured: colouring a cached field costs 1.9s an image, of which 0.26s is
+    # that preparation, 0.17s is the actual palette work and the rest is the
+    # field load and the PNG. Caching lib.prepare()'s output instead of the raw
+    # field means a palette switch never opens a 295 MB array at all.
+    ap.add_argument("--save-prepared", default=None,
+                    help="write prepare()'s output as .npz for re-colouring")
+    ap.add_argument("--from-prepared", default=None,
+                    help="colour this saved .npz; skips the field entirely")
     # Default from the generator (SUPERSAMPLE), else 3. A generator that
     # already band-limits its own field -- Ising smooths a coarse lattice --
     # gains nothing from it and draws a subtly different picture with it.
@@ -94,7 +107,9 @@ def main():
     #
     # Done HERE rather than inside a generator so every generator gets it,
     # including the ones that build a field directly and never bin anything.
-    if args.from_field:
+    if args.from_prepared:
+        field = None
+    elif args.from_field:
         field = np.load(args.from_field)
         # Downsample the FIELD to the requested size before colouring.
         #
@@ -117,8 +132,33 @@ def main():
         field = mod.generate((w * ss, h * ss), seed=args.seed, **kw)
         if ss > 1:
             field = lib.downsample(field, ss)
-    if args.save_field:
+    if args.save_field and field is not None:
         np.save(args.save_field, field)
+
+    # The palette-independent half: loaded, or computed and optionally kept.
+    #
+    # float32, compressed. float16 was tried first and is NOT good enough: the
+    # cache feeds a lookup and then a lerp by alpha, and the two together
+    # amplify its 11-bit mantissa into a measured 3/255 difference against a
+    # full render. Small, invisible, and still a silent drift between the image
+    # a palette was approved on and the one it is re-coloured into, which is
+    # exactly the class of thing this repo refuses to guess about.
+    #
+    # 4.6 MB per background against the 9.2 MB 1920x1200 field it replaces --
+    # and the field is no longer needed to change a colour at all.
+    if args.from_prepared:
+        _p = np.load(args.from_prepared)
+        v = _p["v"].astype(np.float32)
+        hue = _p["hue"].astype(np.float32)
+        alpha = _p["alpha"].astype(np.float32) if "alpha" in _p else None
+    else:
+        v, hue, alpha = lib.prepare(field, gamma=gamma, scale=scale,
+                                    soften=soften, hue_smooth=hue_smooth)
+    if args.save_prepared:
+        _kw = {"v": v.astype(np.float32), "hue": hue.astype(np.float32)}
+        if alpha is not None:
+            _kw["alpha"] = alpha.astype(np.float32)
+        np.savez_compressed(args.save_prepared, **_kw)
     # The caption. A module whose caption depends on the seed -- which view,
     # which parameters -- defines caption(seed) -> (title, subtitle).
     #
@@ -130,11 +170,10 @@ def main():
         title, subtitle = mod.caption(args.seed)
     else:
         title, subtitle = getattr(mod, "TITLE", None), getattr(mod, "SUBTITLE", None)
-    lib.render(field, palette, args.out, blend=blend, reverse=reverse, ramp=ramp,
-               scale=scale, gamma=gamma, saturation=sat, exposure=expo,
-               soften=soften, hue_smooth=hue_smooth,
-               title=None if args.no_title else title,
-               subtitle=None if args.no_title else subtitle)
+    lib.colourise(v, hue, alpha, palette, args.out, blend=blend, reverse=reverse,
+                  ramp=ramp, saturation=sat, exposure=expo,
+                  title=None if args.no_title else title,
+                  subtitle=None if args.no_title else subtitle)
     print(f"{args.out} ({w}x{h}, {time.time() - t0:.1f}s)")
 
 
