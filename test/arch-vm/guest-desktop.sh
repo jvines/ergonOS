@@ -92,8 +92,29 @@ rm -f "$H/.local/state/ergon/bundle-ledger"
 # previous run's leftovers.
 rm -f /etc/systemd/logind.conf.d/10-lid.conf /etc/systemd/sleep.conf.d/10-hibernate.conf \
       /etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf
-if su - "$U" -c "ERGON=$H/ergonOS ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_BUNDLES=notebooks ERGON_HARDWARE=framework-13-amd bash $H/ergonOS/bin/provision-arch.sh" >/tmp/prov.log 2>&1; then
-  ok "provision-arch.sh completed"
+# Provisioning is the longest thing this script does and, until 2026-09-24, the
+# quietest: its output went straight into a file, so the console said NOTHING for
+# 905s on an idle host and 1452s on a busy one. The harness watching this console
+# cannot tell that from a hang, and on 2026-09-24 it stopped telling them apart —
+# the weekly suite went red with every assertion passing, because the run was
+# slow rather than stuck (bin/test-hypr-session.sh).
+#
+# So: run it in the background and say where it is every 30 seconds. The full log
+# still goes to the file (pacman's output on a serial console is minutes of
+# scrolling nobody reads), but the console now carries a heartbeat with the last
+# line of real progress on it — which both keeps the watchdog fed and tells a
+# person reading the job log what it was doing when it stopped.
+su - "$U" -c "ERGON=$H/ergonOS ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_BUNDLES=notebooks ERGON_HARDWARE=framework-13-amd bash $H/ergonOS/bin/provision-arch.sh" >/tmp/prov.log 2>&1 &
+_prov=$!
+_t0=$(date +%s)
+while kill -0 "$_prov" 2>/dev/null; do
+  sleep 30
+  kill -0 "$_prov" 2>/dev/null || break
+  printf '   ..   provisioning, %ss: %s\n' "$(( $(date +%s) - _t0 ))" \
+    "$(tail -1 /tmp/prov.log 2>/dev/null | tr -d '\r' | cut -c1-72)"
+done
+if wait "$_prov"; then
+  ok "provision-arch.sh completed in $(( $(date +%s) - _t0 ))s"
 else
   bad "provision-arch.sh failed"
   tail -25 /tmp/prov.log | sed 's/^/     /'
