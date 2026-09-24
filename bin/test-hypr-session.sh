@@ -135,10 +135,17 @@ EXPECT
 # The "   --   " lines are shown too: they are the checks the VM could not make,
 # each with its evidence, and a skip that only lands in session.log reads in
 # the job log as a pass.
+#
+# And "   ..   ", the progress heartbeats. They are what keeps the expect timer
+# fed through provisioning, which reads the raw console and does not care about
+# this filter -- but a person reading the job log does: without them it shows
+# nothing at all between "$HOME/.local owned by jayvains" and a line five to
+# twenty-four minutes later, which is exactly the stretch nobody could account
+# for when this went red.
 docker run --rm --device /dev/kvm $GPU_DOCKER \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/session.exp 2>&1 | tee "$WORK/session.log" \
-  | grep -E '^(   ok|   FAIL|   --   |--- |!! )' || true
+  | grep -E '^(   ok|   FAIL|   --   |   \.\.   |--- |!! )' || true
 
 say "result"
 if ! grep -q 'DESKTOP_RESULT=' "$WORK/session.log"; then
