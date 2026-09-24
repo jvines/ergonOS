@@ -302,10 +302,21 @@ _recolour_once() {
   # during a full pass waited out the entire set and then timed out having done
   # nothing, and its palette ended up with an empty directory. Now the holder
   # stops within one image of a switch and hands the lock over.
+  # --expect only when this run is following the DESKTOP. A palette named on
+  # the command line is not racing anything, and handing recolour.py the state
+  # file there means it supersedes itself against whatever the desktop happens
+  # to be showing -- measured, filling `bone` while the desktop sat on `spring`:
+  # "bone superseded by spring after 0 re-coloured". Which would make the one
+  # case this flag exists for -- repairing a palette you are not looking at --
+  # the one case that cannot work.
+  local _expect=()
+  if [ -z "${ERGON_PALETTE:-}" ]; then
+    _expect=(--expect "$PAL_NAME" --palette-state "$PALETTE_STATE")
+  fi
   local _rc=0
   nice -n 19 ionice -c3 "$PY" "$GENDIR/recolour.py" \
     --palette "$PALETTE" --cache "$PREPDIR" --out "$OUTDIR" \
-    --expect "$PAL_NAME" --palette-state "$PALETTE_STATE" | sed 's/^/  /' || _rc=$?
+    "${_expect[@]}" | sed 's/^/  /' || _rc=$?
   [ "$_rc" = 0 ] || echo "  the recolour exited $_rc; see above" >&2
 
   # N of M, out loud. The count was computed and dropped on the floor before,

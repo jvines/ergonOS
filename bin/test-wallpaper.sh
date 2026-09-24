@@ -302,6 +302,7 @@ done
 case "$script" in
   *recolour.py)
     echo "$expect" >> "$TEST_ROOT/log/recolour-rounds"
+    echo "expect=[$expect] state=[$state]" >> "$TEST_ROOT/log/recolour-args"
     mkdir -p "$out"
     if [ -n "$only" ]; then : > "$out/$only.png"; exit 0; fi
     if [ "$(wc -l < "$TEST_ROOT/log/recolour-rounds")" = 1 ] && [ -n "$state" ]; then
@@ -343,6 +344,8 @@ _before=$(bgst)
 ERGON_PALETTE=gruvbox PYFLEET_VENV=$T/venv XDG_RUNTIME_DIR=$T ERGON="$E" \
   "$E/bin/ergon-wallpaper-gen" --recolour > "$T/log/gen2.out" 2>&1 || true
 check "the named palette is filled"        test "$(find "$BGS/gruvbox" -name '*.png' | wc -l)" -ge 3
+check "  and is not handed the desktop's state to race against" \
+      grep -q 'expect=\[\] state=\[\]' "$T/log/recolour-args"
 check "  the desktop was not repainted"    test "$(bgst)" = "$_before"
 check "  and it reports its count"         grep -q "backgrounds for gruvbox" "$T/log/gen2.out"
 
