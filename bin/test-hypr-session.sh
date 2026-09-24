@@ -98,7 +98,7 @@ expect {
 send "echo '$USERPASS' | sudo -S env BACKUP_NAS=$BACKUP_NAS bash /mnt/test/arch-vm/guest-desktop.sh\r"
 # SILENCE, not a budget.
 #
-# `set timeout 1800` above plus a single expect makes 1800s the allowance for
+# "set timeout 1800" above plus a single expect makes 1800s the allowance for
 # provisioning AND every check the desktop suite runs -- and expect does not
 # restart that clock when output arrives, only when a pattern MATCHES. So the
 # clock is really "how long may the whole thing take", which is a property of
