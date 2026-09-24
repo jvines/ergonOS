@@ -96,9 +96,36 @@ expect {
 }
 
 send "echo '$USERPASS' | sudo -S env BACKUP_NAS=$BACKUP_NAS bash /mnt/test/arch-vm/guest-desktop.sh\r"
+# SILENCE, not a budget.
+#
+# `set timeout 1800` above plus a single expect makes 1800s the allowance for
+# provisioning AND every check the desktop suite runs -- and expect does not
+# restart that clock when output arrives, only when a pattern MATCHES. So the
+# clock is really "how long may the whole thing take", which is a property of
+# how busy the host is, not of whether the desktop works.
+#
+# It went red that way on 2026-09-24 with every single assertion passing. A
+# loaded runner stretched the run from 27m45s to 41m11s -- ISO install alone
+# went 2m18s -> 7m28s, and it contains none of this repo's code -- and the
+# clock ran out one second after a passing check. The job log then says "the
+# compositor test never completed", which reads as a broken desktop and is not.
+#
+# exp_continue restarts the wait, so what is measured is how long the guest has
+# been QUIET. The longest legitimate quiet stretch in a green run is 905s --
+# provisioning's pacman transaction says nothing at all while it works -- so
+# 1800s of silence is still a generous hang detector, and a slow host now
+# produces a slow build instead of a red one. The 90-minute cap is the backstop
+# for the other shape of stuck: chatty and never finishing.
+set started [clock seconds]
 expect {
-  timeout { puts "\n!! the desktop test did not finish"; exit 1 }
   -re {DESKTOP_RESULT=[0-9]+} {}
+  -re {\r?\n} {
+    if {[clock seconds] - \$started > 5400} {
+      puts "\n!! the desktop test is still going after 90 minutes"; exit 1
+    }
+    exp_continue
+  }
+  timeout { puts "\n!! the desktop test went quiet for 1800s"; exit 1 }
 }
 
 send "echo '$USERPASS' | sudo -S poweroff\r"
