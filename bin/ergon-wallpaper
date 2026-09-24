@@ -80,23 +80,61 @@ case "$_want" in
   /*|./*|../*) PALETTE="$_want" ;;
   *)           PALETTE="$ERGON/theme/$_want.env" ;;
 esac
-# NOT a fallback to cool.env, which is what this line was.
+# SAY it, and carry on. Not silence, and not exit either.
 #
-# ergon-theme refuses a palette it cannot find and says which one. This drew the
-# cool gradient instead and said nothing, so a machine whose palette had been
-# renamed, removed, or hand-written into the state file came up in cool under a
-# desktop rendered from something else -- the one failure mode that is
-# indistinguishable from the feature working. The state file is written only by
-# ergon-theme, which validates before writing it, so reaching here means the
-# selection is genuinely broken and the background is the last thing that should
-# paper over it.
-[ -f "$PALETTE" ] || {
-  echo "no palette '$_want' (try: ergon theme --list)" >&2; exit 1
-}
-# shellcheck source=/dev/null
-. "$PALETTE"
+# This line was a silent `PALETTE="$ERGON/theme/cool.env"`, which is how a
+# machine whose palette had been renamed, removed, or hand-written into the
+# state file came up in cool under a desktop rendered from something else --
+# indistinguishable from the feature working. So it was made a hard error to
+# match ergon-theme, and that was wrong in a worse way:
+#
+# THIS SCRIPT IS WHAT STARTS HYPRPAPER. autostart.lua calls it and deliberately
+# does not start hyprpaper itself (hypr/common/autostart.lua:26-36), so any exit
+# before the block at the bottom of this file means no wallpaper daemon at all
+# and a desktop showing the compositor's flat background_color. A wrong colour
+# is a bug; a bare desktop is the session looking broken, and it is what an
+# `exit 1` here produced on a machine whose palette did not resolve.
+#
+# ergon-theme can refuse because a person ran it and reads its output.
+# ergon-wallpaper-gen can refuse because it files images under a palette name
+# and nothing on screen depends on it finishing. This cannot: its job is to put
+# something up. So it says what is wrong, loudly, and puts the default up.
+if [ ! -f "$PALETTE" ]; then
+  echo "  no palette '$_want' (try: ergon theme --list)" >&2
+  echo "  drawing the default instead; the desktop is NOT showing '$_want'" >&2
+  PALETTE="$ERGON/theme/cool.env"
+fi
+# And if even that is gone -- a truncated checkout, a bad ERGON -- there is
+# nothing left to read a colour from, so the last background that worked is
+# better than none. Only then is giving up correct, and it is still not silent.
+if [ ! -f "$PALETTE" ]; then
+  echo "  no palettes at all under $ERGON/theme -- is ERGON right?" >&2
+  if [ -s "$OUT" ]; then
+    echo "  keeping the background already on disk" >&2
+    KEEP_EXISTING=1
+  else
+    echo "  and no background on disk to fall back to" >&2
+    exit 1
+  fi
+fi
+if [ "${KEEP_EXISTING:-0}" = 0 ]; then
+  # shellcheck source=/dev/null
+  . "$PALETTE"
+fi
 
-command -v magick >/dev/null || { echo "imagemagick required" >&2; exit 1; }
+# Also not fatal any more, and for the same reason. magick is only needed to
+# BUILD a gradient; showing an image, or a gradient already on disk, needs
+# nothing. Exiting here left the desktop bare on any machine where imagemagick
+# had not been installed yet -- which includes the window during provisioning.
+if ! command -v magick >/dev/null; then
+  if [ -s "$OUT" ] || [ "${KEEP_EXISTING:-0}" = 1 ]; then
+    echo "  imagemagick is missing; showing what is already there" >&2
+    KEEP_EXISTING=1
+  else
+    echo "  imagemagick required to generate a background, and none exists yet" >&2
+    exit 1
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Which background
@@ -272,6 +310,12 @@ ACTIVE="$OUT"
 # panel size, which the mtime never covered at all: docking to a larger monitor
 # kept the smaller render.
 STAMP="$OUT.from"
+# Nothing to build from: no palette was readable and no magick to build with.
+# The file on disk is what there is, and the block below still hands it to
+# hyprpaper -- which is the whole reason this path exists rather than an exit.
+if [ "${KEEP_EXISTING:-0}" = 1 ]; then
+  echo "  $OUT  (kept; could not rebuild)" >&2
+else
 _stamp="$_pal_name $COOL_BG0 $COOL_0 $COOL_4 $SIZE $DITHER_PCT"
 if [ "$FORCE" = 0 ] && [ -z "${1:-}" ] && [ -s "$OUT" ] \
    && [ "$(cat "$STAMP" 2>/dev/null || true)" = "$_stamp" ]; then
@@ -294,12 +338,24 @@ else
   # 4.4 MB, which is the blowup the original note warned about. An 8x8 cell
   # repeated across the image carries the same per-pixel jitter and is perfectly
   # periodic, so it compresses to almost nothing.
+  # Rendered to a TEMPORARY file and moved into place, and its failure is
+  # caught rather than allowed to kill the script.
+  #
+  # Both halves are about the same thing: this script is what starts hyprpaper,
+  # so it must reach the bottom of the file. Under `set -e` a magick that fails
+  # -- a bad size from a monitor that just went away, a full disk, an OOM on
+  # a 4K canvas -- ended the script right here, and the desktop then had no
+  # wallpaper daemon at all rather than the previous background. Writing
+  # straight to $OUT also meant a half-written PNG replaced a good one, so the
+  # fallback below would have had nothing worth falling back to.
+  _tmp="$OUT.new.$$"
+  _rc=0
   if [ "$DITHER_PCT" = 0 ]; then
     magick -size "$SIZE" xc:"$COOL_BG0" \
       \( -size "$SIZE" xc: -sparse-color barycentric \
            "0,0 $COOL_0  %[fx:w-1],%[fx:h-1] $COOL_4" \) \
       -compose blend -define compose:args=18 -composite \
-      "$OUT"
+      "$_tmp" || _rc=$?
   else
     magick -size "$SIZE" xc:"$COOL_BG0" \
       \( -size "$SIZE" xc: -sparse-color barycentric \
@@ -308,13 +364,26 @@ else
       \( -size 8x8 xc:gray50 +noise Random -write mpr:cell +delete \
          -size "$SIZE" tile:mpr:cell \) \
       -compose blend -define compose:args="$DITHER_PCT" -composite \
-      "$OUT"
+      "$_tmp" || _rc=$?
   fi
-  # AFTER the render, never before: a magick that dies half way through leaves
-  # a truncated PNG, and a stamp written up front would then certify it as
-  # current for every later run.
-  printf '%s\n' "$_stamp" > "$STAMP"
-  echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
+  if [ "$_rc" = 0 ] && [ -s "$_tmp" ]; then
+    mv -f "$_tmp" "$OUT"
+    # AFTER the render, never before: a stamp written up front would certify a
+    # failed or truncated render as current for every later run.
+    printf '%s\n' "$_stamp" > "$STAMP"
+    echo "  $OUT  ($SIZE, $(du -h "$OUT" | cut -f1))"
+  else
+    rm -f "$_tmp"
+    # No stamp, so the next run tries again rather than believing this one.
+    rm -f "$STAMP"
+    echo "  could not render the background (magick exit $_rc)" >&2
+    if [ -s "$OUT" ]; then
+      echo "  showing the previous one; it is not '$_pal_name'" >&2
+    else
+      echo "  and there is no previous one -- the desktop will be flat" >&2
+    fi
+  fi
+fi
 fi
 fi
 

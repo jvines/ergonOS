@@ -172,20 +172,58 @@ run
 check "a deleted background does not leave the desktop bare" test "$(bgst)" = ":generated:"
 
 echo
-echo "== an unknown palette is refused, not answered with cool"
+echo "== an unknown palette says so, and STILL draws"
+# This script is what starts hyprpaper (hypr/common/autostart.lua:26-36), so it
+# has to reach the bottom of the file whatever it finds. Making the unresolvable
+# palette a hard error -- to match ergon-theme -- meant an early exit, no
+# hyprpaper, and a desktop showing the compositor's flat background_color.
+# A wrong colour is a bug. A bare desktop is the session looking broken.
 pal nonesuch
-# Counted, not compared against cool's colours: nothing was painted, so the last
-# line of the log is still the PREVIOUS run's -- which was cool, so a colour
-# comparison here passes whether the refusal works or not. The only honest
-# question is whether magick ran at all.
-_n=$(runs)
+_n=$(runs); _h=$(wc -l < "$T/log/hyprctl" 2>/dev/null || echo 0)
 _out=$(ERGON="$E" "$E/bin/ergon-wallpaper" --force 2>&1); _rc=$?
-check "ergon-wallpaper exits non-zero"   test "$_rc" -ne 0
-check "  and names the palette"          grep -q "nonesuch" <<<"$_out"
-check "  and painted nothing at all"     test "$(runs)" = "$_n"
-# ergon-wallpaper-gen files its output under the palette's NAME, so falling back
-# to cool there wrote cool-coloured images into cool's own cache directory,
-# where nothing afterwards could tell them from legitimate ones.
+check "ergon-wallpaper still succeeds"     test "$_rc" -eq 0
+check "  names the palette it could not find" grep -q "nonesuch" <<<"$_out"
+check "  and says the desktop is not showing it" grep -q "NOT showing" <<<"$_out"
+check "  paints the default rather than nothing"  test "$(runs)" -gt "$_n"
+check "  and reaches hyprpaper"            test "$(wc -l < "$T/log/hyprctl")" -gt "$_h"
+
+echo
+echo "== a render that fails keeps the previous background, and still draws"
+# Under set -e a failing magick ended the script here, so a transient failure --
+# a monitor that went away mid-run, a full disk, an OOM on a 4K canvas -- cost
+# the whole wallpaper daemon rather than one repaint.
+pal cool; run                                    # something good on disk first
+_good=$(cat "$T/home/.local/share/ergon/wallpaper.png")
+cat > "$T/stub/magick" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/magick"
+exit 1
+EOF
+chmod +x "$T/stub/magick"
+_h=$(wc -l < "$T/log/hyprctl")
+_out=$(ERGON="$E" "$E/bin/ergon-wallpaper" --force 2>&1); _rc=$?
+check "a failed render does not kill the script" test "$_rc" -eq 0
+check "  it says the render failed"              grep -q "could not render" <<<"$_out"
+check "  the previous background survives intact" \
+  test "$(cat "$T/home/.local/share/ergon/wallpaper.png")" = "$_good"
+check "  hyprpaper is still reached"             test "$(wc -l < "$T/log/hyprctl")" -gt "$_h"
+check "  and no stamp is left certifying the failure" \
+  test ! -f "$T/home/.local/share/ergon/wallpaper.png.from"
+# Put the working stub back for anything after this point.
+cat > "$T/stub/magick" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/magick"
+printf 'PNGSTUB\n' > "${@: -1}"
+EOF
+chmod +x "$T/stub/magick"
+echo
+echo "== ergon-wallpaper-gen, which CAN refuse, does"
+# Nothing on screen waits for it -- ergon-theme fires it detached -- and it files
+# its output under the palette's NAME, so falling back to cool there wrote
+# cool-coloured images into cool's own cache directory, where nothing afterwards
+# could tell them from legitimate ones. That is the case for refusing, and it is
+# exactly the case ergon-wallpaper does not have.
+pal nonesuch
 #
 # Its venv guard runs before the palette resolves -- correctly, it needs numpy
 # either way -- so the stub below is what lets this reach the check under test
