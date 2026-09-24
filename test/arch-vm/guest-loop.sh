@@ -101,17 +101,57 @@ while :; do
          -newer "$STAMP" -print -quit 2>/dev/null)" ]; then
       # --delete so a file removed upstream goes away here too; hosts/ is
       # excluded because the guest writes its own and it is not the share's.
-      if rsync -a --delete --exclude '.git' --exclude 'hosts/' \
+      #
+      # The RENDERED configs are protected from --delete. They are gitignored,
+      # so a share that is a fresh clone or a git worktree does not have them,
+      # and deleting them under a LIVE session leaves the compositor one reload
+      # away from "Emergency mode tripped: ... no binds ... SUPER + Q" --
+      # hypr/common/looknfeel.lua is required by hypr/hyprland.lua, and a Lua
+      # config is one chunk. The list is derived from the templates so it cannot
+      # drift from what ergon-theme writes.
+      PROTECT=()
+      while IFS= read -r tpl; do
+        rel="${tpl#/mnt/}"
+        PROTECT+=( "--filter=P /${rel%.in}" )
+      done < <(find /mnt -name '*.in' -not -path '/mnt/.git/*' 2>/dev/null)
+      if rsync -a --delete --exclude '.git' --exclude 'hosts/' "${PROTECT[@]}" \
            /mnt/ "$H/ergonOS/" 2>/dev/null; then
         chown -R "$U:$U" "$H/ergonOS" 2>/dev/null || true
         # --no-apply: render the configs so they match the synced templates,
         # but do NOT regenerate the wallpaper, reload hyprland or restart
         # waybar. A file sync must not redraw the screen of someone who is
         # using it; their next palette switch picks the new look up.
-        run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme --no-apply" \
-          >/dev/null 2>&1 || true
-        touch "$STAMP"
-        echo "synced from share at $(date +%H:%M:%S)" >> /out/loop-status
+        #
+        # Its exit status is NOT ignored, and that is the whole point of the
+        # line: this used to end in `|| true` with the output sent to
+        # /dev/null, and then stamp the sync as done regardless -- so a render
+        # that failed was never retried, never reported, and left the guest
+        # running whatever was on disk. The one step that guarantees the
+        # generated configs exist was the one step allowed to fail quietly.
+        if run "ERGON=\$HOME/ergonOS \$HOME/ergonOS/bin/ergon-theme --no-apply" \
+             >/tmp/ergon-sync-render.log 2>&1; then
+          touch "$STAMP"
+          echo "synced from share at $(date +%H:%M:%S)" >> /out/loop-status
+        else
+          echo "RENDER FAILED at $(date +%H:%M:%S): $(tail -3 /tmp/ergon-sync-render.log | tr '\n' ' ')" \
+            >> /out/loop-status
+        fi
+
+        # A session that loaded while a config file was missing is still in
+        # emergency mode, with SUPER+Q and nothing else, and no amount of
+        # fixing the files on disk reaches it: Hyprland reads them once. The
+        # binds are the only symptom visible from here, and a reload is the
+        # only way out -- safe to do precisely because the render above just
+        # succeeded. A healthy session has ~80; five is generous.
+        # live_session, not `run`, as the gate: `run` falls through to a
+        # `su` that answers nothing when nobody is logged in, and counting
+        # zero binds there would mean "no session", not "broken session".
+        nb=0
+        live_session && nb=$(run "hyprctl binds -j" 2>/dev/null | grep -c '"key"')
+        if live_session && [ "$nb" -lt 5 ]; then
+          echo "session had $nb binds -- reloading a config that never loaded" >> /out/loop-status
+          run "hyprctl reload" >/dev/null 2>&1 || true
+        fi
       fi
     fi
   fi

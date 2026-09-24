@@ -218,12 +218,38 @@ and in `Hyprland --verify-config`, not at the call site.
 
 ### Why a missing rendered file is not a cosmetic problem
 
-`hypr/hyprland.lua` requires `common.looknfeel` **without** a `pcall`, and a Lua
-config is one chunk. If that file has not been rendered, the error aborts the
-chunk and the requires after it — `windows`, `binds`, `media`, `lid`,
-`screenshot`, `autostart` — never run. The result is a session with **no
-keybinds and no autostarted daemons**, not an unthemed one. Measured in a
-container, not inferred.
+A Lua config is **one chunk**, so an error anywhere in it stops every line after
+it. `hypr/hyprland.lua` used to `require` its eight modules unguarded, and
+`common.looknfeel` — the generated one — came second. A session that loaded
+while that file was absent never reached `windows`, `binds`, `media`, `lid`,
+`screenshot` or `autostart`, and Hyprland answered with its own guard:
 
-That is the whole reason `install.sh` renders before it links and exits non-zero
-if the render fails. It is the one step in that script that aborts the install.
+    Emergency mode tripped: A lua config error resulted in no binds being
+    registered. Emergency binds active: SUPER + Q
+
+No terminal, no launcher, no session menu, no keybind list — over a colour
+scheme. Paid for on 2026-09-24, in the VM.
+
+Now every module is loaded through `need()`, which `pcall`s: a module that fails
+takes itself down and nothing else, and **`common.binds` is loaded second**, so
+the escape hatch exists before anything cosmetic can fail.
+`bin/test-hypr-config.sh` keeps it that way — it deletes `looknfeel.lua` and
+asserts that execution still reaches the last line of `binds.lua`.
+
+What `pcall` costs is the report, and its two halves are not the same. Measured
+against 0.56.2, both ways:
+
+| the module | does Hyprland record it? |
+|---|---|
+| exists, has an error | **yes** — overlay and `--verify-config`, pcall or not |
+| missing entirely | **no** — an ordinary Lua "module not found", which pcall eats whole |
+
+So the missing case is reported by this repo instead, from the bottom of
+`hypr/hyprland.lua`: red borders first, because they need no daemon and no bus
+and are on screen the instant a window is drawn; then a line in
+`~/.local/state/ergon/config-failures.log`; then a critical notification once
+mako exists. An unthemed desktop otherwise looks like a palette someone chose.
+
+`install.sh` still renders before it links and still exits non-zero if the
+render fails, and that must not change: the guard above keeps a broken desktop
+**usable**, it does not make it correct.

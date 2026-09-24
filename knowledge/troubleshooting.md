@@ -20,6 +20,77 @@ there" does not mean "it came up".
 
 ---
 
+## No keybind does anything, and Hyprland says SUPER + Q is all there is
+
+    Emergency mode tripped: A lua config error resulted in no binds being
+    registered. Emergency binds active: SUPER + Q
+
+**That message is Hyprland's, not this repo's.** It means the Lua config raised
+an error before a single `hl.bind` ran, so nothing was registered and the
+compositor fell back to a config built into the binary. It advertises one bind
+and actually installs three:
+
+| chord | what the binary binds it to |
+|---|---|
+| SUPER + Q | the first of kitty, alacritty, **foot**, wezterm, gnome-terminal, xterm that is installed |
+| SUPER + R | `hyprland-run` |
+| SUPER + M | exit the compositor |
+
+`foot` is in `packages/pacman`, so **SUPER + Q gets you a terminal**. Use it
+before reaching for a TTY.
+
+### Reading it
+
+    hyprctl configerrors
+    tail -60 $XDG_RUNTIME_DIR/hypr/*/hyprland.log
+
+The shape of the error tells you which kind it is, and **count entries, not
+lines**: every config problem Hyprland records is ONE entry printed as one
+`file:line: message` line — five bad keys print five lines. Lua errors are the
+exception, and that exception is the whole diagnostic:
+
+- **two dozen lines of `no file '.../common/<name>.lua'`** — Lua's "module not
+  found", which is ONE entry whose text lists every path it tried (27 lines from
+  a top-level require, 24 from one inside another module). A file is absent.
+- **`cannot open .../hyprland.lua: No such file or directory`** — the entry
+  point itself is gone, so no Lua ran at all. On a machine where
+  `~/.config/hypr` is a symlink into the checkout, that means the checkout is
+  mid-replacement.
+- **two lines naming a file and a line number** — a syntax error, or a value
+  Hyprland rejected, in a file that is there.
+- **N separate `file:line:` lines** — N genuinely distinct problems. That is
+  *not* a missing module, and if it comes with zero binds then something in
+  `common.env` or `common.looknfeel` both failed a lot of keys AND raised a
+  hard Lua error before `common.binds` was reached.
+
+`debug:error_limit` caps how many are displayed, so a long list on screen may be
+truncated with a "... more" — `hyprctl configerrors` is the full one.
+
+### Fixing it
+
+Nine times in ten the absent file is `hypr/common/looknfeel.lua`: it is the only
+file in the compositor's require chain that is **generated and gitignored**, so
+it is the only one that can be missing on a machine that has the repo. It goes
+absent when a render fails, on a fresh clone or `git worktree` before
+`install.sh` has run, and — before 2026-09-24 — while the VM harness replaced
+the checkout underneath a live session.
+
+    ergon theme                                   # re-render the palette
+    ls -l ~/.config/hypr/common/looknfeel.lua     # it must exist
+    hyprctl reload                                # Hyprland reads the config ONCE
+
+The reload is not optional and not cosmetic: fixing the file on disk does
+nothing at all to the running compositor, which read it at startup and will not
+look again.
+
+Since 2026-09-24 `hypr/hyprland.lua` loads each module through `need()`, which
+pcalls, and loads `common.binds` second — so one missing generated file costs
+you the theme and not the keyboard. If you are in emergency mode on current
+`main`, it is **not** a missing `looknfeel.lua`: read the error, because
+something in `common.env` or `common.binds` itself is broken.
+
+---
+
 ## Clicks do nothing, but the bar looks fine
 
 Two independent causes, and it was both at once:

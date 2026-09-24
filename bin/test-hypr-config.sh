@@ -105,9 +105,51 @@ PYEOF
   # checked here -- its JSON is validated in test-arch-vm.sh instead.
 
   echo "@@hyprland"
-  run "Hyprland --verify-config -c /home/t/.config/hypr/hyprland.lua" \
-    | sed -n "/======== Config parsing result:/,\$p" \
-    | grep -vE "^=+ Config parsing result:|^[[:space:]]*$|^config ok$" || true
+  # The exit code AND the banner, not just the lines after it. An empty section
+  # is what the reader below treats as "nothing to report", so a verify that
+  # never reached its banner is otherwise indistinguishable from a clean config.
+  #
+  # Measured, in halves, because the composition is what matters: `Hyprland
+  # --verify-config` with XDG_RUNTIME_DIR unset dies with `Critical error
+  # thrown: XDG_RUNTIME_DIR is not set!` and never prints the banner; and the
+  # reader below prints `ok` for an empty section. One env var, and this gate
+  # passes a config it never read. The banner text is not API either.
+  hlrc=0
+  hlout=$(run "Hyprland --verify-config -c /home/t/.config/hypr/hyprland.lua") || hlrc=$?
+  if [ "$hlrc" != 0 ] || ! printf "%s\n" "$hlout" | grep -q "Config parsing result:"; then
+    printf "the verify did not report a parsing result (exit %s); last lines:\n" "$hlrc"
+    printf "%s\n" "$hlout" | tail -6
+  else
+    printf "%s\n" "$hlout" \
+      | sed -n "/======== Config parsing result:/,\$p" \
+      | grep -vE "^=+ Config parsing result:|^[[:space:]]*$|^config ok$" || true
+  fi
+
+  # THE DEGRADED CASE, which is the one that cost a session on 2026-09-24.
+  #
+  # hypr/common/looknfeel.lua is generated and gitignored, so it is the one file
+  # in the require chain of the compositor that can simply not be there -- mid-sync,
+  # on a fresh clone, after a failed render. A Lua config is ONE CHUNK, so when
+  # it was required without a guard its absence stopped every line after it and
+  # Hyprland came up with zero keybindings and its own emergency mode. The fix
+  # lives in hypr/hyprland.lua; this is what keeps it fixed.
+  #
+  # The assertion is not "it parses" -- it parsed perfectly all along. It is
+  # that execution REACHED common.binds, and the only way to ask that from
+  # outside is to make the last line of binds.lua produce an error of its own
+  # and look for it.
+  echo "@@hyprland-degraded"
+  cp -r /home/t/.config/hypr /tmp/degraded
+  rm -f /tmp/degraded/common/looknfeel.lua
+  printf "\nhl.config({ general = { ergon_binds_reached = 1 } })\n" >> /tmp/degraded/common/binds.lua
+  chown -R t:t /tmp/degraded
+  dout=$(run "Hyprland --verify-config -c /tmp/degraded/hyprland.lua") || true
+  printf "%s\n" "$dout" | grep -q "ergon_binds_reached" || {
+    echo "common.binds was NOT reached with common.looknfeel missing:"
+    echo "a session would come up with no keybindings at all (Hyprland emergency mode,"
+    echo "SUPER+Q only). hypr/hyprland.lua must load its modules so that one missing"
+    echo "generated file cannot take the binds down with it."
+  }
 
   echo "@@fuzzel"
   run "fuzzel --config /tmp/repo/fuzzel/fuzzel.ini --check-config" || true
@@ -147,7 +189,7 @@ PYEOF
 ' 2>&1) || true
 
 rc=0
-for tool in hyprland fuzzel foot waybar-css swayosd-css mako hypridle hyprlock; do
+for tool in hyprland hyprland-degraded fuzzel foot waybar-css swayosd-css mako hypridle hyprlock; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"

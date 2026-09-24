@@ -239,8 +239,22 @@ while IFS= read -r tpl; do
     echo "   stale: ${out#"$ERGON"/}"
     rc=1
   else
-    printf '%s\n' "$new" > "$out"
-    echo "   rendered ${out#"$ERGON"/}"
+    # Written to a neighbour and renamed, never straight into place. Two renders
+    # can overlap -- the VM harness re-renders on every file sync while a
+    # palette switch is running the same script -- and `> "$out"` truncates
+    # first and writes second, so the overlap is a window in which a config
+    # file is empty or half a file. For hypr/common/looknfeel.lua that is a Lua
+    # syntax error in the middle of the compositor's config, which costs every
+    # keybinding in the session (see hypr/hyprland.lua). A rename is atomic:
+    # a reader gets the old file or the new one.
+    _tmp="$out.ergon-render.$$"
+    if printf '%s\n' "$new" > "$_tmp" && mv -f "$_tmp" "$out"; then
+      echo "   rendered ${out#"$ERGON"/}"
+    else
+      rm -f "$_tmp"
+      echo "!! could not write ${out#"$ERGON"/}" >&2
+      rc=1
+    fi
   fi
 done < <(find -L "$ERGON" -name '*.in' -not -path '*/.git/*' | sort)
 
