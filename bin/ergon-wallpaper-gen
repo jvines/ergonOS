@@ -148,8 +148,25 @@ _render() {
 # seconds after changing. Every step checks, so a superseded run stops at the
 # next image instead of finishing work nobody wants.
 _still_current() {
+  # A palette named explicitly is always "still current": the caller asked for
+  # THAT one, and the state file describes the desktop rather than this run.
+  # Without this, `ERGON_PALETTE=bone ergon-wallpaper-gen --recolour` -- the way
+  # to fill in a palette that was starved of backgrounds, without switching the
+  # desktop to it -- gave up immediately, because the desktop was on something
+  # else. Which is the whole point of naming it.
+  if [ -n "${ERGON_PALETTE:-}" ]; then return 0; fi
   local now
-  now=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette" 2>/dev/null || echo cool)
+  now=$(cat "$PALETTE_STATE" 2>/dev/null || echo cool)
+  [ "$(basename "$now" .env)" = "$PAL_NAME" ]
+}
+
+# Is this palette the one the DESKTOP is showing? A different question from
+# _still_current, and only this one may put an image on screen. They were the
+# same test, so a run for a palette named on the command line would have
+# repainted the background of a session sitting on another palette.
+_is_on_screen_palette() {
+  local now
+  now=$(cat "$PALETTE_STATE" 2>/dev/null || echo cool)
   [ "$(basename "$now" .env)" = "$PAL_NAME" ]
 }
 
@@ -272,7 +289,7 @@ _recolour_once() {
     if nice -n 19 ionice -c3 "$PY" "$GENDIR/recolour.py" \
          --palette "$PALETTE" --cache "$PREPDIR" --out "$OUTDIR" \
          --only "$want" >/dev/null 2>&1; then
-      command -v ergon-wallpaper >/dev/null 2>&1 && _still_current \
+      command -v ergon-wallpaper >/dev/null 2>&1 && _is_on_screen_palette \
         && ergon-wallpaper --set "$OUTDIR/$want.png" >/dev/null 2>&1 || true
     fi
   fi
@@ -309,7 +326,7 @@ _recolour_once() {
     */*) prev=$(basename "$prev") ;;
     *)   prev="" ;;
   esac
-  if [ -n "$prev" ] && [ -s "$OUTDIR/$prev" ] && _still_current \
+  if [ -n "$prev" ] && [ -s "$OUTDIR/$prev" ] && _is_on_screen_palette \
      && command -v ergon-wallpaper >/dev/null 2>&1; then
     ergon-wallpaper --set "$OUTDIR/$prev" >/dev/null 2>&1 || true
   fi

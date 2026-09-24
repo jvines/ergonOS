@@ -329,6 +329,23 @@ check "  because the worker came back for it" \
       test "$(wc -l < "$T/log/recolour-rounds")" -ge 2
 check "  and it says how many of how many" grep -q "of 3 backgrounds for nord" "$T/log/gen.out"
 
+# --- a named palette fills without touching the screen -------------------------
+# The way to repair a palette that was starved: name it, and let it be coloured
+# in the background while the desktop stays on whatever it is showing. Both
+# halves are the assertion -- it has to DO the work (it used to give up, because
+# the desktop was on another palette) and it must not repaint anything.
+echo
+echo "== ERGON_PALETTE fills that palette, and leaves the desktop alone"
+pal cool
+_before=$(bgst)
+# The rounds log is NOT reset: the stub supersedes only on its very first full
+# pass, which the case above already consumed.
+ERGON_PALETTE=gruvbox PYFLEET_VENV=$T/venv XDG_RUNTIME_DIR=$T ERGON="$E" \
+  "$E/bin/ergon-wallpaper-gen" --recolour > "$T/log/gen2.out" 2>&1 || true
+check "the named palette is filled"        test "$(find "$BGS/gruvbox" -name '*.png' | wc -l)" -ge 3
+check "  the desktop was not repainted"    test "$(bgst)" = "$_before"
+check "  and it reports its count"         grep -q "backgrounds for gruvbox" "$T/log/gen2.out"
+
 # --- the compositor's own wallpapers ------------------------------------------
 # hyprland ships wall0-2.png, and ergon-wallpaper offers them so they can be
 # chosen. The same directory ships lockdead.png and lockdead2.png, which are
