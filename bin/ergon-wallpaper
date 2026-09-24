@@ -348,7 +348,14 @@ else
   # wallpaper daemon at all rather than the previous background. Writing
   # straight to $OUT also meant a half-written PNG replaced a good one, so the
   # fallback below would have had nothing worth falling back to.
-  _tmp="$OUT.new.$$"
+  # .png LAST, and that is not cosmetic: ImageMagick picks the output format
+  # from the extension, so "wallpaper.png.new.12345" gave it nothing to go on,
+  # it fell back to the first input's format and died with
+  #   no encode delegate for this image format `XC'
+  # -- which this function then reported as "could not render" and papered over
+  # by keeping the previous background. The gradient silently stopped following
+  # the palette for exactly as long as that suffix was wrong.
+  _tmp="${OUT%.png}.new.$$.png"
   _rc=0
   if [ "$DITHER_PCT" = 0 ]; then
     magick -size "$SIZE" xc:"$COOL_BG0" \

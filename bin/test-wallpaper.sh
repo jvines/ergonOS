@@ -60,7 +60,17 @@ cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/nord.env" "$E/t
 cat > "$T/stub/magick" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/magick"
-printf 'PNGSTUB\n' > "${@: -1}"
+out="${@: -1}"
+# REFUSES a path it cannot infer a format from, because the real magick does.
+# Writing "${@: -1}" whatever its name is what let a render to
+# "wallpaper.png.new.12345" pass every assertion in this file while the real
+# ImageMagick answered "no encode delegate for this image format `XC'" and the
+# gradient quietly stopped following the palette.
+case "$out" in
+  *.png|*.jpg|*.jpeg|*.webp|*.avif) ;;
+  *) echo "magick: no encode delegate for this image format" >&2; exit 1 ;;
+esac
+printf 'PNGSTUB\n' > "$out"
 EOF
 # Nothing here may reach a real compositor. hyprpaper in particular is STARTED
 # by ergon-wallpaper, so an unstubbed run would leave one behind per assertion.
@@ -116,6 +126,14 @@ for p in cool gruvbox nord; do
   pal "$p"; run
   check "$p renders $(want "$p")" test "$(cols)" = "$(want "$p")"
 done
+
+# The render SUCCEEDED, not merely that magick was invoked with the right
+# colours. The stamp is only written after a render that worked, and it is
+# removed when one fails -- so this is the one assertion that separates "the
+# right command was built" from "an image came out". A temp file magick could
+# not infer a format from passed every colour check above while producing
+# nothing at all.
+check "and the render actually produced an image" test -s "$T/home/.local/share/ergon/wallpaper.png.from"
 
 # The regression itself. Ordering matters: cool is rendered, then gruvbox is
 # selected without --force, which is exactly what `ergon theme gruvbox` from a
@@ -213,7 +231,17 @@ check "  and no stamp is left certifying the failure" \
 cat > "$T/stub/magick" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/magick"
-printf 'PNGSTUB\n' > "${@: -1}"
+out="${@: -1}"
+# REFUSES a path it cannot infer a format from, because the real magick does.
+# Writing "${@: -1}" whatever its name is what let a render to
+# "wallpaper.png.new.12345" pass every assertion in this file while the real
+# ImageMagick answered "no encode delegate for this image format `XC'" and the
+# gradient quietly stopped following the palette.
+case "$out" in
+  *.png|*.jpg|*.jpeg|*.webp|*.avif) ;;
+  *) echo "magick: no encode delegate for this image format" >&2; exit 1 ;;
+esac
+printf 'PNGSTUB\n' > "$out"
 EOF
 chmod +x "$T/stub/magick"
 echo
