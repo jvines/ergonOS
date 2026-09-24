@@ -66,7 +66,7 @@ PROTECT=()
 while IFS= read -r tpl; do
   rel="${tpl#"$NEW"/}"
   PROTECT+=( "--filter=P /${rel%.in}" )
-done < <(find "$NEW" -name '*.in' -not -path '*/.git/*')
+done < <(find "$NEW" -path "$NEW/.git" -prune -o -name '*.in' -print)
 
 if [ -d "$H/ergonOS" ]; then
   rsync -a --delete --exclude '.git' --exclude 'hosts/' "${PROTECT[@]}" \

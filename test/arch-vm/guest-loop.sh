@@ -113,7 +113,10 @@ while :; do
       while IFS= read -r tpl; do
         rel="${tpl#/mnt/}"
         PROTECT+=( "--filter=P /${rel%.in}" )
-      done < <(find /mnt -name '*.in' -not -path '/mnt/.git/*' 2>/dev/null)
+        # -prune, not -not -path: this is a 9p mount and the repo's .git holds
+        # ~1900 files that find would otherwise descend into on every sync, for
+        # the same reason the -quit above exists.
+      done < <(find /mnt -path /mnt/.git -prune -o -name '*.in' -print 2>/dev/null)
       if rsync -a --delete --exclude '.git' --exclude 'hosts/' "${PROTECT[@]}" \
            /mnt/ "$H/ergonOS/" 2>/dev/null; then
         chown -R "$U:$U" "$H/ergonOS" 2>/dev/null || true
