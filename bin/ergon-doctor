@@ -469,6 +469,31 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
       rec warn "waybar" "$(waybar --version 2>/dev/null | head -1) — clicking a workspace does nothing against a Lua config. See packages/aur"
     fi
   fi
+  # ERGON-64: whether Electron apps keep their key in the keyring. Both halves:
+  # the user manager, which launches every app (uwsm app, XDG autostart, D-Bus
+  # activation), carries GNOME_DESKTOP_SESSION_ID set and EMPTY; and the login
+  # keyring is unlocked, or the first app waits behind a dialog. Locked is read
+  # as a property -- measured, that starts no gcr-prompter; an Unlock would.
+  if [ -n "${SUDO_USER:-}" ]; then
+    rec warn "keyring-env" "a root shell cannot see your user manager — run 'ergon doctor' as $WHO for this row"
+  elif menv=$(systemctl --user show-environment 2>/dev/null); then
+    case "$(printf '%s\n' "$menv" | grep '^GNOME_DESKTOP_SESSION_ID=')" in
+      GNOME_DESKTOP_SESSION_ID=) rec ok "keyring-env" "GNOME_DESKTOP_SESSION_ID is set and empty: Electron apps keep their key in the keyring" ;;
+      "") rec warn "keyring-env" "no GNOME_DESKTOP_SESSION_ID in the session — Electron apps store secrets in plaintext. Not started through uwsm? (ergon explain troubleshooting)" ;;
+      *)  rec warn "keyring-env" "GNOME_DESKTOP_SESSION_ID is not empty — xdg-open on a directory fails. uwsm/env-hyprland sets it empty" ;;
+    esac
+    if [ "$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.freedesktop.secrets 2>/dev/null)" != "b true" ]; then
+      rec ok "login-keyring" "no Secret Service running; nothing to check"
+    else
+      case "$(busctl --user get-property org.freedesktop.secrets /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked 2>/dev/null)" in
+        "b false") rec ok "login-keyring" "unlocked" ;;
+        "b true")  rec warn "login-keyring" "locked — the first Electron app waits behind an unlock dialog. pam_gnome_keyring in /etc/pam.d/greetd?" ;;
+        # Also the whole of a FIRST login: the keyring PAM creates is listed but
+        # not served until the next one (gnome-keyring 50, measured).
+        *)         rec warn "login-keyring" "none on the bus — Electron apps cannot encrypt. After a first login this clears at the next; otherwise pam_gnome_keyring in /etc/pam.d/greetd?" ;;
+      esac
+    fi
+  fi
 else
   rec ok "session" "not in a graphical session; session checks skipped"
 fi

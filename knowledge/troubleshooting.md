@@ -154,6 +154,44 @@ local session. Not a wrong credential. Does not happen on real hardware, where
 greetd gives a proper session — only in a harness that starts the compositor
 directly.
 
+## Discord asks you to log in after every session
+
+Or VS Code says encryption is not available and an OS keyring couldn't be
+identified, or an **Unlock Login Keyring** dialog sits in front of the first
+Electron app you start. One cause, ERGON-64: Chromium does not know "Hyprland"
+as a desktop and keeps the key in plaintext or memory, unless
+`GNOME_DESKTOP_SESSION_ID` is set — `uwsm/env-hyprland` sets it, **empty** —
+and the keyring it then uses must already be unlocked, which the
+`pam_gnome_keyring` lines provisioning adds to `/etc/pam.d/greetd` do at login.
+
+    systemctl --user show-environment | grep GNOME_DESKTOP_SESSION_ID  # present, empty
+    grep pam_gnome_keyring /etc/pam.d/greetd       # auth, and session ... auto_start
+    journalctl -b | grep gkr-pam                   # "unlocked login keyring"
+    <app> --enable-logging=stderr --vmodule=key_storage_util_linux=1 2>&1 \
+      | grep 'Password storage detected desktop environment'   # GNOME, not (unknown)
+    secret-tool search --all application <app>     # its key: discord, code-oss, ...
+
+Find the key by `application`, not by label: every one of them is labelled
+`Chromium Safe Storage`.
+
+- **The first command prints nothing.** The session did not start through
+  uwsm (tuigreet's plain "Hyprland" entry, a TTY, ssh), or
+  `~/.config/uwsm/env-hyprland` is not linked — `install.sh` does that.
+- **It prints a value.** It must stay empty: a value makes every xdg-utils script
+  decide this is GNOME, and `xdg-open <dir>` then fails. And not in
+  `environment.d`, whose generator drops an empty assignment with a line in the
+  journal and nothing else.
+- **The dialog comes anyway.** The login keyring's password is not your login
+  password: made by hand, or `passwd` has run since. Move
+  `~/.local/share/keyrings/login.keyring` aside — its secrets go with it — and
+  log in again; PAM makes a new one with your password.
+- **The first login after an install**, or after that, creates the keyring,
+  and gnome-keyring does not serve it over D-Bus until the next login: apps
+  cannot encrypt for that one session.
+
+Side effect, by design: with the variable set, Chromium takes its proxy from
+gsettings `org.gnome.system.proxy` and ignores `http_proxy` and `https_proxy`.
+
 ---
 
 ## In a VM
