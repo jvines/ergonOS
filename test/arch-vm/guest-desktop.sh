@@ -1025,18 +1025,25 @@ else
 fi
 [ -e "$WELCOME_STAMP" ] && ok "  and the page, running in it, wrote the stamp" \
                         || bad "no stamp at $WELCOME_STAMP — the next login would open it again"
-usr "ergon-welcome --first-run" >/dev/null 2>&1; sleep 3
-[ "$(welcome_n)" = 1 ] && ok "a second --first-run (the next login) opens nothing" \
-                       || bad "a second --first-run left $(welcome_n) welcome windows, want 1"
 # What the hermetic test can only stub: the page carries the live compositor's
 # own keybinds, the first thing someone at a fresh login needs.
 _wel=$(usr "ergon-welcome" </dev/null 2>&1); _wkeys=$(usr "ergon-keys --print" 2>/dev/null)
 [ -n "$_wkeys" ] && [[ $_wel == *"$_wkeys"* ]] && ok "the welcome page carries what ergon-keys prints in this session" \
   || bad "the welcome page does not carry ergon-keys' output: $(grep -A2 '^## Keys' <<<"$_wel" | tr '\n' ' ')"
-for _p in $(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-tui-ergon-welcome") | .pid'); do kill "$_p"; done
-for _ in $(seq 1 10); do [ "$(welcome_n)" = 0 ] && break; sleep 1; done
+welcome_close() {
+  for _p in $(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-tui-ergon-welcome") | .pid'); do kill "$_p"; done
+  for _ in $(seq 1 10); do [ "$(welcome_n)" = 0 ] && break; sleep 1; done
+}
+welcome_close
 [ "$(welcome_n)" = 0 ] && ok "  closed before the checks that want a clear screen" \
                        || bad "the welcome window would not close"
+# The next login, asked only once the window is gone: while it is open,
+# ergon-launch-tui focuses it instead of opening another, so asking earlier
+# stayed green with the one-shot stamp check deleted.
+usr "ergon-welcome --first-run" >/dev/null 2>&1
+for _ in $(seq 1 5); do [ "$(welcome_n)" = 0 ] || break; sleep 1; done
+[ "$(welcome_n)" = 0 ] && ok "a second --first-run (the next login) opens nothing" \
+  || { bad "a second --first-run (the next login) opened the welcome again"; welcome_close; }
 
 # The cheatsheet, through the real ergon-keys pipeline -- this used to grep the
 # JSON for the word "description", and passed while the screenshot, media and

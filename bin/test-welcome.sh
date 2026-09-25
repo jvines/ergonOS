@@ -4,16 +4,16 @@
 #
 #   ./bin/test-welcome.sh
 #
-# Seconds, no root, no session. hyprctl, glow, notify-send, systemctl and
-# ergon-term are stubs on PATH that log their argv. hyprctl serves two canned
+# Seconds, no root, no session. hyprctl, glow, fuzzel, notify-send, systemctl
+# and ergon-term are stubs on PATH that log their argv. hyprctl serves two canned
 # binds, so `ergon keys` has something real to print; ergon-term runs what it
 # is handed on a pty from script(1), which is what a terminal window is to the
 # program inside it. Everything else -- ergon, ergon-bundle, ergon-explain,
 # ergon-launch-tui -- is the real thing, and every section is checked against
 # what the real command prints here, never against a typed string.
 #
-# NOT COVERED: --first-run without glow (a notification and no window). The
-# runner has a real /usr/bin/glow, and PATH cannot hide one file in /usr/bin.
+# NOT COVERED: --first-run without glow (a notification and no window). glow is
+# in packages/pacman; hiding /usr/bin/glow here takes a symlink farm of /usr/bin.
 # Whether the window really maps is the VM suite's (guest-desktop.sh).
 set -uo pipefail
 
@@ -42,11 +42,16 @@ esac"
 stub glow 't=0; [ -t 1 ] && t=1; echo "glow tty=$t" >> '"$LOG"'; cat >/dev/null'
 stub notify-send 'exit 0'
 stub systemctl 'exit 1'
+# A picker that never closes, and (below) a display for it: bare `ergon`, and
+# `ergon keys` without --print, open fuzzel when stdout is not a terminal and
+# WAYLAND_DISPLAY is set (ERGON-56) -- the page, in a session. Without both, a
+# page calling bare `ergon` got usage(), the same text as --help, and stayed green.
+stub fuzzel 'exec sleep 60'
 stub ergon-term "[ -e $T/noterm ] && exit 1
 [ \"\$1\" = --class ] && shift 2
 script -qec \"\$(printf '%q ' \"\$@\")\" /dev/null </dev/null >/dev/null 2>&1"
 
-export PATH="$T/stub:$PATH" HOME="$T/home"
+export PATH="$T/stub:$PATH" HOME="$T/home" WAYLAND_DISPLAY=wayland-ergon-test
 export XDG_CACHE_HOME="$HOME/.cache" XDG_STATE_HOME="$HOME/.local/state" \
        XDG_DATA_HOME="$HOME/.local/share" XDG_CONFIG_HOME="$HOME/.config"
 unset ERGON_WELCOME ERGON
@@ -72,8 +77,8 @@ add=$(sed -n 's/^To add one: `\(.*\)`$/\1/p' <<<"$out")
 [ -n "$add" ] && grep -qF "\"usage: $add\"" "$REPO/bin/ergon-bundle" \
   && ok "how to add a bundle is ergon-bundle's own usage line: $add" \
   || bad "how to add a bundle is not ergon-bundle's usage line: '${add}'"
-[ ! -e "$STAMP" ] && [ "$(logged glow)" = 0 ] && ok "a pipe gets no glow and burns no stamp" \
-  || bad "a pipe ran glow or wrote the stamp"
+[ ! -e "$STAMP" ] && [ "$(logged glow)$(logged fuzzel)" = 00 ] && ok "a pipe gets no glow, opens no picker, burns no stamp" \
+  || bad "a pipe ran glow or fuzzel, or wrote the stamp: $(grep -E '^(glow|fuzzel) ' "$LOG" | tr '\n' ';')"
 
 echo "== a hung section"
 touch "$T/hang"
