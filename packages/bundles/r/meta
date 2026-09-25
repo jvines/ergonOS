@@ -1,0 +1,3 @@
+DESCRIPTION="R, for statistics that is not done in Python"
+SIZE_MB=400
+NOTE="CRAN compiles from source here: Arch ships no r-* packages and Posit's binary repo does not publish for Arch, so the first renv::restore() of a tidyverse project is a long build, once. Per-project renv, never a shared site library -- the same reason every Python project here gets its own .venv. For faster linear algebra, install blas-openblas by hand: it CONFLICTS with the blas that r depends on, so a bundle cannot do it unattended."

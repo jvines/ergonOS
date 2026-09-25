@@ -1,0 +1,38 @@
+# R itself. Pulls blas, lapack, cairo, pango, icu, pcre2 and tk as depends, so
+# plotting and Unicode work without anything further.
+r
+
+# Not optional in practice, whatever the package metadata says. `r` lists
+# gcc-fortran as an optdepend, but every CRAN package here is built from source
+# and a large share of the ones worth installing -- the whole matrix/statistics
+# end of the ecosystem -- have Fortran in them. Without it the first
+# install.packages() of anything real fails at compile time with a message about
+# a missing compiler, which is a bad first five minutes.
+gcc-fortran
+
+# The headers CRAN source builds reach for most often. Each one is the
+# dependency of a package almost every project ends up with:
+#   openssl/curl  -> openssl, curl, httr2, and anything that talks to an API
+#   libxml2       -> xml2, and rvest through it
+#   freetype2/harfbuzz/fribidi -> systemfonts, textshaping, ragg, which is how
+#                    ggplot2 renders text on Linux
+# Most of these are already present via the desktop, and `pacman --needed`
+# makes that a no-op -- but this bundle has to work on a headless install too,
+# where none of them is.
+openssl
+curl
+libxml2
+freetype2
+harfbuzz
+fribidi
+
+# renv shells out to git for package sources that are not on CRAN, which for
+# statistics means a lot of them.
+git
+
+# NOT blas-openblas. It would be the right BLAS, and it cannot go in this list:
+# it declares conflicts=[blas, cblas, lapack, lapacke] while replacing only
+# openblas-lapack, so against the blas that `r` itself depends on pacman treats
+# it as a conflict rather than a replacement, asks "Remove blas? [y/N]", and
+# --noconfirm answers N -- aborting the whole bundle transaction, including the
+# packages above it. The meta NOTE tells the user to do it by hand.
