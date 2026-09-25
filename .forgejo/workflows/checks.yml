@@ -245,8 +245,12 @@ jobs:
           # the line, so the branch name would be running as the runner user.
           REF: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
-          RUN_URL: ${{ github.server_url }}${{ github.repository }}/actions/runs/${{ github.run_number }}
+          # run_number, and the slash added here: see vm.yml's alert step.
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          RUN_N: ${{ github.run_number }}
         run: |
+          RUN_URL="${SERVER_URL%/}/$REPO/actions/runs/$RUN_N"
           [ -x "$ALERTER" ] || {
             echo "no notifier at $ALERTER: nobody has been told this run failed" >&2
             exit 1

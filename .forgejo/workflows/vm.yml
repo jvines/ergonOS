@@ -246,9 +246,17 @@ jobs:
           # /actions/runs/<n> by the per-repository index, while github.run_id
           # is the instance-wide primary key -- a URL built from run_id is a
           # 404, which is how ExoAutomata's smoke tests have been filing cards
-          # that link nowhere. github.server_url already ends in a slash.
-          RUN_URL: ${{ github.server_url }}${{ github.repository }}/actions/runs/${{ github.run_number }}
+          # that link nowhere.
+          #
+          # And the slash is added in the shell, not assumed. This used to say
+          # github.server_url already ends in one; it does not -- checks run
+          # 214 alerted "https://git.jvines.cljayvains/ergonOS/...". Stripping
+          # one first holds whichever way ROOT_URL is written.
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          RUN_N: ${{ github.run_number }}
         run: |
+          RUN_URL="${SERVER_URL%/}/$REPO/actions/runs/$RUN_N"
           [ -x "$ALERTER" ] || {
             echo "no notifier at $ALERTER: nobody has been told this run failed" >&2
             exit 1
