@@ -35,8 +35,18 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS + 1)); printf '   ok   %s\n' "$*"; }
 bad() { FAIL=$((FAIL + 1)); printf '   FAIL %s\n' "$*"; }
 
-command -v uv >/dev/null 2>&1 || {
-  echo "test-science: uv is not installed -- it is in packages/pacman" >&2
+# Find uv without assuming PATH. On an ergonOS machine it is /usr/bin/uv --
+# packages/pacman ships it -- but this also runs on the CI host, where the
+# forgejo-runner service has PATH=/usr/local/sbin:...:/bin and nothing else, so
+# a uv from the standalone installer in ~/.local/bin is invisible to it. That
+# cost one red run: the precondition below fired and the suite never started.
+UV=""
+for c in uv "$HOME/.local/bin/uv" /usr/bin/uv /usr/local/bin/uv; do
+  if command -v "$c" >/dev/null 2>&1; then UV=$(command -v "$c"); break; fi
+done
+[ -n "$UV" ] || {
+  echo "test-science: no uv on PATH, in ~/.local/bin or in /usr/bin" >&2
+  echo "              it is in packages/pacman; on a dev box, the installer" >&2
   exit 1
 }
 
@@ -48,7 +58,7 @@ trap 'rm -rf "$T"' EXIT
 export MPLCONFIGDIR="$T/mpl"
 
 echo "== lib/, under uv"
-run=$(cd "$REPO" && uv run --quiet --no-project \
+run=$(cd "$REPO" && "$UV" run --quiet --no-project \
         --with matplotlib --with pytest \
         python -m pytest test/science -q --no-header -p no:cacheprovider 2>&1)
 rc=$?
@@ -69,7 +79,7 @@ else
   bad "lib/ has a regression (pytest exit $rc)"
 fi
 
-ver=$(cd "$REPO" && uv run --quiet --no-project --with matplotlib \
+ver=$(cd "$REPO" && "$UV" run --quiet --no-project --with matplotlib \
         python -c 'import matplotlib; print(matplotlib.__version__)' 2>/dev/null)
 printf '   --   against matplotlib %s\n' "${ver:-unknown}"
 
