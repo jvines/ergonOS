@@ -38,6 +38,36 @@ while [ $# -gt 0 ]; do
 done
 
 [ -f pyproject.toml ] || { echo "ergon-repro: no pyproject.toml here — is this a project root?" >&2; exit 1; }
+
+# Guard before anything below can delete a byte: --with-data (and the
+# staleness check further down) replace $OUT/data wholesale, and $OUT must
+# never be able to resolve onto the project root, onto data/ itself, or
+# anywhere inside it -- `ergon repro --out . --with-data` must not be able to
+# delete the user's data. realpath -m tolerates a path that does not exist
+# yet, which is the ordinary case for OUT on a first run.
+PROJECT_ROOT=$(realpath -m "$PWD")
+DATA_REAL=$(realpath -m "$PWD/data")
+OUT_REAL=$(realpath -m "$OUT")
+refused=0
+case "$OUT_REAL" in
+  "$PROJECT_ROOT"|"$DATA_REAL")  refused=1 ;;
+  "$DATA_REAL"/*)                refused=1 ;;
+esac
+# The check above is on $OUT, but what `rm -rf` actually deletes below is
+# $OUT/data -- a project whose ROOT is itself named "data" (or that sits
+# under a directory named "data") lets $OUT/data resolve ONTO the project
+# root, or an ancestor of it, once $OUT points one level up, even though
+# $OUT_REAL itself matched none of the patterns above. Guard the literal rm
+# target too, not just $OUT.
+RM_REAL="$OUT_REAL/data"
+case "$PROJECT_ROOT/" in "$RM_REAL"/*) refused=1 ;; esac
+case "$DATA_REAL/"    in "$RM_REAL"/*) refused=1 ;; esac
+if [ "$refused" = 1 ]; then
+  echo "ergon-repro: --out $OUT resolves to the project root or into data/" >&2
+  echo "             refusing -- this command can replace \$OUT/data wholesale" >&2
+  exit 2
+fi
+
 mkdir -p "$OUT"
 
 cp pyproject.toml "$OUT/"
@@ -72,15 +102,97 @@ fi
 } > "$OUT/git.txt"
 printf '   ok  git.txt\n'
 
+# True iff $OUT/data holds exactly the files data.sha256 lists, with matching
+# hashes. Used below to catch a copy left over from an earlier --with-data
+# run that no longer describes today's data/ -- a bundle that lies about its
+# own payload must not exit 0.
+data_matches_manifest() {
+  local have want
+  have=$(cd "$OUT/data" && find . -type f -printf '%P\n' | sort)
+  # Manifest lines are "<hex>  data/relpath" (sha256sum's own format, one or
+  # two spaces before a * in binary mode); strip the hash and the leading
+  # "data/" that `find data` put on every path to land on the same relpaths
+  # find above just produced under $OUT/data.
+  want=$(sed -E 's/^[0-9a-f]+ [ *]//' "$OUT/data.sha256" | sed 's|^data/||' | sort)
+  # An empty data/ writes an empty manifest, which sha256sum -c rejects as
+  # having no checksum lines -- a false "stale" for a payload that matches.
+  [ "$have" = "$want" ] || return 1
+  [ ! -s "$OUT/data.sha256" ] || (cd "$OUT" && sha256sum --quiet -c data.sha256) >/dev/null 2>&1
+}
+
 if [ -d data ]; then
+  # A symlink whose target is unreachable (NAS not mounted, target moved or
+  # deleted) is invisible to the -L pipeline below rather than an error: under
+  # -L, `find -type f` reports a symlink as the type of what it points AT, so
+  # a broken one matches neither -type f nor anything else and is just left
+  # out, silently, with find's own exit status staying 0. Catch it here by
+  # name, before anything is deleted, so a broken link can never make the
+  # manifest quietly incomplete or make --with-data wipe a good payload only
+  # to fail partway through cp on the same file.
+  broken=$(find -L data -type l)
+  if [ -n "$broken" ]; then
+    printf '   !!  data/ has a symlink pointing at nothing -- cannot hash or copy it:\n' >&2
+    printf '%s\n' "$broken" | sed 's/^/       /' >&2
+    exit 1
+  fi
+
   # Hash the inputs rather than shipping them. Sorted, so two manifests of the
-  # same data compare equal regardless of filesystem order.
-  find data -type f -print0 | sort -z | xargs -0 -r sha256sum > "$OUT/data.sha256" 2>/dev/null || true
+  # same data compare equal regardless of filesystem order. -L on both find and
+  # cp below: data/ routinely symlinks large files off a NAS, and plain `find
+  # -type f` skips a symlinked file (silently dropping it from the manifest)
+  # while plain `cp -r` copies the symlink itself -- a dangling absolute path
+  # for anyone else who unpacks the bundle. Following the link makes the
+  # manifest and the payload describe the same bytes.
+  #
+  # No `2>/dev/null || true`: a file sha256sum cannot read (permission denied)
+  # used to be swallowed, leaving a manifest that silently omits it. A
+  # manifest that cannot be complete is an error, not a partial success --
+  # name the file and fail.
+  if ! find -L data -type f -print0 | sort -z | xargs -0 -r sha256sum \
+       > "$OUT/data.sha256" 2>"$OUT/.data.sha256.err"; then
+    printf '   !!  data.sha256 incomplete -- could not hash every file under data/:\n' >&2
+    sed 's/^/       /' "$OUT/.data.sha256.err" >&2
+    rm -f "$OUT/.data.sha256.err" "$OUT/data.sha256"
+    exit 1
+  fi
+  rm -f "$OUT/.data.sha256.err"
   printf '   ok  data.sha256 (%s files, %s)\n' \
     "$(wc -l < "$OUT/data.sha256")" "$(du -sh data 2>/dev/null | cut -f1)"
+
   if [ "$WITH_DATA" = 1 ]; then
-    cp -r data "$OUT/data"
+    # Replace wholesale, never accumulate. `cp -r data "$OUT/data"` alone
+    # nests a second copy inside the first when $OUT/data already exists
+    # (from a previous run of this same command) instead of refreshing it,
+    # and never drops a file removed from data/ since. rm -rf first makes
+    # every run's payload exactly today's data/, whatever was there before.
+    rm -rf "$OUT/data"
+    cp -rL data "$OUT/data"
     printf '   ok  data/ copied (--with-data)\n'
+  elif [ -e "$OUT/data" ]; then
+    # Not ours to delete on a whim -- it may be exactly what the user wants
+    # kept -- but if it no longer matches the manifest just written above, it
+    # is a leftover from an earlier --with-data run and describes a data/
+    # that no longer exists. Say so and fail rather than hand back a bundle
+    # whose payload and manifest disagree.
+    if ! data_matches_manifest; then
+      printf '   !!  %s/data no longer matches data/ -- it is left from an earlier\n' "$OUT" >&2
+      printf '       --with-data run. Remove it, or re-run with --with-data.\n' >&2
+      exit 1
+    fi
+  fi
+else
+  # data/ was there for an earlier run and is gone now (removed, renamed) --
+  # there is no fresh manifest to write and nothing to check a leftover
+  # payload against, but the bundle must not go on describing inputs that no
+  # longer exist just because this branch has nothing to compare.
+  rm -f "$OUT/data.sha256"
+  if [ "$WITH_DATA" = 1 ]; then
+    # The payload is exactly today's data/, and today there is none.
+    rm -rf "$OUT/data"
+  elif [ -e "$OUT/data" ]; then
+    printf '   !!  %s/data is left from an earlier run -- data/ itself is gone now.\n' "$OUT" >&2
+    printf '       Remove it, or re-run with --with-data.\n' >&2
+    exit 1
   fi
 fi
 

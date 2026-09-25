@@ -95,12 +95,24 @@ case "$BACKEND" in
       curl -LsSf https://astral.sh/uv/install.sh | sh) && ~/.local/bin/uv sync --frozen --quiet \
       || uv sync --frozen --quiet"
     printf '   ·   running\n'
+    # RC=0; ssh ... || RC=$? -- not `RC=$?` on the line after, which under
+    # set -euo pipefail never runs at all. errexit fires on the ssh command's
+    # own non-zero status before that assignment is reached, so a failing run
+    # used to skip fetch_back and jump straight past it to the shell's own
+    # exit -- exactly the run whose output you most want back. The `||` makes
+    # this ssh call the one that fails without killing the script.
+    RC=0
     # shellcheck disable=SC2086
     ssh $SSH_OPTS "$TARGET" "cd $REMOTE_DIR && .venv/bin/python -c 'pass' && \
-      PATH=$REMOTE_DIR/.venv/bin:\$PATH $*"
-    RC=$?
+      PATH=$REMOTE_DIR/.venv/bin:\$PATH $*" || RC=$?
+    # "fetching anyway" is only true when --fetch was given -- without it,
+    # FETCH="" makes fetch_back() a no-op, and telling the person debugging a
+    # failed run that something is being fetched when nothing is would be
+    # exactly the wrong kind of confident.
+    [ "$RC" = 0 ] || printf '   !!   run failed (exit %s)%s\n' "$RC" \
+      "$([ -n "$FETCH" ] && printf -- ' -- fetching what came back anyway')" >&2
     fetch_back
-    exit $RC
+    exit "$RC"
     ;;
   slurm)
     send
@@ -113,13 +125,18 @@ case "$BACKEND" in
     command -v apptainer >/dev/null || { echo "ergon-ship: apptainer not installed here" >&2; exit 1; }
     "$(dirname "$(readlink -f "$0")")/ergon-repro" --out .ship-repro >/dev/null
     send
+    # Same shape as the ssh arm above, and the same bug when it was `RC=$?` on
+    # its own line: a failed apptainer exec never got that far under errexit.
+    RC=0
     # shellcheck disable=SC2086
     ssh $SSH_OPTS "$TARGET" "cd $REMOTE_DIR/.ship-repro && \
       apptainer build --fakeroot repro.sif apptainer.def && \
-      cd $REMOTE_DIR && apptainer exec .ship-repro/repro.sif $*"
-    RC=$?
+      cd $REMOTE_DIR && apptainer exec .ship-repro/repro.sif $*" || RC=$?
+    # Same "only if --fetch was given" gate as the ssh arm above.
+    [ "$RC" = 0 ] || printf '   !!   run failed (exit %s)%s\n' "$RC" \
+      "$([ -n "$FETCH" ] && printf -- ' -- fetching what came back anyway')" >&2
     fetch_back
-    exit $RC
+    exit "$RC"
     ;;
   *)
     echo "ergon-ship: no backend '$BACKEND'." >&2
