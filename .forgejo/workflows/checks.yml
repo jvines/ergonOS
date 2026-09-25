@@ -135,6 +135,17 @@ jobs:
       - name: The background follows the palette
         run: cd "$CI_DIR" && ./bin/test-wallpaper.sh
 
+      # lib/ -- the science tooling, which until now was the only part of this
+      # repo with no gate at all. Every step above this line tests the desktop,
+      # the installer or the system; none of them imports a single line of the
+      # code the README is actually about.
+      #
+      # Builds its own environment with uv rather than using the runner user's
+      # pyfleet venv, so it cannot go red because a person has not run
+      # `pyfleet sync`. Cold cache costs a matplotlib download; warm is seconds.
+      - name: The science tooling in lib/
+        run: cd "$CI_DIR" && ./bin/test-science.sh
+
       # Every desktop config through the parser that will actually read it.
       # This existed and was wired into nothing, which is how a config could be
       # rejected by Hyprland and still pass every check in this file.
