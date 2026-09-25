@@ -64,8 +64,9 @@ page() {
   if [ -n "$add" ]; then printf '\nTo add one: `%s`\n' "$add"
   else printf '\n_ergon-bundle has no usage line for add._\n'; fi
   section Topics explain --list
-  # --help, never bare `ergon`: that opens a picker when stdout is not a
-  # terminal and a compositor is up (ERGON-56), which is exactly this.
+  # --help, not bare `ergon`: bare used to open a picker when stdout was not a
+  # terminal and a compositor was up (ERGON-56), which is exactly this, and
+  # --help is the form whose contract is "print and exit".
   section Commands --help
 }
 
