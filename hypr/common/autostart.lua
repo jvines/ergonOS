@@ -14,8 +14,8 @@ hl.on("hyprland.start", function()
   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE HYPRLAND_INSTANCE_SIGNATURE")
 
   -- Secrets. Chromium and Electron apps (Discord, VS Code) keep their key in
-  -- the Secret Service -- once uwsm/env-hyprland points them at it, ERGON-64 --
-  -- and otherwise store it in plaintext or in memory. Firefox uses its own
+  -- the Secret Service once uwsm/env-hyprland.d/ergon-keyring points them at
+  -- it (ERGON-64), and otherwise in plaintext or in memory. Firefox uses its own
   -- key4.db. PAM's auto_start usually has the daemon up already; measured,
   -- this then only attaches to it.
   hl.exec_cmd("gnome-keyring-daemon --start --components=secrets")

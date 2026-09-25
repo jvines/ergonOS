@@ -605,7 +605,7 @@ EOF
 sudo systemctl enable greetd >/dev/null 2>&1 || true
 ok "greetd + tuigreet on vt1"
 
-# ERGON-64: unlock the login keyring with the login password. uwsm/env-hyprland
+# ERGON-64: unlock the login keyring with the login password. uwsm/env-hyprland.d
 # sends Electron apps' keys there, and with it locked -- or never created -- the
 # first one D-Bus-activates gcr-prompter and waits behind "Unlock Login
 # Keyring"; cancelling leaves what it stored undecryptable. greetd's PAM file
@@ -613,32 +613,39 @@ ok "greetd + tuigreet on vt1"
 # auth after the include, where the password has been checked, and session
 # after it, where pam_systemd has made the runtime dir the daemon listens in.
 # Fingerprint never passes here (hyprlock asks fprintd over D-Bus), so a greetd
-# login always carries a password.
+# login always carries a password. And passwd, after its include: without it an
+# ordinary `passwd` leaves the keyring on the old password, and every later
+# login reads "the password for the login keyring was invalid" -- locked again.
 #
 # An edit, not a file: the rest is the package's, and pacman keeps an edited
 # backup file across upgrades. Keyring lines already there are dropped first, so
-# a re-run -- `ergon sync` on an installed machine -- leaves one of each.
+# a re-run -- `ergon sync` on an installed machine -- leaves one of each. Each
+# line hangs off an include only one of the two files has.
 _pam_kr=$(cat <<'PAMKR'
-/^[[:space:]]*-?(auth|session)[[:space:]].*pam_gnome_keyring\.so/ { next }
+/^[[:space:]]*-?(auth|session|password)[[:space:]].*pam_gnome_keyring\.so/ { next }
 { print }
 $1 == "auth" && $2 == "include" && $3 == "system-local-login" { print "auth       optional     pam_gnome_keyring.so" }
 $1 == "session" && $2 == "include" && $3 == "system-local-login" { print "session    optional     pam_gnome_keyring.so auto_start" }
+$1 == "password" && $2 == "include" && $3 == "system-auth" { print "password   optional     pam_gnome_keyring.so" }
 PAMKR
 )
-_pam_new=$(awk "$_pam_kr" /etc/pam.d/greetd 2>/dev/null) || _pam_new=
-if [ -z "$_pam_new" ]; then
-  # Never write an empty result: greetd would fall through to /etc/pam.d/other,
-  # which refuses every login.
-  warn "could not read /etc/pam.d/greetd, so nothing unlocks the login keyring at login"
-elif [ "$(grep -cE '^(auth|session) +optional +pam_gnome_keyring' <<<"$_pam_new")" != 2 ]; then
-  # Both lines hang off the includes. A greetd that stopped including
-  # system-local-login needs a person, not a guess about where they go.
-  warn "/etc/pam.d/greetd no longer includes system-local-login; the login keyring is left locked"
-elif _changed /etc/pam.d/greetd <<<"$_pam_new"; then
-  ok "greetd unlocks the login keyring (pam_gnome_keyring)"
-else
-  skip "greetd already unlocks the login keyring"
-fi
+for _pam in greetd:2 passwd:1; do   # the file, and how many keyring lines it ends with
+  _pf=/etc/pam.d/${_pam%:*}
+  _pam_new=$(awk "$_pam_kr" "$_pf" 2>/dev/null) || _pam_new=
+  if [ -z "$_pam_new" ]; then
+    # Never write an empty result: PAM would fall through to /etc/pam.d/other,
+    # which refuses everything -- for greetd, every login.
+    warn "could not read $_pf, so it does not keep the login keyring in step"
+  elif [ "$(grep -cE '^(auth|session|password) +optional +pam_gnome_keyring' <<<"$_pam_new")" != "${_pam#*:}" ]; then
+    # The lines hang off the includes. A file that stopped including
+    # system-local-login / system-auth needs a person, not a guess.
+    warn "$_pf no longer has the include pam_gnome_keyring goes after; the login keyring is left out of it"
+  elif _changed "$_pf" <<<"$_pam_new"; then
+    ok "${_pam%:*} keeps the login keyring in step with the login password (pam_gnome_keyring)"
+  else
+    skip "${_pam%:*} already keeps the login keyring in step"
+  fi
+done
 
 # Group membership, both of which are silent failures rather than errors:
 #   video  -- brightnessctl writes /sys/class/backlight; without it the

@@ -480,10 +480,16 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     case "$(printf '%s\n' "$menv" | grep '^GNOME_DESKTOP_SESSION_ID=')" in
       GNOME_DESKTOP_SESSION_ID=) rec ok "keyring-env" "GNOME_DESKTOP_SESSION_ID is set and empty: Electron apps keep their key in the keyring" ;;
       "") rec warn "keyring-env" "no GNOME_DESKTOP_SESSION_ID in the session — Electron apps store secrets in plaintext. Not started through uwsm? (ergon explain troubleshooting)" ;;
-      *)  rec warn "keyring-env" "GNOME_DESKTOP_SESSION_ID is not empty — xdg-open on a directory fails. uwsm/env-hyprland sets it empty" ;;
+      *)  rec warn "keyring-env" "GNOME_DESKTOP_SESSION_ID is not empty — xdg-open on a directory fails. uwsm/env-hyprland.d/ergon-keyring sets it empty" ;;
     esac
     if [ "$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.freedesktop.secrets 2>/dev/null)" != "b true" ]; then
       rec ok "login-keyring" "no Secret Service running; nothing to check"
+    elif dk=$(busctl --user call org.freedesktop.secrets /org/freedesktop/secrets org.freedesktop.Secret.Service ReadAlias s default 2>/dev/null) \
+         && ! printf '%s\n' "$dk" | grep -qxE 'o "(/|/org/freedesktop/secrets/collection/login)"'; then
+      # Apps store in whatever "default" names, and PAM makes and unlocks only
+      # "login". A keyring an app made the default before ERGON-64 stays so, and
+      # locked, behind a dialog -- while login itself reads unlocked (measured).
+      rec warn "login-keyring" "apps store in a default keyring that is not login (~/.local/share/keyrings/default), and PAM unlocks only login — ergon explain troubleshooting"
     else
       case "$(busctl --user get-property org.freedesktop.secrets /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked 2>/dev/null)" in
         "b false") rec ok "login-keyring" "unlocked" ;;

@@ -176,10 +176,11 @@ else
   # the module fires, the command is missing, and nothing surfaces it.
   link environment.d/10-ergon-path.conf .config/environment.d/10-ergon-path.conf
   # ERGON-64: what makes Electron apps keep their key in the keyring rather than
-  # in plaintext. uwsm's own env file, because environment.d drops the empty
-  # value it needs (the file says why). The FILE and not ~/.config/uwsm: `uwsm
-  # select` writes default-id there, so that directory may already be real.
-  link uwsm/env-hyprland .config/uwsm/env-hyprland
+  # in plaintext. uwsm's own env, because environment.d drops the empty value it
+  # needs (the file says why). A drop-in uwsm reads after env-hyprland, and not
+  # env-hyprland itself: that is where uwsm has users put their own variables,
+  # and linking over it replaced a stow symlink and stopped at a real file.
+  link uwsm/env-hyprland.d/ergon-keyring .config/uwsm/env-hyprland.d/ergon-keyring
 
   if [ "$CHECK" != 1 ]; then
     mkdir -p "$HOME/.config/systemd/user"

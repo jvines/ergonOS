@@ -1,7 +1,7 @@
 # Read by uwsm, not by any shell you log into. For `uwsm start -D Hyprland`
-# (greetd's command) it sources ~/.config/uwsm/env and then this file --
-# env-<desktop name, lowercased> -- with `.` under sh, and keeps only what is
-# EXPORTED: a bare assignment here is read and then dropped.
+# (greetd's command) it sources ~/.config/uwsm/env, then env-hyprland (yours),
+# then every file in env-hyprland.d/ -- this is one -- with `.` under sh, and
+# keeps only what is EXPORTED: a bare assignment here is read and then dropped.
 #
 # ERGON-64. Chromium picks where an Electron app keeps its encryption key from
 # the desktop name, and "Hyprland" is not one it knows: Discord then stores its

@@ -387,7 +387,7 @@ pam_ok() {  # each keyring line exactly once, straight after the include it exte
        END { exit !(a == 1 && s == 1 && n == 2) }' "$1"
 }
 if [ ! -s "$T/pam.awk" ]; then
-  bad "provisioning's greetd PAM edit is gone, or its PAMKR heredoc moved"
+  bad "provisioning's keyring PAM edit is gone, or its PAMKR heredoc moved"
 else
   awk -f "$T/pam.awk" "$T/greetd" > "$T/pam1"; awk -f "$T/pam.awk" "$T/pam1" > "$T/pam2"
   # auth after the include, where pam_unix has checked the password; session
@@ -398,19 +398,26 @@ else
     || bad "  a second run changed it again: $(diff "$T/pam1" "$T/pam2" | tr '\n' ' ')"
   [ "$(grep -v pam_gnome_keyring "$T/pam1")" = "$(cat "$T/greetd")" ] \
     && ok "  and leaves the package's own lines as they were" || bad "  it changed the package's lines"
+  # passwd, shadow 4.20's file, tabs and all: one password line after its include
+  # and nothing else, or `passwd` leaves the keyring on the old password.
+  printf '#%%PAM-1.0\nauth\t\tinclude\t\tsystem-auth\naccount\t\tinclude\t\tsystem-auth\npassword\tinclude\t\tsystem-auth\n' > "$T/passwd"
+  awk -f "$T/pam.awk" "$T/passwd" > "$T/pw1"
+  [ "$(sed 1,3d "$T/pw1" | tr -s ' \t' ' ')" = "$(printf 'password include system-auth\npassword optional pam_gnome_keyring.so')" ] \
+    && awk -f "$T/pam.awk" "$T/pw1" | cmp -s - "$T/pw1" && ok "passwd's PAM gets pam_gnome_keyring once, after its include, and keeps it" \
+    || bad "passwd's keyring line is missing, doubled, misplaced or moves on a re-run: $(tr '\n' '|' < "$T/pw1")"
 fi
 
 # install.sh's half, through its own --check: a graphical host whose HOME has
 # nothing in it must be told the link is coming.
-mkdir -p "$T/inst/uwsm" "$T/inst/hosts/testhost"
-cp "$REPO/install.sh" "$T/inst/" && cp "$REPO/uwsm/env-hyprland" "$T/inst/uwsm/"
+mkdir -p "$T/inst/uwsm/env-hyprland.d" "$T/inst/hosts/testhost"
+cp "$REPO/install.sh" "$T/inst/" && cp "$REPO/uwsm/env-hyprland.d/ergon-keyring" "$T/inst/uwsm/env-hyprland.d/"
 printf 'GRAPHICAL=1\n' > "$T/inst/hosts/testhost/host.env"
 # Captured, not piped into grep -q: under pipefail, grep leaving early kills
 # install.sh with SIGPIPE and a match reads as a miss.
 out=$("$T/inst/install.sh" --check 2>/dev/null)
-grep -qxF '   would link  .config/uwsm/env-hyprland -> uwsm/env-hyprland' <<<"$out" \
-  && ok "install.sh links uwsm/env-hyprland into ~/.config/uwsm" \
-  || bad "install.sh --check on a graphical host does not plan the uwsm/env-hyprland link"
+grep -qxF '   would link  .config/uwsm/env-hyprland.d/ergon-keyring -> uwsm/env-hyprland.d/ergon-keyring' <<<"$out" \
+  && ok "install.sh links the keyring drop-in into ~/.config/uwsm/env-hyprland.d" \
+  || bad "install.sh --check on a graphical host does not plan the env-hyprland.d/ergon-keyring link"
 
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

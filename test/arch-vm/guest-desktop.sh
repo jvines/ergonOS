@@ -313,6 +313,10 @@ else
 fi
 [ -e /usr/lib/security/pam_gnome_keyring.so ] && ok "  and the module is where PAM looks for it" \
   || bad "  but /usr/lib/security/pam_gnome_keyring.so does not exist"
+if [ "$(grep -c pam_gnome_keyring /etc/pam.d/passwd)" = 1 ] && grep -A1 -E '^password[[:space:]]+include[[:space:]]+system-auth' \
+     /etc/pam.d/passwd | grep -qE '^password[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so$'; then
+  ok "/etc/pam.d/passwd re-keys the login keyring, once, right after its include"
+else bad "/etc/pam.d/passwd does not carry pam_gnome_keyring once after its include"; sed 's/^/     /' /etc/pam.d/passwd; fi
 
 # --- ERGON-20: the firewall, and where a published port binds --------------
 # bin/test-firewall.sh reads the ruleset provisioning WRITES. Only a booted
@@ -861,7 +865,7 @@ for pair in \
   ".config/fuzzel:the launcher" \
   ".config/gtk-3.0/settings.ini:GTK3 theme" \
   ".config/environment.d/10-ergon-path.conf:session PATH" \
-  ".config/uwsm/env-hyprland:the Electron keyring variable"; do
+  ".config/uwsm/env-hyprland.d/ergon-keyring:the Electron keyring variable"; do
   f=${pair%%:*}; what=${pair#*:}
   [ -e "$H/$f" ] && ok "install.sh linked $what" || bad "install.sh did not link $f ($what)"
 done
@@ -926,10 +930,10 @@ fi
 
 # The same argument for uwsm's env files, which a greetd login gets from uwsm
 # and this one does not (ERGON-64: GNOME_DESKTOP_SESSION_ID). Loaded as uwsm
-# loads them -- env, then env-<desktop name, lowercased>, each with `.` and NO
-# set -a: uwsm keeps only what a file exports, so this must drop the same.
+# loads them -- env, then env-<desktop name, lowercased>, each followed by its
+# .d/ drop-ins, with `.` and NO set -a: uwsm keeps only what a file exports.
 for f in env "env-$(printf %s "$XDG_CURRENT_DESKTOP" | tr '[:upper:]' '[:lower:]')"; do
-  [ -r "$HOME/.config/uwsm/$f" ] && . "$HOME/.config/uwsm/$f"
+  for g in "$HOME/.config/uwsm/$f" "$HOME/.config/uwsm/$f.d"/*; do [ -f "$g" ] && [ -r "$g" ] && . "$g"; done
 done
 
 exec Hyprland -c "$HOME/.config/hypr/hyprland.lua"
@@ -965,7 +969,7 @@ ok "Hyprland is running (instance $SIG)"
 # so everything it launches -- actually carries. Set, and empty.
 _henv=$(tr '\0' '\n' < "/proc/$(pgrep -x Hyprland | head -1)/environ" 2>/dev/null)
 if grep -qx 'GNOME_DESKTOP_SESSION_ID=' <<<"$_henv"; then
-  ok "the compositor carries GNOME_DESKTOP_SESSION_ID, empty, from the shipped uwsm/env-hyprland"
+  ok "the compositor carries GNOME_DESKTOP_SESSION_ID, empty, from the shipped uwsm drop-in"
 else
   bad "the compositor's GNOME_DESKTOP_SESSION_ID is '$(grep '^GNOME_DESKTOP_SESSION_ID' <<<"$_henv" || echo absent)', not set and empty"
 fi

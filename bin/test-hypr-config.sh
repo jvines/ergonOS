@@ -185,13 +185,13 @@ PYEOF
   run "timeout 5 hyprlock -c /home/t/.config/hypr/hyprlock.conf" \
     | grep -iE "config error|does not exist|Config has errors" || true
 
-  # ERGON-64. uwsm/env-hyprland through uwsm'"'"'s own loader: the file it picks
-  # for -D Hyprland, sourced the way it sources it (sh, `.`, then `env -0`, so
+  # ERGON-64. uwsm/env-hyprland.d/ergon-keyring through uwsm'"'"'s own loader, which
+  # picks env-hyprland.d/ for -D Hyprland and sources it (sh, `.`, then `env -0`, so
   # only what is EXPORTED survives). The aux file is what main.py hands the
   # loader; if that interface moves, the mark goes missing and this fails.
   echo "@@uwsm-env"
-  install -d -o t -g t /home/t/.config/uwsm
-  install -o t -g t -m 644 /tmp/repo/uwsm/env-hyprland /home/t/.config/uwsm/env-hyprland
+  install -d -o t -g t /home/t/.config/uwsm /home/t/.config/uwsm/env-hyprland.d
+  install -o t -g t -m 644 /tmp/repo/uwsm/env-hyprland.d/ergon-keyring /home/t/.config/uwsm/env-hyprland.d/
   printf "%s\n" __SELF_NAME__=uwsm __WM_BIN_ID__=start_hyprland __WM_DESKTOP_NAMES__=Hyprland \
     __WM_FIRST_DESKTOP_NAME__=Hyprland __WM_DESKTOP_NAMES_EXCLUSIVE__=true __LOAD_PROFILE__=false \
     __RANDOM_MARK__=ergon64mark > /tmp/aux
