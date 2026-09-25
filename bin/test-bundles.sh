@@ -11,9 +11,12 @@
 # COVERS: meta read as data, list grammars, what a bundle directory may hold,
 # consent, the copy and its .source, sync without the source, the ledger of
 # what each bundle installed and remove taking only that, the keep-set
-# (base system and other bundles), update, and built-in add/remove.
+# (base system and other bundles), update, built-in add/remove, and that every
+# git line names a ref and every built-in one a full commit.
 #
-# DOES NOT COVER: real pacman, uv or ssh. That is test-hypr-session.sh.
+# DOES NOT COVER: whether any of it resolves. The stubs install anything, so a
+# name that is not a package and a pin to a commit that does not exist pass
+# here -- test-bundles-resolve.sh asks the real indexes. Nor ssh.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -26,6 +29,7 @@ check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi
 has()  { grep -qF -- "$2" "$1" 2>/dev/null; }
 hasx() { grep -qxF -- "$2" "$1" 2>/dev/null; }
 not()  { ! "$@"; }
+pinned() { [[ $1 =~ @[0-9a-f]{40}$ ]]; }
 
 # --- a throwaway ergonOS, and stubs in front of everything that runs as root --
 E=$T/ergon
@@ -96,11 +100,16 @@ reset_logs() { rm -f "$T"/log/* "$T/violations"; }
 
 # --- the source: one good bundle and one bad bundle per attack ----------------
 P=$T/pub
-mkdir -p "$P"/{demo,evil,inject,pyinject,nameless,link,script,notebooks}
+mkdir -p "$P"/{demo,evil,inject,pyinject,nameless,link,script,notebooks,refless,sshrefless,sshpin}
 printf 'DESCRIPTION="Demo tools"\nSIZE_MB=1\n' > "$P/demo/meta"
 printf 'figlet\njulia   # also base: must survive remove\n' > "$P/demo/pacman"
 printf 'tomli-w' > "$P/demo/python"        # no trailing newline, on purpose
-printf 'demopkg @ git+https://example.org/me/demo.git\n' > "$P/demo/git"
+printf 'demopkg @ git+https://example.org/me/demo.git@v1.0\n' > "$P/demo/git"
+# The ssh pair is the trap in the ref grammar: git@ is the authority, not a ref.
+printf 'DESCRIPTION="x"\n' | tee "$P"/{refless,sshrefless,sshpin}/meta > /dev/null
+printf 'demopkg @ git+https://example.org/me/x.git\n' > "$P/refless/git"
+printf 'sshpkg @ git+ssh://git@git.example.org/me/x.git\n' > "$P/sshrefless/git"
+printf 'sshpkg @ git+ssh://git@git.example.org:2222/me/x.git@v2\n' > "$P/sshpin/git"
 printf 'DESCRIPTION="$(touch %s/pwned)"\n' "$T" > "$P/evil/meta"
 printf 'figlet\n' > "$P/evil/pacman"
 printf 'DESCRIPTION="x"\n' | tee "$P/inject/meta" "$P/pyinject/meta" "$P/nameless/meta" "$P/link/meta" "$P/script/meta" "$P/notebooks/meta" > /dev/null
@@ -116,6 +125,15 @@ for d in "$E"/packages/bundles/*/; do
   b=$(basename "$d")
   check "info $b parses" run info "$b"
 done
+# A full commit, not merely a ref. The grammar takes any ref because a third
+# party's bundle is its author's call; these are this repo's, and a tag can be
+# moved and a branch is not a pin at all. Nothing here fetches them: whether a
+# pin exists is test-bundles-resolve.sh's question.
+for g in "$REPO"/packages/bundles/*/git; do
+  while IFS= read -r l; do
+    check "${g#"$REPO/packages/bundles/"} pins a full commit: ${l%% @ *}" pinned "$l"
+  done < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$g")
+done
 check "list runs and executes nothing from meta" run list
 cp -r "$P/evil" "$E/packages/bundles/evil"
 run list; run info evil
@@ -124,7 +142,7 @@ rm -rf "$E/packages/bundles/evil"
 
 echo "== bad sources are refused before anything installs"
 reset_logs
-for c in evil inject pyinject nameless link script; do
+for c in evil inject pyinject nameless link script refless sshrefless; do
   run add --yes "$P//$c"
   check "$c refused" test "$?" -ne 0
 done
@@ -132,6 +150,10 @@ check "nothing reached pacman or pyfleet" test ! -e "$T/log/pacman" -a ! -e "$T/
 check "nothing was copied" test ! -e "$COPY"
 check "no canary" test ! -e "$T/pwned"
 run add --yes "$P//inject"; check "the refusal names the file and line" has "$T/out" "inject/pacman:2"
+run add --yes "$P//refless"
+check "a git line with no ref is refused, saying why" has "$T/out" "refless/git:1: 'demopkg @ git+https://example.org/me/x.git' names no ref: a URL alone installs whatever the default branch is that day"
+run add --yes "$P//sshrefless"; check "  and the @ of ssh://git@host is not a ref" has "$T/out" "sshrefless/git:1: 'sshpkg @ git+ssh://git@git.example.org/me/x.git' names no ref"
+run info "$P//sshpin"; check "an ssh://git@host:port/...@ref line is accepted" test "$?" -eq 0
 run add --yes "$P//notebooks"; check "a copy may not take a built-in's name" has "$T/out" "is a built-in bundle"
 run add --yes "github:me/overlay"; check "a source must name its bundle" has "$T/out" "name the bundle"
 run add --yes "http://example.org/x.git//demo"; check "http is refused" has "$T/out" "unauthenticated"
@@ -146,7 +168,7 @@ check "  and nothing installed" test ! -e "$T/log/pacman"
 run add --yes "$P//demo@v1"
 check "add --yes succeeds" test "$?" -eq 0
 check "pacman got exactly the list, after --" hasx "$T/log/pacman" "-S --needed --noconfirm -- figlet julia"
-check "pyfleet got python then git, after --" hasx "$T/log/pyfleet" "add -- tomli-w demopkg @ git+https://example.org/me/demo.git"
+check "pyfleet got python then git, after --" hasx "$T/log/pyfleet" "add -- tomli-w demopkg @ git+https://example.org/me/demo.git@v1.0"
 check ".source records the commit" hasx "$COPY/demo/.source" "commit=$(git -C "$P" rev-parse v1)"
 check ".source records the ref" hasx "$COPY/demo/.source" "ref=v1"
 check "host.env BUNDLES stays built-ins only" hasx "$HE" 'BUNDLES=""'
@@ -163,6 +185,12 @@ mv "$T/pub.away" "$P"
 printf '%s\n' '--evil' >> "$COPY/demo/pacman"; reset_logs
 run sync; check "a copy edited into an invalid state is skipped" test ! -e "$T/log/pacman"
 git -C "$P" show v1:demo/pacman > "$COPY/demo/pacman"
+# A copy committed before refs were required. It must not install the default
+# branch on the next reprovision, and "not valid" alone would not say why.
+printf 'demopkg @ git+https://example.org/me/demo.git\n' > "$COPY/demo/git"; reset_logs
+run sync; check "sync skips a copy with a ref-less git line" test ! -e "$T/log/pacman" -a ! -e "$T/log/pyfleet"
+check "  and says it names no ref" has "$T/out" "demo/git:1: 'demopkg @ git+https://example.org/me/demo.git' names no ref"
+git -C "$P" show v1:demo/git > "$COPY/demo/git"
 
 echo "== remove: the keep-set"
 mkdir -p "$E/packages/bundles/other"

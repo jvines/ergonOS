@@ -72,14 +72,25 @@ _token_ok() {  # _token_ok <kind> <token>
   local pkg='^[a-z0-9@_+][a-z0-9@._+-]{0,127}$'
   local op='(==|!=|<=|>=|~=|<|>)[A-Za-z0-9.*+!_-]+'
   local py="^[A-Za-z0-9][A-Za-z0-9._-]*(\\[[A-Za-z0-9._,-]+\\])?(${op}(,${op})*)?\$"
-  # NAME @ git+URL. The name is required: pyfleet drops by distribution name,
-  # and a repository is often not named what it installs as (nereus-py is
+  # NAME @ git+URL@REF. The name is required: pyfleet drops by distribution
+  # name, and a repository is often not named what it installs as (nereus-py is
   # astronereus), so dropping by the URL's last segment silently removed nothing.
-  local git='^[A-Za-z0-9][A-Za-z0-9._-]* @ git\+(https|ssh)://[A-Za-z0-9][A-Za-z0-9._~:/@+-]*$'
+  #
+  # So is the REF (ERGON-60). A URL alone installs whatever the default branch
+  # is that day, and for the built-ins that is research code still being
+  # written. The path may not contain `@`, and a path must follow the host
+  # before a ref can start -- so the `@` in ssh://git@host/me/x.git is the
+  # authority's, and that line has no ref rather than a ref of host/me/x.git.
+  local url='git\+(https|ssh)://([A-Za-z0-9._~-]+@)?[A-Za-z0-9][A-Za-z0-9._~:+-]*/[A-Za-z0-9._~:/+-]*'
+  local git="^[A-Za-z0-9][A-Za-z0-9._-]* @ ${url}@([A-Za-z0-9][A-Za-z0-9._/-]*)\$"
+  local noref="^[A-Za-z0-9][A-Za-z0-9._-]* @ ${url}\$"
   case $1 in
     pacman|aur) [[ $2 =~ $pkg ]] ;;
     python)     [[ $2 =~ $py ]] ;;
-    git)        [[ $2 =~ $git ]] ;;
+    git)        [[ $2 =~ $git && ${BASH_REMATCH[3]} != *..* ]] ;;
+    # A git line that would be valid with a ref, so the refusal can say that
+    # instead of "not a valid git line", which sends people looking elsewhere.
+    git-noref)  [[ $2 =~ $noref ]] ;;
     *)          return 1 ;;
   esac
 }
@@ -139,8 +150,13 @@ _check() {  # _check <dir>
       n=$((n + 1))
       l=${l%%#*}; l=${l#"${l%%[![:space:]]*}"}; l=${l%"${l##*[![:space:]]}"}
       [ -n "$l" ] || continue
-      _token_ok "$f" "$l" \
-        || { warn "${d#"$ERGON"/}/$f:$n: '$(printf '%s' "$l" | _clean)' is not a valid $f line"; return 1; }
+      _token_ok "$f" "$l" && continue
+      if [ "$f" = git ] && _token_ok git-noref "$l"; then
+        warn "${d#"$ERGON"/}/$f:$n: '$(printf '%s' "$l" | _clean)' names no ref: a URL alone installs whatever the default branch is that day. Pin it: NAME @ git+URL@<commit>"
+      else
+        warn "${d#"$ERGON"/}/$f:$n: '$(printf '%s' "$l" | _clean)' is not a valid $f line"
+      fi
+      return 1
     done < "$d/$f"
   done
 }

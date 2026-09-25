@@ -32,7 +32,7 @@ One directory per bundle, each file optional, and nothing else in it:
     pacman    official repo packages
     aur       AUR packages, built by makepkg
     python    PyPI requirements, installed into the pyfleet venv
-    git       NAME @ git+https://...  or  NAME @ git+ssh://...
+    git       NAME @ git+https://...@REF  or  NAME @ git+ssh://...@REF
 
 `meta` is **data, not shell**: `KEY=word` or `KEY="text"`, with no `$`, backtick
 or backslash inside the quotes. It is never sourced, so `ergon-bundle list` runs
@@ -47,8 +47,15 @@ arguments to `sudo pacman` and uv. A bundle with one bad line is refused whole.
 PyPI does not mean it is the package you meant: `lachesis` there is a
 closed-caption segmentation tool by someone else entirely. The `NAME` is the
 distribution name from the project's `pyproject.toml`, which is not always the
-repository's name (nereus-py installs as `astronereus`); remove drops by it. A
-URL with no `@ref` follows the default branch.
+repository's name (nereus-py installs as `astronereus`); remove drops by it.
+
+The `@REF` is required, and a line without one is refused: a URL alone installs
+whatever the default branch is that day. REF is a commit, a tag or a branch; in
+`ssh://git@host/...` the `@` belongs to the host and is not a ref, so
+`NAME @ git+ssh://git@host/me/x.git` is refused. The built-in bundles pin a
+**full commit** — their repositories have no tags, and a branch is not a pin.
+To move one, change the commit; the bundle resolve step in CI
+(`bin/test-bundles-resolve.sh`) proves the new one installs.
 
 `ergon-lint` holds `lib/` to these lists: every module it imports must be in
 one, and every `ergon bundle add NAME` it prints must name a bundle that has
@@ -88,7 +95,11 @@ Fetches never prompt: ssh runs in BatchMode, so a private forge needs the key in
 the agent and the host in `known_hosts` first.
 
 **What this does not protect against.** The copy pins the list, not what the
-lists resolve to: pacman, the AUR, PyPI and a git ref can all change later. AUR
-PKGBUILDs and Python source builds run their own code. A private package named
-bare in `python` resolves from public PyPI — use a `git` line for anything that
-is not on PyPI. Read a third-party bundle before saying yes.
+lists resolve to: pacman, the AUR and PyPI can all change later, and so can a
+`git` line's tag or branch — a tag can be moved. A full commit cannot, but an
+upstream history rewrite can leave it on no branch, and then it stops
+resolving; the resolve step is what notices. What that commit depends on still
+resolves from PyPI at install time. AUR PKGBUILDs and Python source builds run
+their own code. A private package named bare in `python` resolves
+from public PyPI — use a `git` line for anything that is not on PyPI. Read a
+third-party bundle before saying yes.

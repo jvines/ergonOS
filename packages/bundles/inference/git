@@ -1,3 +1,8 @@
 # Trans-dimensional and standard nested sampling via mixtures of mutually
 # singular distributions. Not on PyPI.
-daedalus @ git+https://github.com/jvines/DAEDALUS
+#
+# Pinned to a full commit: main as of 2026-08-19, "DAEDALUS: trans-dimensional
+# and standard nested sampling". The repository has no tags, and a branch is
+# not a pin. To move it, put the new commit here; the bundle resolve step in CI
+# (bin/test-bundles-resolve.sh) proves it installs.
+daedalus @ git+https://github.com/jvines/DAEDALUS@5432c4faecffb4b7e549b68e8c28be45eba80c6f

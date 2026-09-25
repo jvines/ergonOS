@@ -5,4 +5,14 @@
 # It carries its OWN pinned Julia runtime and depot rather than using a system
 # julia -- Enzyme tracks the Julia compiler closely enough that a rolling julia
 # breaks it. See the julia bundle's NOTE; the two must not share a depot.
-astronereus @ git+https://github.com/jvines/nereus-py
+#
+# Pinned to a full commit: main as of 2026-09-25, "Merge pull request 'feat:
+# expose lambda_slide on TransdimPTEmcee' (#2)". The repository has no tags,
+# and a branch is not a pin. To move it, put the new commit here; the bundle
+# resolve step in CI (bin/test-bundles-resolve.sh) proves it installs.
+#
+# It has been orphaned once already: main was rewritten hours after the first
+# pin (c548d04) and kept it on no branch. This is the same tree, re-created. A
+# commit cannot move, but it can stop resolving -- run the resolve step right
+# before pushing a bump, not only when choosing it.
+astronereus @ git+https://github.com/jvines/nereus-py@ae328b9aff1c6185b9bfafd9127c0d7a8fb20bbd

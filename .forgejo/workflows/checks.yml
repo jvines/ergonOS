@@ -154,6 +154,21 @@ jobs:
       - name: The science tooling in lib/
         run: cd "$CI_DIR" && ./bin/test-science.sh
 
+      # The Bundles step above stubs pacman, the AUR and pyfleet, so it passes
+      # a package Arch renamed and a git pin to a commit that does not exist
+      # alike -- and until ERGON-60 nothing else here had ever resolved a
+      # bundle. This asks the real indexes, installing nothing: uv compiles
+      # each bundle's python and git lines with packages/python and then all of
+      # them at once, because pyfleet puts them in one venv, and an Arch
+      # container checks every pacman name is a package by that exact name.
+      #
+      # It can fail on PyPI, GitHub, the AUR or an Arch mirror rather than on
+      # the commit -- or on a git pin that an upstream history rewrite has left
+      # on no branch -- and it prints what it resolved against. Seconds warm,
+      # a few more with a cold uv cache.
+      - name: Every bundle resolves against the real indexes
+        run: cd "$CI_DIR" && ./bin/test-bundles-resolve.sh
+
       # Every desktop config through the parser that will actually read it.
       # This existed and was wired into nothing, which is how a config could be
       # rejected by Hyprland and still pass every check in this file.
