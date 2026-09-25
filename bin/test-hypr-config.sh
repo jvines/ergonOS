@@ -189,6 +189,12 @@ PYEOF
 ' 2>&1) || true
 
 rc=0
+# Every section below reads "no findings" as ok, so a container script that died
+# early -- a mirror, a package that failed to install under set -e -- would pass
+# all of them. It has to have reached the end.
+grep -qx '@@end' <<<"$out" || {
+  printf '   FAIL the container script stopped before the end; last lines:\n'
+  printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
 for tool in hyprland hyprland-degraded fuzzel foot waybar-css swayosd-css mako hypridle hyprlock; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
