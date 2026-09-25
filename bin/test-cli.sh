@@ -23,6 +23,9 @@
 # case arm with the true no-argument invocation and could pop the fuzzel
 # picker instead of printing text.
 #
+# And one output check at the end, which is not about --help: the file
+# `ergon new` writes for VS Code parses (ERGON-65).
+#
 # $HOME and the XDG dirs point into the scratch dir for the whole run, so a
 # command's incidental `mkdir -p "$STATE"` (ergon-svc, ergon-offline) lands in
 # throwaway space rather than this machine's real ~/.local/state.
@@ -101,6 +104,39 @@ export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 for flag in --help -h; do
   check "$flag"
 done
+
+# ergon new's .vscode/extensions.json: well-formed, and naming every
+# recommendation. uv and R are stubs that succeed, which keeps this offline;
+# the projects land in $T.
+if ! command -v jq >/dev/null; then
+  bad "ergon new: jq is needed to parse .vscode/extensions.json"
+else
+  mkdir -p "$T/new/bin" "$HOME/.local/bin"
+  printf '#!/bin/sh\nexit 0\n' > "$HOME/.local/bin/uv"
+  cp "$HOME/.local/bin/uv" "$T/new/bin/R"
+  chmod +x "$HOME/.local/bin/uv" "$T/new/bin/R"
+  # Every ID, not one canary: a dropped recommendation must fail here.
+  declare -A WANT=(
+    [python]="detachhead.basedpyright charliermarsh.ruff ms-python.python ms-python.debugpy ms-toolsai.jupyter marimo-team.vscode-marimo"
+    [r]="REditorSupport.r"
+  )
+  for lang in python r; do
+    (cd "$T/new" && PATH="$T/new/bin:$PATH" "$REPO/bin/ergon-new" "p$lang" --lang "$lang" >/dev/null 2>&1)
+    if ! recs=$(jq -er '.recommendations | arrays | .[]' "$T/new/p$lang/.vscode/extensions.json" 2>&1); then
+      bad "ergon new --lang $lang: .vscode/extensions.json is missing or not JSON: $recs"
+      continue
+    fi
+    missing=""
+    for id in ${WANT[$lang]}; do
+      grep -qxF "$id" <<< "$recs" || missing="$missing $id"
+    done
+    if [ -n "$missing" ]; then
+      bad "ergon new --lang $lang: .vscode/extensions.json does not recommend:$missing"
+    else
+      ok "ergon new --lang $lang: .vscode/extensions.json parses, and recommends all of: ${WANT[$lang]}"
+    fi
+  done
+fi
 
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

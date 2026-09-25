@@ -87,7 +87,7 @@ jobs:
       - name: Hardware
         run: cd "$CI_DIR" && ./bin/test-hardware.sh
 
-      - name: CLI --help never runs a command
+      - name: CLI --help never runs a command, and ergon new writes JSON
         run: cd "$CI_DIR" && ./bin/test-cli.sh
 
       # ERGON-61: a failed `ship --fetch` used to skip the fetch entirely --

@@ -1,0 +1,10 @@
+# extra/code, not the AUR's visual-studio-code-bin: that is Microsoft's binary
+# under a commercial licence, and archive.archlinux.org does not carry it, so a
+# date-pinned system would have a hole exactly where the editor is.
+#
+# No code-flags.conf, and nothing in env.lua for it. electron42 opens a native
+# xdg_shell window on a Wayland session by itself: with the session's
+# ELECTRON_OZONE_PLATFORM_HINT, without it, and with it set to x11 -- the
+# variable has no effect. --ozone-platform=x11 does give an XWayland window, so
+# the check could tell the two apart. Headless sway, 1.138.0-1, 2026-09-25.
+code

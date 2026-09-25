@@ -1,0 +1,5 @@
+# SIZE_MB: code 767.6 MiB and electron42 332.3 MiB, from pacman -Si at 1.138.0-1.
+# On top of packages/pacman it pulls nothing else over 1 MiB.
+DESCRIPTION="VS Code, Arch's open build, with extensions from Open VSX"
+SIZE_MB=1100
+NOTE="Arch builds this from Microsoft's MIT source, so pacman upgrades it and archive.archlinux.org carries every version. Extensions come from Open VSX. The one real absence is Pylance, the wrong analyzer here anyway: basedpyright, already on every host, reads the pyrightconfig.json that ergon new writes, and a new project recommends its extension. Copilot Chat is built in and does nothing until you sign in to GitHub -- ergon explain security says what that was checked against."

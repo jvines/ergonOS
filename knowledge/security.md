@@ -141,3 +141,45 @@ stop there: the unit is still *active* after someone types
 `nft flush ruleset` while debugging -- and a `firewall` row that read a failed
 `nft list` as "I am not root" reported ok, to root, on a machine with an empty
 ruleset. An active unit with no `inet ergon` table is now a hard failure.
+
+## VS Code extensions run as you, outside pacman
+
+The vscode bundle installs `code` with pacman, and pacman's part ends there.
+Extensions come from Open VSX into `~/.vscode-oss/extensions`, where neither
+the bundle ledger nor any review in this repo reaches. An extension is
+ordinary code in the extension host with your privileges. There is no
+sandbox: Workspace Trust can keep one off in a folder you have not trusted,
+and changes nothing once it runs. `extensions.autoUpdate` is on by default, so
+what runs tomorrow is whatever its publisher shipped tonight.
+
+Open VSX is also a weaker gate than Microsoft's marketplace. A namespace
+belongs to whoever created it first, and only a *verified* one has had its
+owner confirmed, so a vendor's name that the vendor never registered there
+can be anyone's. What it buys is the extensions people already know -- ruff,
+Jupyter, the debugger -- for a build that Microsoft's marketplace terms
+exclude.
+
+What stays true either way: ergon installs no extension. `ergon new` writes
+`.vscode/extensions.json`, VS Code offers what it lists, and you say yes. Every
+ID it recommends is in a verified namespace and installed cleanly with
+`code --install-extension` on 1.138. `ergon-bundle remove vscode` takes `code`
+and leaves `~/.vscode-oss` to you.
+
+### Copilot Chat is built in
+
+`code` 1.138 ships GitHub Copilot Chat 0.66.0 as a built-in extension -- about
+300 MB of the package -- with a Copilot agent host beside it, and its
+`product.json` marks the extension to update itself. Checked on a fresh
+profile, not signed in, two minutes idle under a headless compositor:
+
+- the extension never activated. The agent host started and looked up a proxy
+  for `api.githubcopilot.com`, and no DNS query or connection followed.
+- the only traffic was Electron fetching its en-US spellcheck dictionary from
+  `redirector.gvt1.com`, and the update check for `github.copilot-chat`
+  against `open-vsx.org`, whose GitHub namespace carries no Copilot -- so
+  today it finds nothing. If it ever does, that update bypasses pacman too.
+
+Signing in to GitHub is what turns it on. To take it out of the interface
+instead, set `"chat.disableAIFeatures": true` in
+`~/.config/Code - OSS/User/settings.json`: with it the agent host does not
+start at all. The update check still runs.

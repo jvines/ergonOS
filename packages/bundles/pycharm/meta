@@ -1,0 +1,5 @@
+# SIZE_MB: 1867 MiB installed, from pacman -Si at 2026.2.3-1. It depends on no
+# JDK, and on top of packages/pacman it pulls in nothing else.
+DESCRIPTION="PyCharm Community, from the official repos"
+SIZE_MB=1870
+NOTE="Arch builds it from JetBrains' Apache-2.0 source, so pacman upgrades it and archive.archlinux.org carries every version. Not the AUR's pycharm: that is JetBrains' prebuilt binary under a custom licence, which the archive does not carry, so nothing can pin it. A bundle of its own because it is nearly 2 GB."
