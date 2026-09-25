@@ -90,6 +90,12 @@ jobs:
       - name: CLI --help never runs a command, and ergon new writes JSON
         run: cd "$CI_DIR" && ./bin/test-cli.sh
 
+      # ERGON-15: the first-login welcome is the real commands' output, opens
+      # once, never burns its one shot on a window that did not appear, and
+      # cannot hold up the login. Stubs the terminal, glow and hyprctl.
+      - name: The welcome shows what is here, once, without blocking
+        run: cd "$CI_DIR" && ./bin/test-welcome.sh
+
       # ERGON-61: a failed `ship --fetch` used to skip the fetch entirely --
       # exactly the run whose output you most want back -- and a second
       # `repro --with-data` against the same --out nested a copy inside

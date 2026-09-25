@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# ergon:summary=Show what this machine has and where to look (once at first login)
+# ergon:group=help
+# ergon:args=[--first-run]
+# ergon:help=native
+#
+#   ergon welcome              show it now: glow and a pager on a terminal,
+#                              plain markdown to anything else (an agent, a pipe)
+#   ergon welcome --first-run  what autostart runs: opens a window once per
+#                              user, and returns at once whatever happens
+#
+# ERGON_WELCOME=0 in the session environment makes --first-run do nothing.
+# The stamp that makes it once is ${XDG_STATE_HOME:-~/.local/state}/ergon/
+# welcome-shown; delete it to have the next login open the window again.
+set -uo pipefail
+
+# ERGON-15/55. A signpost, not content. The prose is knowledge/welcome.md, read
+# through ergon-explain like every other topic, and each list under it is the
+# output of the real command, run as the page is drawn. A welcome that typed
+# out the keybinds or the bundles would be a second list, and this repo knows
+# what those do: drift, and get believed at exactly the wrong moment.
+
+# readlink -f: reached through /usr/local/bin/ergon-welcome, a symlink into the
+# repo; without it the root comes out as /usr/local (see ergon-lint).
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+BIN="$ERGON/bin"
+STAMP="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/welcome-shown"
+# Per section. `ergon --help` reads every header in bin/ and was the slowest,
+# at a third of a second on checo; a section is cut off long before it could
+# hold up a login, and says so rather than going missing. `ergon doctor` is
+# signposted in the prose instead of run here: sixteen rows, most of them
+# warnings on any machine not yet set up, is not a first screen.
+LIMIT=5
+
+# ERGON-30: help before anything, wherever it sits in the arguments.
+for a in "$@"; do
+  case "$a" in -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+done
+
+# section <title> <ergon args...>: the command's own output under a heading, or
+# one line saying why there is none -- never something typed in its place.
+# stdin is /dev/null so nothing can wait on a person who is not there, and
+# timeout signals the whole process group, so a hung grandchild (hyprctl under
+# ergon-keys) cannot hold the pipe open after its parent is gone.
+section() {
+  local title=$1 out rc; shift
+  printf '\n## %s: `ergon %s`\n\n' "$title" "$*"
+  out=$(timeout -k 1 "$LIMIT" "$BIN/ergon" "$@" </dev/null 2>"$ERR"); rc=$?
+  case "$rc" in
+    0)       if [ -n "$out" ]; then printf '```\n%s\n```\n' "$out"; else printf '_It printed nothing._\n'; fi ;;
+    124|137) printf '_No answer within %ss._\n' "$LIMIT" ;;
+    *)       printf '_It failed (exit %s): %s_\n' "$rc" "$(tail -1 "$ERR")" ;;
+  esac
+}
+
+page() {
+  "$BIN/ergon-explain" welcome 2>/dev/null || printf '# Welcome\n\n_ergon explain has no welcome topic here._\n'
+  # --print: this is a pipe, and without it ergon-keys opens a picker.
+  section Keys keys --print
+  section Bundles bundle list
+  # How to add one, from ergon-bundle's own usage message rather than retyped.
+  local add
+  add=$(sed -n 's/.*"usage: \(ergon-bundle add [^"]*\)".*/\1/p' "$BIN/ergon-bundle" 2>/dev/null | head -1)
+  if [ -n "$add" ]; then printf '\nTo add one: `%s`\n' "$add"
+  else printf '\n_ergon-bundle has no usage line for add._\n'; fi
+  section Topics explain --list
+  # --help, never bare `ergon`: that opens a picker when stdout is not a
+  # terminal and a compositor is up (ERGON-56), which is exactly this.
+  section Commands --help
+}
+
+first_run() {
+  [ "${ERGON_WELCOME:-1}" != 0 ] || exit 0
+  [ ! -e "$STAMP" ] || exit 0
+  # WHEN THE STAMP IS WRITTEN: by the window, not here. The plain invocation
+  # below writes it the moment it finds a terminal on stdout, which is proof the
+  # window is up; writing it here, before the launch, spent the one shot on a
+  # login whose window never appeared (no terminal, a launcher that failed, a
+  # PATH without ergon-welcome). Not after the pager either: closing the window
+  # kills the pager, and the page a person just read would come back next time.
+  #
+  # Everything else happens in the background, so autostart's handler never
+  # waits on it and the window lives until the person closes it.
+  #
+  # ergon-launch-tui rather than a terminal by name: it already knows to go
+  # through uwsm-app when a uwsm session is up (a scope of its own, outside the
+  # compositor's unit; see binds.lua) and to fall back through ergon-term's
+  # list. The window's class comes out as ergon-tui-ergon-welcome.
+  (
+    if command -v glow >/dev/null && "$BIN/ergon-launch-tui" "$BIN/ergon-welcome"; then
+      # A launcher that hands off (uwsm-app with a service unit, a terminal
+      # that daemonises) returns before the window draws, so allow ten seconds
+      # for the stamp before calling it a failure.
+      for _ in $(seq 20); do [ -e "$STAMP" ] && break; sleep 0.5; done
+    fi
+    [ -e "$STAMP" ] || notify-send "Welcome to Ergon" \
+      "The welcome page could not open a window. Run: ergon welcome"
+  ) </dev/null >/dev/null 2>&1 &
+  exit 0
+}
+
+case "${1:-}" in
+  --first-run) first_run ;;
+  '') ;;
+  *) echo "ergon-welcome: unknown argument '$1' (see --help)" >&2; exit 2 ;;
+esac
+
+ERR=$(mktemp); trap 'rm -f "$ERR"' EXIT
+if [ -t 1 ]; then
+  mkdir -p "${STAMP%/*}" && : > "$STAMP"
+  md=$(page)
+  # Passed by path because nothing else points glow at it: no glow.yml, no
+  # GLAMOUR_STYLE, only the comment in packages/pacman. glow 3 refuses a style
+  # path that does not exist, hence the test.
+  style=(); [ -f "$ERGON/glow/cool.json" ] && style=(-s "$ERGON/glow/cool.json")
+  # Plain text if glow cannot draw it: the page still matters more than the look.
+  command -v glow >/dev/null && printf '%s\n' "$md" | glow "${style[@]}" -p - \
+    || printf '%s\n' "$md"
+else
+  page
+fi

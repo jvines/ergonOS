@@ -50,4 +50,10 @@ hl.on("hyprland.start", function()
   -- Useful at a telescope for the obvious reason, and at 2am for the ordinary
   -- one. See media.lua for the bindings.
   hl.exec_cmd("hyprsunset --temperature 6500")
+
+  -- The first-login welcome (ERGON-15): a window once per user, then never
+  -- again. Last, because when it cannot open that window it says so through
+  -- mako, which is started above. It returns at once, so it cannot hold up
+  -- anything here; ERGON_WELCOME=0 in the session environment turns it off.
+  hl.exec_cmd("ergon-welcome --first-run")
 end)

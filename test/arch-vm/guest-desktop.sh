@@ -910,6 +910,11 @@ fi
 exec Hyprland -c "$HOME/.config/hypr/hyprland.lua"
 EOF
 chmod +x /tmp/start-hypr.sh
+# ERGON-15: make this session a FIRST login, so autostart's welcome has to open
+# its window. The disk is reused for weeks, and the last run's stamp would turn
+# the assertion below into a check of a login that opens nothing.
+WELCOME_STAMP="$H/.local/state/ergon/welcome-shown"
+rm -f "$WELCOME_STAMP"
 # `su -` (login shell), not `su`: supplementary groups are established at
 # session setup, so a non-login su keeps the OLD group set and the usermod above
 # would have no effect until the next real login.
@@ -1003,6 +1008,35 @@ fi
 NB=$(hq binds -j 2>/dev/null | grep -c '"key"' || true)
 NB=${NB:-0}
 if [ "$NB" -gt 20 ]; then ok "$NB keybindings registered"; else bad "only $NB keybindings registered"; fi
+
+# --- ERGON-15: the first login opens the welcome, once ----------------------
+# A window mapping, not a string in autostart.lua. The stamp is the other half:
+# only the page itself writes it, from inside the window, once it has a
+# terminal to draw on -- so a stamp beside a window proves the page ran there.
+# Closed again straight away: every check below was written for a screen with
+# nothing on it, and the screenshot is meant to show the desktop.
+welcome_n() { hq clients -j 2>/dev/null | jq '[.[] | select(.class == "ergon-tui-ergon-welcome")] | length' 2>/dev/null || echo 0; }
+for _ in $(seq 1 30); do [ "$(welcome_n)" -ge 1 ] && break; sleep 1; done
+if [ "$(welcome_n)" -ge 1 ]; then
+  ok "the first login opened the welcome window"
+else
+  bad "the first login opened no welcome window (autostart: ergon-welcome --first-run)"
+  usr "makoctl list" 2>&1 | head -8 | sed 's/^/     mako: /'
+fi
+[ -e "$WELCOME_STAMP" ] && ok "  and the page, running in it, wrote the stamp" \
+                        || bad "no stamp at $WELCOME_STAMP — the next login would open it again"
+usr "ergon-welcome --first-run" >/dev/null 2>&1; sleep 3
+[ "$(welcome_n)" = 1 ] && ok "a second --first-run (the next login) opens nothing" \
+                       || bad "a second --first-run left $(welcome_n) welcome windows, want 1"
+# What the hermetic test can only stub: the page carries the live compositor's
+# own keybinds, the first thing someone at a fresh login needs.
+_wel=$(usr "ergon-welcome" </dev/null 2>&1); _wkeys=$(usr "ergon-keys --print" 2>/dev/null)
+[ -n "$_wkeys" ] && [[ $_wel == *"$_wkeys"* ]] && ok "the welcome page carries what ergon-keys prints in this session" \
+  || bad "the welcome page does not carry ergon-keys' output: $(grep -A2 '^## Keys' <<<"$_wel" | tr '\n' ' ')"
+for _p in $(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-tui-ergon-welcome") | .pid'); do kill "$_p"; done
+for _ in $(seq 1 10); do [ "$(welcome_n)" = 0 ] && break; sleep 1; done
+[ "$(welcome_n)" = 0 ] && ok "  closed before the checks that want a clear screen" \
+                       || bad "the welcome window would not close"
 
 # The cheatsheet, through the real ergon-keys pipeline -- this used to grep the
 # JSON for the word "description", and passed while the screenshot, media and
