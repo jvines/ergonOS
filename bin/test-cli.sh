@@ -97,13 +97,59 @@ done
 
 # Bare --help/-h must always just print, even in a graphical session with
 # non-tty stdout -- the one condition that used to send them to the fuzzel
-# picker instead, alongside the true no-argument invocation. Only that empty
-# case is meant to reach fuzzel; not tested here since fuzzel's own dmenu
-# read would hang this script waiting on stdin.
+# picker instead, alongside the true no-argument invocation.
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 for flag in --help -h; do
   check "$flag"
 done
+
+# ERGON-56: bare `ergon` (no args at all) must never reach fuzzel either, not
+# even in a graphical, non-tty-stdout session -- the exact shape of a
+# notebook cell's subprocess.run(["ergon"]). The stub above fails instantly,
+# which can't tell "never called fuzzel" from "called it and it happened to
+# fail fast" -- real fuzzel reads its dmenu list, THEN blocks on a human
+# clicking the window, so this stub does the same (consumes stdin, then
+# sleeps) and every call here is bounded with `timeout`: a regression hangs
+# this check instead of passing by luck.
+mkdir -p "$T/stub-block"
+cat > "$T/stub-block/fuzzel" <<EOF
+#!/usr/bin/env bash
+printf 'fuzzel %s\n' "\$*" >> "$LOG"
+cat >/dev/null
+sleep 300
+EOF
+chmod +x "$T/stub-block/fuzzel"
+
+first_cmd=$(head -1 <<< "$cmds")
+check_bare() {
+  local desc="bare ergon, $1"
+  : > "$LOG"
+  local out rc
+  out=$(PATH="$T/stub-block:$T/stub:$PATH" timeout 5 "$ERGON_BIN" 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    bad "$desc: exit $rc (expected 0): $(printf '%s' "$out" | tr '\n' ' ')"
+  elif [ -s "$LOG" ]; then
+    bad "$desc: touched fuzzel: $(tr '\n' ';' < "$LOG")"
+  elif ! grep -qw "$first_cmd" <<< "$out"; then
+    bad "$desc: did not print the listing: $(printf '%s' "$out" | tr '\n' ' ')"
+  else
+    ok "$desc: prints the listing, never touches fuzzel"
+  fi
+}
+check_bare "stdin /dev/null" < /dev/null
+check_bare "stdin an open pipe" < <(sleep 30)
+
+: > "$LOG"
+out=$(timeout 5 "$ERGON_BIN" --pick 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  bad "ergon --pick: exit $rc (expected 0, fuzzel stub fails and --pick exits clean): $out"
+elif [ ! -s "$LOG" ]; then
+  bad "ergon --pick: never touched fuzzel"
+else
+  ok "ergon --pick invokes fuzzel"
+fi
 
 # ergon new's .vscode/extensions.json: well-formed, and naming every
 # recommendation. uv and R are stubs that succeed, which keeps this offline;

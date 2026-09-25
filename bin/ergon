@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Run or list the ergon-* commands
 # ergon:group=help
-# ergon:args=[command] [args...] | --list | --group <name>
+# ergon:args=[command] [args...] | --list | --group <name> | --pick
 #
 # The one idea worth taking from Omarchy's 457-script CLI: scripts describe
 # themselves in a comment header, and the router reads those headers. There is
@@ -39,20 +39,24 @@ usage() {
 
 case "${1:-}" in
   '')
-    # Picker in a graphical session, plain list in a pipe or a TTY. Only the
-    # true no-argument invocation reaches this -- ERGON-30 found `ergon --help`
-    # falling in here too and popping fuzzel instead of printing text, which is
-    # its own bug (an agent's `ergon --help` in a Wayland session with
-    # non-tty stdout, e.g. piped or captured by a tool, blocks on a menu no
-    # one asked for). -h/--help gets its own arm below that always just prints.
-    if [ ! -t 1 ] && command -v fuzzel >/dev/null && [ -n "${WAYLAND_DISPLAY:-}" ]; then
-      sel=$(entries | awk -F'\t' '{printf "%-16s %s\n", $2, $3}' | fuzzel --dmenu --prompt 'ergon  ' --width 76) || exit 0
-      exec "$BINDIR/ergon-${sel%% *}"
-    fi
+    # ERGON-56: this used to guess "non-tty stdout, fuzzel installed,
+    # WAYLAND_DISPLAY set" meant a human at a keybind, and pop the picker.
+    # It doesn't: a script, a systemd unit, or a notebook cell running
+    # subprocess.run(["ergon"]) inside the same graphical session matches the
+    # same guess and hangs forever on a menu drawn behind a window that will
+    # never answer it. No signal available here tells the two apart, so bare
+    # `ergon` now always does the one thing safe for both -- print the
+    # listing and exit. A keybind that wants the picker asks with --pick.
     usage; exit 0 ;;
   -h|--help) usage; exit 0 ;;
   --list)  entries | awk -F'\t' '{print $2}'; exit 0 ;;
   --group) entries | awk -F'\t' -v g="${2:?--group needs a name}" '$1==g{printf "%-16s %s\n", $2, $3}'; exit 0 ;;
+  --pick)
+    # The picker, opt-in only now (see the '' arm above). Asked for by name,
+    # so no tty/WAYLAND_DISPLAY guessing left to do -- a caller invoking
+    # --pick has already made that call.
+    sel=$(entries | awk -F'\t' '{printf "%-16s %s\n", $2, $3}' | fuzzel --dmenu --prompt 'ergon  ' --width 76) || exit 0
+    exec "$BINDIR/ergon-${sel%% *}" ;;
 esac
 
 cmd="$1"; shift
