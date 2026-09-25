@@ -13,6 +13,9 @@ numpy
 scipy
 pandas
 matplotlib
+pillow               # ergon fig reads PNG metadata through it. matplotlib
+                     # pulls it in anyway; naming it is what lets
+                     # ergon-lint see that something provides it.
 
 # Notebooks. ipython is listed explicitly rather than left to arrive as a
 # jupyterlab dependency, because `ipython` is a command you type.

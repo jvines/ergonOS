@@ -432,4 +432,190 @@ while IFS=$'\t' read -r f l m; do
 done <<< "$bind_out"
 if [ -z "$bind_out" ]; then echo "  ok   every keybinding described, no chord bound twice"; fi
 
+# ---------------------------------------------------------------------------
+# ERGON-59: every import in lib/ is something a package list provides, and every
+# remediation names a bundle that provides what it is the remedy for.
+#
+# lib/ergon_observe.py imported astroplan, and astroplan was in no list. So a
+# missing astroplan printed "ergon bundle add astronomy", the user ran it, and
+# astroplan was still missing: the tool's own fix fixed nothing. peek did the
+# same with h5py and xarray, and sent anyone without astropy to a bundle for a
+# package the base python already has. The import, the hint and the list are
+# three places one dependency is written down, and nothing compared them.
+#
+# Names are compared as DISTRIBUTIONS, normalised the way ergon-bundle's _norm
+# does it, and a name that looks right is not a name that is right: lachesis on
+# PyPI is a closed-caption tool, positron-bin on the AUR a movie-watchlist
+# manager. A module whose distribution is called something else (PIL is pillow)
+# needs a row in DIST below, and the failure says so.
+#
+# Parsed with ast, never grepped: ergon_cite has a docstring line beginning
+# "from a service that", which an import regex reads as an import, and peek
+# imports through need("<module>"), which no grep for the keyword sees at all.
+#
+# NOT checked, deliberately: ergon_cite's SOFTWARE_DOI names h5py. software()
+# cites only what installed_version() finds and skips the rest, so that table is
+# a lookup for whatever the user's own project uses -- not a claim that this
+# system provides anything.
+imp_py=$(cat <<'PY'
+import ast, os, re, sys
+os.chdir(sys.argv[1])
+# Module -> distribution, only where the two differ.
+DIST = {"PIL": "pillow", "sklearn": "scikit-learn", "yaml": "pyyaml",
+        "batman": "batman-package"}
+# A bundle NAME, not a placeholder (<name>) and not a source (github:me/x//y).
+HINT = re.compile(r"\bergon[ -]bundle add ([a-z0-9][a-z0-9-]*)(?![\w:/@-])")
+
+def norm(t):  # ergon-bundle's _norm
+    m = re.match(r"[A-Za-z0-9._@+-]+", t.split(" @ ")[0])
+    return re.sub(r"[._]", "-", (m.group(0) if m else t).lower())
+
+def listed(path):  # ergon-bundle's _list: one per line, # starts a comment
+    if not os.path.isfile(path):
+        return set()
+    with open(path, encoding="utf-8") as fh:
+        return {norm(l) for l in (x.split("#")[0].strip() for x in fh) if l}
+
+base = listed("packages/python")
+bundles = {b: listed(f"packages/bundles/{b}/python") | listed(f"packages/bundles/{b}/git")
+           for b in sorted(os.listdir("packages/bundles"))
+           if os.path.isdir(f"packages/bundles/{b}")}
+anywhere = base.union(*bundles.values())
+# Not a dotfile: Emacs keeps a .#name.py lock symlink beside a file being
+# edited, and it points at nothing, so opening it would crash the check.
+py = sorted(f for f in os.listdir("lib") if f.endswith(".py") and not f.startswith("."))
+own = {f[:-3] for f in py}
+skip = set(sys.stdlib_module_names) | {"__future__"} | own
+dist = lambda top: norm(DIST.get(top, top))
+n_imp = n_hint = 0
+
+def say(f, ln, msg):
+    print(f"{f}\t{ln}\t{msg}")
+
+def text(n):  # a literal's value; an f-string with each {field} as {}
+    if isinstance(n, ast.Constant) and isinstance(n.value, str):
+        return n.value
+    if isinstance(n, ast.JoinedStr):
+        return "".join(v.value if isinstance(v, ast.Constant) else "{}" for v in n.values)
+
+def strings(node):  # an f-string counts once, not once per piece
+    inner = {id(c) for j in ast.walk(node) if isinstance(j, ast.JoinedStr)
+             for c in ast.walk(j) if c is not j}
+    return [(n, text(n)) for n in ast.walk(node) if id(n) not in inner and text(n) is not None]
+
+def imports(nodes):  # import x, from x import y, need("x"), import_module("x")
+    for n in (m for s in nodes for m in ast.walk(s)):
+        names = []
+        if isinstance(n, ast.Import):
+            names = [a.name for a in n.names]
+        elif isinstance(n, ast.ImportFrom) and n.level == 0:
+            names = [n.module]
+        elif (isinstance(n, ast.Call) and n.args and isinstance(n.args[0], ast.Constant)
+              and isinstance(n.args[0].value, str)
+              and getattr(n.func, "id", getattr(n.func, "attr", None)) in ("need", "import_module")):
+            names = [n.args[0].value]
+        for top in (x.split(".")[0] for x in names):
+            if top not in skip:
+                yield n.lineno, top
+
+def where(lines, n, needle):  # the line a hint is on, in a literal spanning several
+    return next((i for i in range(n.lineno, (n.end_lineno or n.lineno) + 1)
+                 if needle in lines[i - 1]), n.lineno)
+
+def no_bundle(f, ln, m):
+    global n_hint
+    n_hint += 1
+    if m.group(1) not in bundles:
+        say(f, ln, f"'{m.group(0)}': there is no packages/bundles/{m.group(1)}")
+
+for f in py:
+    rel = f"lib/{f}"
+    with open(rel, encoding="utf-8") as fh:
+        src = fh.read()
+    lines = src.splitlines()
+    try:
+        tree = ast.parse(src, rel)
+    except SyntaxError as e:
+        say(rel, e.lineno, f"does not parse, so nothing can check its imports: {e.msg}")
+        continue
+    for ln, top in imports([tree]):
+        n_imp += 1
+        if dist(top) not in anywhere:
+            say(rel, ln, f"imports {top}, which no package list provides"
+                f" (if its distribution is not {dist(top)}, add a DIST row in bin/ergon-lint)")
+    for n, s in strings(tree):
+        for m in HINT.finditer(s):
+            no_bundle(rel, where(lines, n, m.group(0)), m)
+    # A hint under `except ImportError` is the fix for what that try imports:
+    # each import must be in the base python or in that bundle, and at least
+    # one in the bundle, or adding it changes nothing.
+    for t in (t for t in ast.walk(tree) if isinstance(t, ast.Try)):
+        tops = sorted({top for _, top in imports(t.body)})
+        for h in t.handlers:
+            types = h.type.elts if isinstance(h.type, ast.Tuple) else [h.type]
+            if not any(getattr(x, "id", None) in ("ImportError", "ModuleNotFoundError") for x in types):
+                continue
+            for n, s in strings(h):
+                for m in (m for m in HINT.finditer(s) if m.group(1) in bundles):
+                    n_hint += 1
+                    ln, has = where(lines, n, m.group(0)), bundles[m.group(1)]
+                    bad = [x for x in tops if dist(x) not in base | has]
+                    for x in bad:
+                        say(rel, ln, f"'{m.group(0)}' is the fix offered for {x}, and that bundle does not provide it")
+                    if not bad and not any(dist(x) in has for x in tops):
+                        say(rel, ln, f"'{m.group(0)}' is the fix offered for {', '.join(tops) or 'nothing third-party'}, and none of it needs that bundle")
+    # A provider table, {"module": "the hint"}, as peek's PROVIDER is.
+    for d in (d for d in ast.walk(tree) if isinstance(d, ast.Dict)):
+        for k, v in zip(d.keys, d.values):
+            key, s = (text(k) if k else None), text(v)
+            if not (key and s and re.fullmatch(r"[A-Za-z_][\w.]*", key)):
+                continue
+            want = dist(key.split(".")[0])
+            for m in (m for m in HINT.finditer(s) if m.group(1) in bundles):
+                n_hint += 1
+                if want not in bundles[m.group(1)]:
+                    say(rel, where(lines, v, m.group(0)), f"'{m.group(0)}' is the hint for {key}, and that bundle does not provide it")
+            if "pyfleet sync" in s:
+                n_hint += 1
+                if want not in base:
+                    say(rel, where(lines, v, "pyfleet sync"), f"'pyfleet sync' is the hint for {key}, and packages/python does not list it")
+            for m in re.finditer(r"\bpip install ([A-Za-z0-9][\w.-]*)", s):
+                n_hint += 1
+                if norm(m.group(1)) not in anywhere:
+                    say(rel, where(lines, v, m.group(0)), f"'{m.group(0)}' is the hint for {key}, and no package list provides {m.group(1)}")
+
+# The commands' own messages: only that the bundle they name exists.
+for f in sorted(os.listdir("bin")):
+    if (f == "ergon" or f.startswith("ergon-")) and os.path.isfile(f"bin/{f}"):
+        with open(f"bin/{f}", encoding="utf-8", errors="replace") as fh:
+            for ln, line in enumerate(fh, 1):
+                if not line.lstrip().startswith("#"):
+                    for m in HINT.finditer(line):
+                        no_bundle(f"bin/{f}", ln, m)
+print(f"=\t{n_imp}\t{n_hint}")
+PY
+)
+imp_bad=0; imp_n=0; hint_n=0
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "  FAIL no python3, so nothing checks lib/'s imports against the package lists" >&2
+  rc=1
+# -I: isolated, so a re.py in the caller's directory or a PYTHONPATH cannot
+# stand in for the modules this check imports.
+elif imp_out=$(python3 -I -c "$imp_py" "$ERGON"); then
+  while IFS=$'\t' read -r f l m; do
+    case "$f" in
+      '') ;;
+      =) imp_n=$l; hint_n=$m ;;
+      *) report "$f" "$l" "$m"; imp_bad=$((imp_bad + 1)) ;;
+    esac
+  done <<< "$imp_out"
+  if [ "$imp_bad" = 0 ]; then
+    echo "  ok   $imp_n third-party import(s) in lib/ and $hint_n remediation hint(s), each provided by what it names"
+  fi
+else
+  # A crash is not a pass. The traceback is above; say what it means.
+  echo "  FAIL the import check did not run (python3 exited non-zero)" >&2
+  rc=1
+fi
+
 exit $rc

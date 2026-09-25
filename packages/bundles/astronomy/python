@@ -2,6 +2,10 @@
 astroquery
 lightkurve           # TESS/Kepler light curves
 
+# Observation planning. ergon observe is built on it, and says to add this
+# bundle when it is missing -- so the bundle has to contain it.
+astroplan
+
 # Photometry and spectra.
 photutils
 specutils

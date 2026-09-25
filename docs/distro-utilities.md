@@ -13,7 +13,7 @@ private overlay — not two forks of the distro.
 
 | command | what it does | why it matters |
 |---|---|---|
-| `ergon-peek FILE` | schema, head, summary stats for parquet, CSV, FITS, HDF5, npy, netCDF | one incantation instead of four half-remembered ones. A collaborator sends you a file and you look at it without caring what it is. Columna's core is the parquet backend; astropy does FITS |
+| `ergon-peek FILE` | schema, head, summary stats for parquet, CSV, FITS, npy, JSON | one incantation instead of four half-remembered ones. A collaborator sends you a file and you look at it without caring what it is. Columna's core is the parquet backend; astropy does FITS |
 | `ergon-fig` | stamps git SHA, script path, date and environment hash into figure metadata at save time; `ergon-fig whence plot.png` reads it back | six months later nobody can tell which script or commit made a figure. Costs nothing at write time, invisible until needed, and is the reproducibility thesis made concrete |
 | `ergon-cite ID` | bibcode / DOI / arXiv → BibTeX appended to the project `.bib`, via ADS, Crossref, arXiv | daily papercut with no Linux answer |
 | `ergon-cite --software` | correct BibTeX for numpy/scipy/astropy/emcee **at the installed versions** | journals increasingly require it and everyone fakes it |

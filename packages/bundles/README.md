@@ -50,6 +50,10 @@ distribution name from the project's `pyproject.toml`, which is not always the
 repository's name (nereus-py installs as `astronereus`); remove drops by it. A
 URL with no `@ref` follows the default branch.
 
+`ergon-lint` holds `lib/` to these lists: every module it imports must be in
+one, and every `ergon bundle add NAME` it prints must name a bundle that has
+what the message is about. Drop a package here and the lint says who needed it.
+
 `REQUIRES` is checked before installing and reports what it actually found —
 see `gpu/meta`. It warns; it does not refuse. The machine is the user's.
 

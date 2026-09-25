@@ -12,7 +12,7 @@ of magnitude — plus **bundles** you choose from, and a set of tools for the
 parts of computational science that nothing else does for you.
 
 ```
-ergon peek data.parquet        schema, nulls, summaries — parquet, FITS, HDF5, CSV, npy
+ergon peek data.parquet        schema, nulls, summaries — parquet, FITS, CSV, npy
 ergon fig whence plot.png      which script and which commit made this figure
 ergon cite 10.1086/670067      BibTeX into the project's .bib
 ergon new analysis             locked env, LSP, git, the directories

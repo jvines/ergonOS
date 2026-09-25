@@ -4,9 +4,9 @@
 # ergon:args=<file>|-
 # ergon:help=native
 #
-# parquet, CSV, FITS, HDF5, npy/npz, netCDF, JSON -- schema, null counts,
-# per-column summaries and the first rows, from one command. The alternative is
-# four half-remembered incantations and a collaborator's file you cannot open.
+# parquet, CSV, FITS, npy/npz, JSON -- schema, null counts, per-column
+# summaries and the first rows, from one command. The alternative is four
+# half-remembered incantations and a collaborator's file you cannot open.
 #
 #   ergon peek data.parquet
 #   ergon peek survey.fits

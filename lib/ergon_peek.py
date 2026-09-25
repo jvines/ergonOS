@@ -1,14 +1,14 @@
 """Look at a data file without caring what it is.
 
-One command for parquet, CSV/TSV, FITS, HDF5, npy/npz and netCDF, because the
+One command for parquet, CSV/TSV, FITS, npy/npz and JSON, because the
 alternative is four half-remembered incantations and a collaborator's file you
 cannot open. Detection is by magic bytes first and extension second: files
 arrive misnamed, and `.dat` means nothing at all.
 
 Dependencies are checked per format and reported precisely. The base python is
-deliberately small (see packages/python), so parquet and HDF5 need a bundle --
-and being told WHICH is the difference between a tool that is honest and a
-traceback.
+deliberately small (see packages/python), so parquet needs a bundle -- and
+being told WHICH is the difference between a tool that is honest and a
+traceback. HDF5 and netCDF are recognised and refused by name.
 """
 from __future__ import annotations
 
@@ -35,12 +35,12 @@ EXT = {
     ".nc": "netcdf", ".cdf": "netcdf",
     ".json": "json", ".jsonl": "jsonl", ".ndjson": "jsonl",
 }
-# Which bundle provides the reader, for the message when it is missing.
+# Which list provides the reader, for the message when it is missing.
+# bin/ergon-lint holds each hint to the list it names (ERGON-59): astropy's
+# used to send people to the astronomy bundle, which does not contain it.
 PROVIDER = {
     "pyarrow": "pip install pyarrow, or: ergon bundle add ml",
-    "h5py": "pip install h5py",
-    "netCDF4": "pip install netCDF4",
-    "astropy": "ergon bundle add astronomy (astropy is in the base python)",
+    "astropy": "the base python should have this — run: pyfleet sync",
     "pandas": "the base python should have this — run: pyfleet sync",
 }
 
@@ -192,6 +192,27 @@ def main(argv: list[str]) -> int:
     kind = sniff(path, head)
     size = os.path.getsize(path)
 
+    # Recognised so they can be refused by name, ahead of the pandas check --
+    # "pandas is not installed" would send someone to fix the wrong thing. The
+    # branches that claimed to read these were fiction (ERGON-58): HDF5 checked
+    # for h5py and then called pd.read_hdf, which needs PyTables and reads only
+    # pandas' own HDFStore layout; netCDF needed xarray, which no package list
+    # names, and a netCDF-4 file never reached that branch, because netCDF-4 IS
+    # HDF5 and that magic is tested first. peek has no reader for either --
+    # that is a fact about peek, not about the machine: scipy (packages/python)
+    # reads classic netCDF, and the astronomy bundle's own dependencies pull in
+    # h5py, tables and xarray, so the hint must not claim the system can't.
+    if kind in ("hdf5", "netcdf"):
+        fmt = "HDF5" if kind == "hdf5" else "netCDF"
+        # The netCDF-4 aside is only true of THIS file when it is what set off
+        # the HDF5 branch under a .nc/.cdf name -- printing it for a plain .h5
+        # or for classic netCDF (the CDF magic, kind == "netcdf") would be a
+        # fact about a different file.
+        ext = os.path.splitext(path)[1].lower()
+        note = "netCDF-4 is HDF5 inside; " if kind == "hdf5" and ext in (".nc", ".cdf") else ""
+        die(f"{path} is {fmt}, which ergon peek does not read",
+            f"{note}ergon peek has no HDF5 or netCDF reader")
+
     if kind == "fits":
         peek_fits(path)
         return 0
@@ -206,13 +227,6 @@ def main(argv: list[str]) -> int:
         df = pd.read_json(path)
     elif kind == "jsonl":
         df = pd.read_json(path, lines=True)
-    elif kind == "hdf5":
-        need("h5py")
-        df = pd.read_hdf(path)
-    elif kind == "netcdf":
-        xr = need("xarray")
-        print(xr.open_dataset(path))
-        return 0
     elif kind in ("npy", "npz"):
         np = need("numpy")
         a = np.load(path, allow_pickle=False)
