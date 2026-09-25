@@ -605,6 +605,41 @@ EOF
 sudo systemctl enable greetd >/dev/null 2>&1 || true
 ok "greetd + tuigreet on vt1"
 
+# ERGON-64: unlock the login keyring with the login password. uwsm/env-hyprland
+# sends Electron apps' keys there, and with it locked -- or never created -- the
+# first one D-Bus-activates gcr-prompter and waits behind "Unlock Login
+# Keyring"; cancelling leaves what it stored undecryptable. greetd's PAM file
+# (greetd -> system-local-login) has no pam_gnome_keyring. The measured spots:
+# auth after the include, where the password has been checked, and session
+# after it, where pam_systemd has made the runtime dir the daemon listens in.
+# Fingerprint never passes here (hyprlock asks fprintd over D-Bus), so a greetd
+# login always carries a password.
+#
+# An edit, not a file: the rest is the package's, and pacman keeps an edited
+# backup file across upgrades. Keyring lines already there are dropped first, so
+# a re-run -- `ergon sync` on an installed machine -- leaves one of each.
+_pam_kr=$(cat <<'PAMKR'
+/^[[:space:]]*-?(auth|session)[[:space:]].*pam_gnome_keyring\.so/ { next }
+{ print }
+$1 == "auth" && $2 == "include" && $3 == "system-local-login" { print "auth       optional     pam_gnome_keyring.so" }
+$1 == "session" && $2 == "include" && $3 == "system-local-login" { print "session    optional     pam_gnome_keyring.so auto_start" }
+PAMKR
+)
+_pam_new=$(awk "$_pam_kr" /etc/pam.d/greetd 2>/dev/null) || _pam_new=
+if [ -z "$_pam_new" ]; then
+  # Never write an empty result: greetd would fall through to /etc/pam.d/other,
+  # which refuses every login.
+  warn "could not read /etc/pam.d/greetd, so nothing unlocks the login keyring at login"
+elif [ "$(grep -cE '^(auth|session) +optional +pam_gnome_keyring' <<<"$_pam_new")" != 2 ]; then
+  # Both lines hang off the includes. A greetd that stopped including
+  # system-local-login needs a person, not a guess about where they go.
+  warn "/etc/pam.d/greetd no longer includes system-local-login; the login keyring is left locked"
+elif _changed /etc/pam.d/greetd <<<"$_pam_new"; then
+  ok "greetd unlocks the login keyring (pam_gnome_keyring)"
+else
+  skip "greetd already unlocks the login keyring"
+fi
+
 # Group membership, both of which are silent failures rather than errors:
 #   video  -- brightnessctl writes /sys/class/backlight; without it the
 #             brightness keys do nothing and report no error at all.

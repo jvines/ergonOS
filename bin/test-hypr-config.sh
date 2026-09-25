@@ -29,7 +29,7 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
   # file. They also cannot share a process: one python may load one Gtk
   # typelib, so the two checks below are two interpreters.
   pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot \
-    python-gobject gtk3 gtk4 >/dev/null 2>&1
+    python-gobject gtk3 gtk4 uwsm >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
   # you not to use it, so everything runs as a real user.
@@ -185,6 +185,25 @@ PYEOF
   run "timeout 5 hyprlock -c /home/t/.config/hypr/hyprlock.conf" \
     | grep -iE "config error|does not exist|Config has errors" || true
 
+  # ERGON-64. uwsm/env-hyprland through uwsm'"'"'s own loader: the file it picks
+  # for -D Hyprland, sourced the way it sources it (sh, `.`, then `env -0`, so
+  # only what is EXPORTED survives). The aux file is what main.py hands the
+  # loader; if that interface moves, the mark goes missing and this fails.
+  echo "@@uwsm-env"
+  install -d -o t -g t /home/t/.config/uwsm
+  install -o t -g t -m 644 /tmp/repo/uwsm/env-hyprland /home/t/.config/uwsm/env-hyprland
+  printf "%s\n" __SELF_NAME__=uwsm __WM_BIN_ID__=start_hyprland __WM_DESKTOP_NAMES__=Hyprland \
+    __WM_FIRST_DESKTOP_NAME__=Hyprland __WM_DESKTOP_NAMES_EXCLUSIVE__=true __LOAD_PROFILE__=false \
+    __RANDOM_MARK__=ergon64mark > /tmp/aux
+  printf "__OIFS__=\" \t\n\"\n" >> /tmp/aux && chown t /tmp/aux   # a real tab and newline, as main.py writes
+  uenv=$(su t -c "env -i HOME=/home/t PATH=/usr/bin XDG_RUNTIME_DIR=/tmp/rt sh /usr/lib/uwsm/prepare-env.sh /tmp/aux /usr/share/uwsm/plugins/start_hyprland.sh" 2>&1 \
+         | tr "\0" "\n" | sed -n "/ergon64mark/,\$p" | sed "s/^.*ergon64mark//")
+  case "$(printf "%s\n" "$uenv" | grep "^GNOME_DESKTOP_SESSION_ID=")" in
+    GNOME_DESKTOP_SESSION_ID=) ;;
+    "") echo "uwsm exports no GNOME_DESKTOP_SESSION_ID: Electron apps fall back to a plaintext password store" ;;
+    *)  echo "GNOME_DESKTOP_SESSION_ID is not empty: every xdg-utils script then decides DE=gnome3, and xdg-open <dir> (zsh: o) fails rc=4" ;;
+  esac
+
   echo "@@end"
 ' 2>&1) || true
 
@@ -195,7 +214,7 @@ rc=0
 grep -qx '@@end' <<<"$out" || {
   printf '   FAIL the container script stopped before the end; last lines:\n'
   printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
-for tool in hyprland hyprland-degraded fuzzel foot waybar-css swayosd-css mako hypridle hyprlock; do
+for tool in hyprland hyprland-degraded fuzzel foot waybar-css swayosd-css mako hypridle hyprlock uwsm-env; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"

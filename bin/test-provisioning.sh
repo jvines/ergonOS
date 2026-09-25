@@ -372,5 +372,45 @@ case "$out" in
   *) bad "with \$USER/\$LOGNAME unset, doctor said: $out" ;;
 esac
 
+# --- ERGON-64: the login keyring, and the file that points apps at it -------
+# The PAM lines are provisioning's (an input, so sync re-provisions for them);
+# the env file is install.sh's, which every sync runs. The awk program is pulled
+# out of provision-arch.sh, not copied; its input is greetd 0.10.3's own file.
+sed -n "/<<'PAMKR'\$/,/^PAMKR\$/p" "$REPO/bin/provision-arch.sh" | sed '1d;$d' > "$T/pam.awk"
+printf '%s\n' '#%PAM-1.0' '' 'auth       required     pam_securetty.so' \
+  'auth       requisite    pam_nologin.so' 'auth       include      system-local-login' \
+  'account    include      system-local-login' 'session    include      system-local-login' > "$T/greetd"
+pam_ok() {  # each keyring line exactly once, straight after the include it extends
+  awk 'p ~ /^auth +include +system-local-login$/ && /^auth +optional +pam_gnome_keyring\.so$/ { a++ }
+       p ~ /^session +include +system-local-login$/ && /^session +optional +pam_gnome_keyring\.so +auto_start$/ { s++ }
+       /pam_gnome_keyring/ { n++ }  { p = $0 }
+       END { exit !(a == 1 && s == 1 && n == 2) }' "$1"
+}
+if [ ! -s "$T/pam.awk" ]; then
+  bad "provisioning's greetd PAM edit is gone, or its PAMKR heredoc moved"
+else
+  awk -f "$T/pam.awk" "$T/greetd" > "$T/pam1"; awk -f "$T/pam.awk" "$T/pam1" > "$T/pam2"
+  # auth after the include, where pam_unix has checked the password; session
+  # after it, where pam_systemd has made the runtime dir the daemon listens in.
+  pam_ok "$T/pam1" && ok "greetd's PAM gets pam_gnome_keyring once, right after each include" \
+    || bad "the keyring lines are missing, doubled or misplaced: $(tr '\n' '|' < "$T/pam1")"
+  cmp -s "$T/pam1" "$T/pam2" && ok "  and a second provisioning run changes nothing" \
+    || bad "  a second run changed it again: $(diff "$T/pam1" "$T/pam2" | tr '\n' ' ')"
+  [ "$(grep -v pam_gnome_keyring "$T/pam1")" = "$(cat "$T/greetd")" ] \
+    && ok "  and leaves the package's own lines as they were" || bad "  it changed the package's lines"
+fi
+
+# install.sh's half, through its own --check: a graphical host whose HOME has
+# nothing in it must be told the link is coming.
+mkdir -p "$T/inst/uwsm" "$T/inst/hosts/testhost"
+cp "$REPO/install.sh" "$T/inst/" && cp "$REPO/uwsm/env-hyprland" "$T/inst/uwsm/"
+printf 'GRAPHICAL=1\n' > "$T/inst/hosts/testhost/host.env"
+# Captured, not piped into grep -q: under pipefail, grep leaving early kills
+# install.sh with SIGPIPE and a match reads as a miss.
+out=$("$T/inst/install.sh" --check 2>/dev/null)
+grep -qxF '   would link  .config/uwsm/env-hyprland -> uwsm/env-hyprland' <<<"$out" \
+  && ok "install.sh links uwsm/env-hyprland into ~/.config/uwsm" \
+  || bad "install.sh --check on a graphical host does not plan the uwsm/env-hyprland link"
+
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

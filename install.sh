@@ -175,6 +175,11 @@ else
   # uwsm. Without it every ergon-* in the bar and the keybinds is not found:
   # the module fires, the command is missing, and nothing surfaces it.
   link environment.d/10-ergon-path.conf .config/environment.d/10-ergon-path.conf
+  # ERGON-64: what makes Electron apps keep their key in the keyring rather than
+  # in plaintext. uwsm's own env file, because environment.d drops the empty
+  # value it needs (the file says why). The FILE and not ~/.config/uwsm: `uwsm
+  # select` writes default-id there, so that directory may already be real.
+  link uwsm/env-hyprland .config/uwsm/env-hyprland
 
   if [ "$CHECK" != 1 ]; then
     mkdir -p "$HOME/.config/systemd/user"

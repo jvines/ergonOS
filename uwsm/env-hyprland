@@ -1,0 +1,30 @@
+# Read by uwsm, not by any shell you log into. For `uwsm start -D Hyprland`
+# (greetd's command) it sources ~/.config/uwsm/env and then this file --
+# env-<desktop name, lowercased> -- with `.` under sh, and keeps only what is
+# EXPORTED: a bare assignment here is read and then dropped.
+#
+# ERGON-64. Chromium picks where an Electron app keeps its encryption key from
+# the desktop name, and "Hyprland" is not one it knows: Discord then stores its
+# login token unencrypted and VS Code keeps secrets in memory only. With no
+# desktop name it recognises, Chromium checks whether GNOME_DESKTOP_SESSION_ID
+# EXISTS, and if it does, keeps the key in gnome-keyring through libsecret.
+#
+# Empty, and it has to stay empty. Chromium only asks whether it is set; every
+# xdg-utils script reads a non-empty value as "this is GNOME", and `xdg-open
+# <dir>` -- zsh's `o` -- then fails looking for a terminal GLib does not know.
+#
+# Here, because every other place was measured and fails:
+#   environment.d        systemd's generator rejects an empty value, in the journal only
+#   hypr/common/env.lua  hl.env reaches systemd and D-Bus as a queued exec, racing autostart
+#   XDG_CURRENT_DESKTOP  adding :GNOME also hands every GLib app's proxy lookup to GNOME
+#   per-app flags        Discord's launcher reads none, and one launch without the flag
+#                        leaves what was stored undecryptable
+#
+# Side effect: Chromium now takes its proxy from gsettings org.gnome.system.proxy
+# instead of http_proxy/https_proxy. Nothing here sets a proxy, so nothing moves
+# today; one exported later would be ignored by every Electron app.
+#
+# Half of the fix. With the login keyring locked, the first Electron app waits
+# behind an "Unlock Login Keyring" dialog; the pam_gnome_keyring lines
+# bin/provision-arch.sh adds to /etc/pam.d/greetd unlock it at login.
+export GNOME_DESKTOP_SESSION_ID=

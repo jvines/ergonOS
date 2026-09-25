@@ -113,7 +113,8 @@ bluez-utils
 blueman
 
 # --- secrets, storage, power ----------------------------------------------
-gnome-keyring       # Secret Service for firefox/discord credentials
+gnome-keyring       # Secret Service for Chromium/Electron apps (Discord, VS Code): ERGON-64.
+                    # Not Firefox, which keeps logins in its own key4.db.
 libsecret
 udiskie             # automount removable media
 gvfs
