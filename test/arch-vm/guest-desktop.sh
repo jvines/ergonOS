@@ -298,6 +298,22 @@ else
   tail -5 /tmp/sync-setup.log | sed 's/^/     /'
 fi
 
+# --- ERGON-64: greetd unlocks the login keyring ------------------------------
+# After BOTH provisioning runs, so "exactly once" is idempotence on the file the
+# greetd package really ships. This harness never logs in through greetd; what
+# is asked is whether the lines sit where they work, each after its include.
+if awk 'p ~ /^auth +include +system-local-login$/ && /^auth +optional +pam_gnome_keyring\.so$/ { a++ }
+        p ~ /^session +include +system-local-login$/ && /^session +optional +pam_gnome_keyring\.so +auto_start$/ { s++ }
+        /pam_gnome_keyring/ { n++ }  { p = $0 }
+        END { exit !(a == 1 && s == 1 && n == 2) }' /etc/pam.d/greetd 2>/dev/null; then
+  ok "/etc/pam.d/greetd has pam_gnome_keyring once each, right after its auth and session includes"
+else
+  bad "/etc/pam.d/greetd does not carry both pam_gnome_keyring lines, once, after the includes"
+  sed 's/^/     /' /etc/pam.d/greetd 2>/dev/null
+fi
+[ -e /usr/lib/security/pam_gnome_keyring.so ] && ok "  and the module is where PAM looks for it" \
+  || bad "  but /usr/lib/security/pam_gnome_keyring.so does not exist"
+
 # --- ERGON-20: the firewall, and where a published port binds --------------
 # bin/test-firewall.sh reads the ruleset provisioning WRITES. Only a booted
 # machine can say whether the kernel accepted it, and only a running dockerd
@@ -844,7 +860,8 @@ for pair in \
   ".config/mako:notifications" \
   ".config/fuzzel:the launcher" \
   ".config/gtk-3.0/settings.ini:GTK3 theme" \
-  ".config/environment.d/10-ergon-path.conf:session PATH"; do
+  ".config/environment.d/10-ergon-path.conf:session PATH" \
+  ".config/uwsm/env-hyprland:the Electron keyring variable"; do
   f=${pair%%:*}; what=${pair#*:}
   [ -e "$H/$f" ] && ok "install.sh linked $what" || bad "install.sh did not link $f ($what)"
 done
@@ -907,6 +924,14 @@ else
   echo "WARNING: $ENVD missing; ergon-* will not be on PATH" >&2
 fi
 
+# The same argument for uwsm's env files, which a greetd login gets from uwsm
+# and this one does not (ERGON-64: GNOME_DESKTOP_SESSION_ID). Loaded as uwsm
+# loads them -- env, then env-<desktop name, lowercased>, each with `.` and NO
+# set -a: uwsm keeps only what a file exports, so this must drop the same.
+for f in env "env-$(printf %s "$XDG_CURRENT_DESKTOP" | tr '[:upper:]' '[:lower:]')"; do
+  [ -r "$HOME/.config/uwsm/$f" ] && . "$HOME/.config/uwsm/$f"
+done
+
 exec Hyprland -c "$HOME/.config/hypr/hyprland.lua"
 EOF
 chmod +x /tmp/start-hypr.sh
@@ -935,6 +960,15 @@ if [ -z "$SIG" ]; then
 fi
 export HYPRLAND_INSTANCE_SIGNATURE="$SIG"
 ok "Hyprland is running (instance $SIG)"
+
+# ERGON-64, from the process rather than the file: what the compositor -- and
+# so everything it launches -- actually carries. Set, and empty.
+_henv=$(tr '\0' '\n' < "/proc/$(pgrep -x Hyprland | head -1)/environ" 2>/dev/null)
+if grep -qx 'GNOME_DESKTOP_SESSION_ID=' <<<"$_henv"; then
+  ok "the compositor carries GNOME_DESKTOP_SESSION_ID, empty, from the shipped uwsm/env-hyprland"
+else
+  bad "the compositor's GNOME_DESKTOP_SESSION_ID is '$(grep '^GNOME_DESKTOP_SESSION_ID' <<<"$_henv" || echo absent)', not set and empty"
+fi
 
 # -s /bin/bash, not the user's login shell.
 #
