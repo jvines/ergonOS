@@ -18,7 +18,8 @@ READ IT BACK
 ------------
     ergon fig whence plot.png
 
-PNG carries it in tEXt chunks, PDF and SVG in their metadata dictionaries.
+PNG carries it in tEXt chunks; PDF and SVG in their Keywords field, which
+is the only free-form slot either of their metadata dictionaries has.
 Formats without a metadata channel (JPEG) are left alone rather than being
 silently not-stamped-but-looking-stamped.
 """
@@ -84,11 +85,22 @@ def provenance() -> dict:
     return meta
 
 
-# PNG and SVG take arbitrary key/value pairs. PDF's Info dictionary does NOT:
-# it has a fixed set of keys, and matplotlib raises on anything else. So the
-# whole record goes into Keywords as one string rather than being dropped.
-_ARBITRARY = {"png", "svg", "svgz"}
+# Only PNG takes arbitrary key/value pairs -- its tEXt chunks are free-form.
+#
+# This list used to include SVG, and that was wrong in a way that lost figures.
+# matplotlib's SVG writer accepts the Dublin Core key set and NOTHING else:
+# backend_svg.py pops Type, Title, Date, the agent keys and Keywords, and then
+# `if metadata: raise ValueError('Unknown metadata key(s) passed to SVG
+# writer')`. Every ergon.* key we added landed in that raise, so a savefig to
+# .svg from the shared python failed outright -- on the vector format journals
+# ask for, at the end of whatever run produced it.
+#
+# PDF's Info dictionary is fixed too. So both of them carry the record through
+# Keywords, which each format has: one flat string for PDF, and a list for SVG,
+# where matplotlib writes one <rdf:li> per element inside <dc:subject>.
+_ARBITRARY = {"png"}
 _FIXED_PDF = {"pdf"}
+_SVG = {"svg", "svgz"}
 
 
 def _merge(fname, fmt, user_meta):
@@ -102,6 +114,13 @@ def _merge(fname, fmt, user_meta):
         out = dict(user_meta or {})
         flat = " ".join(f"{k}={v}" for k, v in p.items())
         out["Keywords"] = (out.get("Keywords", "") + " " + flat).strip()
+        return out
+    if fmt in _SVG:
+        out = dict(user_meta or {})
+        kw = out.get("Keywords") or []
+        if isinstance(kw, str):
+            kw = [kw]
+        out["Keywords"] = list(kw) + [f"{k}={v}" for k, v in p.items()]
         return out
     return user_meta  # JPEG and friends: no metadata channel, leave it alone
 
@@ -120,13 +139,30 @@ def _patch(figure_module) -> None:
     # copied metadata, importing pyplot fails outright.
     @functools.wraps(original)
     def savefig(self, fname, *args, **kwargs):
+        stamped = False
+        user_meta = kwargs.get("metadata")
         try:
-            kwargs["metadata"] = _merge(fname, kwargs.get("format"), kwargs.get("metadata"))
+            kwargs["metadata"] = _merge(fname, kwargs.get("format"), user_meta)
+            stamped = kwargs["metadata"] is not user_meta
         except Exception:
             # Never let provenance break a save. A lost stamp is a nuisance; a
             # lost figure at the end of a long run is not.
-            pass
-        return original(self, fname, *args, **kwargs)
+            kwargs["metadata"] = user_meta
+        if not stamped:
+            return original(self, fname, *args, **kwargs)
+        try:
+            return original(self, fname, *args, **kwargs)
+        except Exception:
+            # The same promise, for the half the try above cannot see. Building
+            # the record is not where this failed before: a backend that
+            # rejected a key we added raised from inside savefig itself, past
+            # the guard, and took the figure with it. Retry once with exactly
+            # what the caller passed, so the worst case is a missing stamp.
+            if user_meta is None:
+                kwargs.pop("metadata", None)
+            else:
+                kwargs["metadata"] = user_meta
+            return original(self, fname, *args, **kwargs)
 
     # An explicit marker, because functools.wraps deliberately makes the
     # wrapper indistinguishable from the original by every other means.

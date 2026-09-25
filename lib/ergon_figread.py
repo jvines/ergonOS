@@ -29,9 +29,23 @@ def from_pdf(path):
 
 
 def from_svg(path):
+    # matplotlib writes Keywords into Dublin Core: one <rdf:li> per element,
+    # inside <dc:subject><rdf:Bag>. This used to look for <ergon.script>-style
+    # tags, which no SVG writer has ever produced -- the reader was written
+    # against an output format that did not exist, matching the writer, which
+    # could not save an SVG at all.
+    import gzip
     import re
-    text = open(path, encoding="utf-8", errors="replace").read()
-    return dict(re.findall(r"<(ergon\.[a-z]+)>([^<]*)</ergon\.[a-z]+>", text))
+    opener = gzip.open if path.endswith(".svgz") else open
+    with opener(path, "rt", encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    out = {}
+    for item in re.findall(r"<rdf:li[^>]*>([^<]*)</rdf:li>", text):
+        tok = item.strip()
+        if tok.startswith(PREFIX) and "=" in tok:
+            k, v = tok.split("=", 1)
+            out[k] = v
+    return out
 
 
 def main(path):
