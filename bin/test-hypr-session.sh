@@ -79,7 +79,7 @@ spawn qemu-system-x86_64 \
   -global PIIX4_PM.disable_s3=1 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
-  -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
+  -drive file=/w/disk.qcow2,if=virtio,format=qcow2,discard=unmap \
   -device $GPU_DEV \
   -display $GPU_DISPLAY \
   -virtfs local,path=/ergon,mount_tag=ergon,security_model=none,readonly=on \

@@ -561,6 +561,24 @@ else
   rec ok "session" "not in a graphical session; session checks skipped"
 fi
 
+# --- TRIM --------------------------------------------------------------------
+# ERGON-34. dm-crypt drops every discard unless the mapping allows them, and no
+# install before that card allowed them: DISC-MAX 0 on the mapper, so btrfs never
+# turned on its async discard and the SSD was never trimmed. lsblk reads sysfs,
+# so no root. No LUKS root, no row. DISC-MAX 0 fails whatever its cause, as the
+# card asks -- a disk that takes no discards itself (a HDD) fails here too, and
+# no re-run of provisioning clears that.
+if [ -e "${ERGON_SYSROOT:-}/dev/mapper/cryptroot" ]; then
+  dmax=$(lsblk -bdnD -o DISC-MAX /dev/mapper/cryptroot 2>/dev/null | tr -d ' ')
+  if ! [ "$dmax" -ge 0 ] 2>/dev/null; then
+    rec warn "trim" "lsblk could not read cryptroot's discard limit"
+  elif [ "$dmax" -gt 0 ]; then
+    rec ok "trim" "cryptroot passes discards to the disk"
+  else
+    rec fail "trim" "cryptroot drops every discard (DISC-MAX 0), so the disk under it is never trimmed — re-run bin/provision-arch.sh"
+  fi
+fi
+
 # --- disk ------------------------------------------------------------------
 avail=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')
 if [ -n "$avail" ]; then

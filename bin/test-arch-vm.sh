@@ -120,13 +120,19 @@ ok "disk ${DISK_GIB}G, OVMF vars writable, iso label $ISOLABEL"
 # test is the working tree and not a snapshot of it. It mounts at /dotfiles, NOT
 # under /mnt -- arch-bootstrap.sh owns /mnt as the target root, and a 9p share
 # inside it would be unmountable at the worst moment.
+#
+# discard=unmap (ERGON-34): the guest asserts TRIM gets through dm-crypt, and
+# this makes it land in the image. The virtio-blk DEVICE advertises discard
+# whatever the drive says (its own discard property defaults on, QEMU 10.0),
+# while the drive's default, discard=ignore, drops what arrives -- so no in-guest
+# assertion can tell the two apart. bin/hypr-vm keeps that default; harmless.
 # shellcheck disable=SC2329  # invoked via $(qemu_args) inside a heredoc
 qemu_args() {
   cat <<ARGS
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
-  -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
+  -drive file=/w/disk.qcow2,if=virtio,format=qcow2,discard=unmap \
   -virtfs local,path=/ergon,mount_tag=ergon,security_model=none,readonly=on \
   -nic user,model=virtio-net-pci \
   -nographic -no-reboot

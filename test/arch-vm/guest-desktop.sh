@@ -727,6 +727,18 @@ grep -q 'TIMELINE_LIMIT_HOURLY="5"' /etc/snapper/configs/root 2>/dev/null \
 id -nG "$U" | grep -qw video && ok "$U added to video by provisioning" || bad "$U not in video"
 [ -d "$H/ergonOS/hosts/$(hostname -s)" ] && ok "hosts/$(hostname -s) scaffolded" || bad "host dir not scaffolded"
 
+# ERGON-34, the half for a machine installed before rd.luks.options=discard --
+# this disk is reused for weeks, so it may be one. The header flag only gets
+# there if provisioning's refresh unlocked with the boot keyfile: it ran with
+# no terminal, and a refresh wanting a passphrase fails on a closed stdin.
+_dmax=$(lsblk -bdnD -o DISC-MAX /dev/mapper/cryptroot 2>/dev/null | tr -d ' ')
+[ "${_dmax:-0}" -gt 0 ] 2>/dev/null && ok "cryptroot passes discards (DISC-MAX $_dmax)" \
+  || bad "cryptroot drops discards (DISC-MAX ${_dmax:-unreadable}) — the disk is never trimmed"
+_hdr=$(cryptsetup luksDump "$(cryptsetup status cryptroot | awk '$1 == "device:" { print $2 }')" 2>&1)
+grep -q '^Flags:.*allow-discards' <<<"$_hdr" && ok "allow-discards is persistent in the LUKS2 header" \
+  || { bad "no persistent allow-discards — provisioning's refresh did not run"; grep -E '^Flags|rror' <<<"$_hdr" | sed 's/^/     /'; }
+systemctl is-enabled fstrim.timer >/dev/null 2>&1 && ok "fstrim.timer enabled" || bad "fstrim.timer is not enabled"
+
 # greetd would start a greeter on vt1 and take the seat and the DRM device out
 # from under the compositor this test starts by hand. Stop it for the duration.
 systemctl stop greetd >/dev/null 2>&1 || true
@@ -1326,6 +1338,13 @@ for row in aur aur-pins; do
     bad "ergon-doctor has no '$row' row — the foreign-package check did not run"
   fi
 done
+# ERGON-34: the trim row is asked only where /dev/mapper/cryptroot exists, which
+# here it does, so no row means the check never ran.
+if python3 -c "import json,sys; d=json.load(open('/tmp/doctor.json')); sys.exit(0 if any(c['name']=='trim' and c['state']=='ok' for c in d['checks']) else 1)" 2>/dev/null; then
+  ok "ergon-doctor's trim row is ok on a machine that passes discards"
+else
+  bad "ergon-doctor has no ok 'trim' row — see its output below"
+fi
 printf '   --   doctor says:\n'
 usr ergon-doctor 2>&1 | sed 's/^/        /'
 

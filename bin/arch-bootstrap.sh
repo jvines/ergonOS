@@ -412,7 +412,12 @@ LUKS_UUID=\$(blkid -s UUID -o value "$P2")
 # bin/ergon-rollback restores by replacing the CONTENT of @, so @ is always the
 # right thing to boot. (It is snapper's OWN rollback that the pin defeats --
 # see ergon-rollback for why that command is not usable on this layout.)
-CMDLINE="rd.luks.name=\$LUKS_UUID=cryptroot root=/dev/mapper/cryptroot rw"
+#
+# rd.luks.options=discard (ERGON-34). dm-crypt drops every discard unless the
+# mapping allows them, and btrfs turns on its async discard by itself, at mount,
+# only for a device that takes them -- so without this the SSD is never trimmed.
+# The cost, free-space layout visible on the raw disk, is in ergon explain security.
+CMDLINE="rd.luks.name=\$LUKS_UUID=cryptroot rd.luks.options=discard root=/dev/mapper/cryptroot rw"
 if [ "$HIBERNATE" = 1 ]; then
   RESUME_OFFSET=\$(btrfs inspect-internal map-swapfile -r /swap/swapfile)
   CMDLINE="\$CMDLINE resume=/dev/mapper/cryptroot resume_offset=\$RESUME_OFFSET"

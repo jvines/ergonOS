@@ -44,7 +44,7 @@ spawn qemu-system-x86_64 \
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
-  -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
+  -drive file=/w/disk.qcow2,if=virtio,format=qcow2,discard=unmap \
   -virtfs local,path=/ergon,mount_tag=ergon,security_model=none,readonly=on \
   -nic user,model=virtio-net-pci \
   -nographic -no-reboot
@@ -84,7 +84,7 @@ spawn qemu-system-x86_64 \
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file=/w/OVMF_VARS.fd \
-  -drive file=/w/disk.qcow2,if=virtio,format=qcow2 \
+  -drive file=/w/disk.qcow2,if=virtio,format=qcow2,discard=unmap \
   -virtfs local,path=/ergon,mount_tag=ergon,security_model=none,readonly=on \
   -nic user,model=virtio-net-pci \
   -nographic -no-reboot
