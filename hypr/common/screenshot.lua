@@ -22,8 +22,8 @@ local function shot(grab)
          "- | tee " .. shotdir .. "/" .. stamp .. " | wl-copy --type image/png"
 end
 
--- Annotate: grim into satty instead of into tee. satty (packages/pacman:156)
--- has been installed "for screenshot annotation" since the base list existed,
+-- Annotate: grim into satty instead of into tee. satty (packages/pacman) has
+-- been installed "for screenshot annotation" since the base list existed,
 -- with nothing calling it -- ERGON-38. -f - reads the capture off stdin and
 -- -o writes wherever satty's own save action lands, both confirmed against
 -- `satty --man` (0.22.0): NOTHING here duplicates grim's write the way `shot`
