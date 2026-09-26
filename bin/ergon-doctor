@@ -458,6 +458,20 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     */app.slice/*)     rec ok   "shell-slice" "under app.slice as ${cg##*/} — a runaway job here is killed on its own" ;;
     *)                 rec warn "shell-slice" "${cg:-no cgroup} — outside app.slice, so oomd will not contain a runaway job started here" ;;
   esac
+  # ERGON-50: what names an oomd kill of anything `ergon watch` did not start.
+  # Asked of the running manager, as oom-policy is: an enabled unit that died at
+  # login, or keeps dying, is a notifier that is not there.
+  if [ -n "${SUDO_USER:-}" ]; then
+    rec warn "oom-notify" "a root shell cannot see your user manager — run 'ergon doctor' as $WHO for this row"
+  else
+    na=$(systemctl --user show -p ActiveState --value ergon-oom-notify.service 2>/dev/null)
+    ne=$(systemctl --user show -p UnitFileState --value ergon-oom-notify.service 2>/dev/null)
+    if [ "$na:$ne" = active:enabled ]; then
+      rec ok "oom-notify" "an oomd kill anywhere in this session is named in a notification"
+    else
+      rec fail "oom-notify" "ergon-oom-notify.service is ${ne:-unknown} and ${na:-unknown} — oomd can close a window here and say nothing (./install.sh; journalctl --user -u ergon-oom-notify)"
+    fi
+  fi
   case ":$PATH:" in
     *":$ERGON/bin:"*) rec ok "session-path" "repo bin is on PATH" ;;
     *) rec fail "session-path" "repo bin NOT on PATH — every ergon-* in the bar is a no-op. Is environment.d/10-ergon-path.conf linked?" ;;

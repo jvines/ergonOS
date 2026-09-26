@@ -1,0 +1,22 @@
+[Unit]
+Description=Say on the desktop what systemd-oomd killed
+# A follower that keeps dying is reported, not retried forever: five failures in
+# five minutes leave it failed, which is what ergon doctor's oom-notify row reads.
+StartLimitIntervalSec=5min
+StartLimitBurst=5
+
+[Service]
+ExecStart=%h/ergonOS/bin/ergon-oom-notify
+Restart=on-failure
+RestartSec=5s
+# session.slice, not the default app.slice. app.slice is where oomd acts, and the
+# one process that has to outlive a kill in order to report it must never be a
+# candidate for that kill.
+Slice=session.slice
+# notify-send finds mako over this and nothing else (GDBus has no fallback to
+# $XDG_RUNTIME_DIR/bus), and the manager only carries it when something imported
+# it -- the VM harness measured a manager without one. Stating it costs nothing.
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
+
+[Install]
+WantedBy=default.target

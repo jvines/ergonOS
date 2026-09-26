@@ -209,6 +209,20 @@ else
     systemctl --user start ergon-battery.timer >/dev/null 2>&1 || true
     ok "ergon-battery.timer enabled"
   fi
+
+  # ERGON-50: the notification naming what oomd killed, for everything `ergon
+  # watch` did not start. default.target, not graphical-session.target: only a
+  # uwsm login reaches that one, and a session started any other way -- the VM
+  # harness's -- would never run it. restart, not start: a follower already
+  # running keeps the old script until it is.
+  if [ "$CHECK" != 1 ]; then
+    mkdir -p "$HOME/.config/systemd/user/default.target.wants"
+    cp "$ERGON/systemd/ergon-oom-notify.service" "$HOME/.config/systemd/user/" 2>/dev/null || true
+    ln -sfn ../ergon-oom-notify.service "$HOME/.config/systemd/user/default.target.wants/ergon-oom-notify.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user restart ergon-oom-notify.service >/dev/null 2>&1 || true
+    ok "ergon-oom-notify.service enabled"
+  fi
 fi
 
 # The shell. link() refuses to replace a real file, which is the behaviour

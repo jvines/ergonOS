@@ -1878,6 +1878,17 @@ case "$oom_app" in
         oom_diag ;;
 esac
 
+# ERGON-50: what names an oomd kill of anything `ergon watch` did not start.
+# install.sh enabled it before the harness lingered the user, so the manager
+# started it with default.target, the way a login does.
+_nf=$(usr "systemctl --user is-active ergon-oom-notify.service" 2>/dev/null | tr -d '\r')
+if [ "$_nf" = active ]; then
+  ok "ergon-oom-notify is following the journal in this session"
+else
+  bad "ergon-oom-notify.service is '${_nf:-no answer}' — an oomd kill outside ergon watch says nothing"
+  usr "journalctl --user -u ergon-oom-notify --no-pager -n 15" 2>&1 | sed 's/^/     /'
+fi
+
 # A REAL ALLOCATION, run the way `ergon watch` runs one: through the user
 # manager, under app.slice, with MemoryHigh forcing the scope to reclaim hard so
 # that the pressure oomd acts on actually builds.
@@ -1994,6 +2005,29 @@ if usr "pgrep -x mako" >/dev/null 2>&1; then
   esac
 else
   note "mako is not running here, so the notification cannot be read back"
+fi
+
+# ERGON-50 end to end: the same allocation with no `ergon watch` around it, in a
+# unit of its own under app.slice -- a bare `python fit.py` as far as oomd and
+# the manager can tell, so only ergon-oom-notify can name it. And the kill
+# above, which ergon watch named itself, must not have been named twice.
+if usr "pgrep -x mako" >/dev/null 2>&1; then
+  case "$(usr "makoctl list" 2>/dev/null)" in
+    *"was killed for memory"*) bad "ergon watch's own kill was announced a second time, by ergon-oom-notify" ;;
+    *) ok "ergon watch's own kill was announced once, by ergon watch" ;;
+  esac
+  usr "timeout 120 systemd-run --user --quiet --wait --unit=ergon-vm-oom-bare --slice=app.slice \
+       -p MemoryHigh=256M -- python3 /tmp/eat-memory.py" >/dev/null 2>&1
+  usr "systemctl --user stop ergon-vm-oom-bare.service; systemctl --user reset-failed ergon-vm-oom-bare.service" >/dev/null 2>&1
+  sleep 2
+  _mako=$(usr "makoctl list" 2>/dev/null)
+  case "$_mako" in
+    *"eat-memory.py was killed for memory"*) ok "a kill nobody was watching is named in a notification" ;;
+    *) bad "oomd killed a bare run and no notification names it"
+       usr "journalctl --user -u ergon-oom-notify --no-pager -n 15" 2>&1 | sed 's/^/     /'
+       usr "journalctl --user --no-pager -o cat MESSAGE_ID=d989611b15e44c9dbf31e3c81256e4ed" 2>&1 | tail -3 | sed 's/^/     /'
+       printf '%s\n' "$_mako" | head -20 | sed 's/^/     /' ;;
+  esac
 fi
 
 # The path a person actually takes, and the one thing this harness cannot walk:
