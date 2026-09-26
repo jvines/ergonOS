@@ -23,6 +23,19 @@ window#waybar {
  * hiding is what signals fullscreen. Keep the transition cheap. */
 window#waybar.hidden { opacity: 0.0; }
 
+/* -- menu ------------------------------------------------------------------
+ * The button that opens bin/ergon-menu (ERGON-31): System, Style, Commands,
+ * Help. Quiet until touched, the same treatment #custom-session gets on the
+ * far right -- neither is a reading, both are an exit into something else.
+ * @COOL_ACTIVE@ on hover, not @COOL_URGENT@: this one opens a picker, it does
+ * not end the session. */
+#custom-menu {
+  color: @COOL_DIM@;
+  margin-left: 4px;
+  padding: 0 8px;
+}
+#custom-menu:hover { color: @COOL_ACTIVE@; }
+
 /* -- workspaces ---------------------------------------------------------- */
 #workspaces { margin-left: 4px; }
 

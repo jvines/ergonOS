@@ -14,7 +14,7 @@
   "height": 30,
   "spacing": 0,
 
-  "modules-left":   ["hyprland/workspaces", "hyprland/submap"],
+  "modules-left":   ["custom/menu", "hyprland/workspaces", "hyprland/submap"],
   "modules-center": ["hyprland/window"],
   "modules-right":  [
     "custom/temperature", "cpu", "memory",
@@ -22,6 +22,18 @@
     "network", "bluetooth", "battery", "power-profiles-daemon",
     "clock", "tray", "custom/session"
   ],
+
+  // The tree that reaches System, Style (palettes, backgrounds), Commands
+  // and Help (bin/ergon-menu, ERGON-31; SUPER+ALT+SPACE, hypr/common/binds.lua).
+  // Leftmost, because that is the one spot modules-left had nothing in --
+  // workspaces and the submap -- and because a keybind is not reachable from
+  // every seat, the same reason custom/palette and custom/session are clickable.
+  "custom/menu": {
+    "format": "󰍜",
+    "tooltip": true,
+    "tooltip-format": "Menu — system, style, commands, help",
+    "on-click": "ergon-menu"
+  },
 
   "hyprland/workspaces": {
     "format": "{id}",
