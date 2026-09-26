@@ -973,12 +973,13 @@ say "out-of-memory containment"
 # started straight from a keybind, which put them and everything they ran in
 # exactly that unit.
 #
-# Three files, each answering a different half:
+# Four files, each answering a different half:
 #
 #   oomd.conf.d   act on memory PRESSURE. The kernel OOM killer only fires when
 #                 an allocation actually fails, which on a machine with swap is
 #                 minutes after it stopped being usable.
 #   app.slice.d   where systemd-oomd is allowed to act.
+#   tmux-spawn-   put every tmux pane there too, wherever its server started.
 #   wayland-wm@   the kernel killing something that IS still in the compositor's
 #                 unit must not end the session.
 #
@@ -1029,6 +1030,23 @@ ManagedOOMMemoryPressure=kill
 OOMAPP
 then _user_reload=1; fi
 
+if _changed /etc/systemd/user/tmux-spawn-.scope.d/10-ergon-oomd.conf <<'OOMTMUX'
+# Written by provision-arch.sh. ERGON-47.
+#
+# tmux gives every pane a transient scope of its own, tmux-spawn-<uuid>.scope,
+# and asks for it in the tmux SERVER's slice. A server started from an ssh
+# login -- zsh/common.zsh starts one on every inbound ssh -- sits in logind's
+# session scope, which the user manager reads as its ROOT slice, so every pane
+# landed in -.slice: outside app.slice, watched by nothing, and tmux is where
+# long runs live. A drop-in directory named for a prefix applies to every unit
+# whose name starts with it, transient scopes included, and it overrides the
+# Slice= tmux asks for (measured: systemd 262, tmux 3.7c). A pane opened before
+# this arrived keeps its cgroup; `ergon doctor` run in it says so.
+[Scope]
+Slice=app.slice
+OOMTMUX
+then _user_reload=1; fi
+
 if _changed /etc/systemd/user/wayland-wm@.service.d/10-ergon-oom.conf <<'OOMWM'
 # Written by provision-arch.sh.
 #
@@ -1077,8 +1095,9 @@ fi
 # After the oomd block above and not before it: the user manager connects to
 # oomd in order to report this, and a report sent while oomd is down is dropped.
 #
-# When either drop-in moved, reload first -- the compositor's OOMPolicy rides on
-# the same reload, and app.slice below is the witness that the reload landed.
+# When any user drop-in moved, reload first -- the compositor's OOMPolicy and the
+# tmux panes ride on the same reload, and app.slice below is the witness that it
+# landed.
 [ "$_user_reload" = 0 ] || ergon_user_reload || true
 _oom_rc=0
 _oom_live=$(ergon_user_ensure_prop app.slice ManagedOOMMemoryPressure kill) || _oom_rc=$?

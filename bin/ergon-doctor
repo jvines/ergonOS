@@ -437,13 +437,23 @@ else
 fi
 
 # --- the session -----------------------------------------------------------
-if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+# Asked in a tmux pane as well as in a graphical terminal: those are where long
+# runs are started, and a pane reached over ssh has no WAYLAND_DISPLAY at all.
+if [ -n "${WAYLAND_DISPLAY:-}${TMUX:-}" ]; then
   # WHERE THIS SHELL IS, which decides what a job started in it can cost. Under
   # uwsm the compositor is wayland-wm@hyprland.service in session.slice, with
   # OOMPolicy=stop and OnFailure=wayland-session-shutdown.target -- so a
   # terminal that ended up in there is one where the kernel killing a sampler
   # ends the whole session. A terminal launched through uwsm-app is in its own
   # scope under app.slice, where oomd kills it and nothing else.
+  #
+  # A tmux pane is a scope of its own too, tmux-spawn-<uuid>.scope, which tmux
+  # asks for in its SERVER's slice -- the user manager's root, for a server
+  # started over ssh -- and provisioning's tmux-spawn-.scope.d moves it under
+  # app.slice. A daemon-reload applies that to a pane already open on paper
+  # only: its unit then SAYS app.slice while its cgroup never moved (measured,
+  # systemd 262). That disagreement is how an old pane is told from a missing
+  # policy.
   #
   # cgroup v2 writes one "0::<path>" line; tail -1 is the v1 fallback picking
   # the last controller rather than nothing at all.
@@ -456,8 +466,15 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     sudo) rec warn "shell-slice" "a root shell is not the shell you are asking about — run 'ergon doctor' as $WHO for this row" ;;
     */session.slice/*) rec fail "shell-slice" "this shell is inside the compositor's unit — a job that exhausts memory here ends the session. Was the terminal started from a bind without uwsm-app?" ;;
     */app.slice/*)     rec ok   "shell-slice" "under app.slice as ${cg##*/} — a runaway job here is killed on its own" ;;
+    */tmux-spawn-*.scope)
+      case $(systemctl --user show -p Slice --value "${cg##*/}" 2>/dev/null) in
+        app.slice) rec warn "shell-slice" "this tmux pane was opened before tmux's panes were put under app.slice, so a runaway job here is not contained — a new pane or window is" ;;
+        *)         rec warn "shell-slice" "tmux panes land outside app.slice, so oomd will not contain a runaway job in one — re-run provisioning (it installs tmux-spawn-.scope.d), then open a new pane" ;;
+      esac ;;
     *)                 rec warn "shell-slice" "${cg:-no cgroup} — outside app.slice, so oomd will not contain a runaway job started here" ;;
   esac
+fi
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
   case ":$PATH:" in
     *":$ERGON/bin:"*) rec ok "session-path" "repo bin is on PATH" ;;
     *) rec fail "session-path" "repo bin NOT on PATH — every ergon-* in the bar is a no-op. Is environment.d/10-ergon-path.conf linked?" ;;
