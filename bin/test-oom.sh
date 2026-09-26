@@ -24,9 +24,10 @@
 # a kill is attributed to memory WITHOUT any journal access, and what `ergon
 # hist` shows for it; how the app.slice drop-in is made live in a user manager
 # that is ALREADY running, from the session-less shell provisioning runs in; the
-# drop-in that puts every tmux pane under app.slice (ERGON-47); and the three
-# doctor rows in every state, including a machine with no user manager to ask
-# and a tmux pane reached over ssh.
+# drop-in that puts every tmux pane under app.slice (ERGON-47); the doctor rows
+# in every state, including a machine with no user manager to ask and a tmux
+# pane reached over ssh; and what names an oomd kill that ergon watch did not
+# start (ERGON-50).
 #
 # DOES NOT COVER: whether systemd-oomd actually kills the scope under pressure,
 # whether the compositor survives it, or whether a notification is drawn. Those
@@ -238,6 +239,8 @@ case " $* " in
       *" ${unit:-__none__}.scope "*) printf '%s\n' "${STUB_SCOPE_RESULT:-success}" ;;
       *) echo success ;;
     esac ;;
+  *" ergon-oom-notify.service "*)
+    case " $* " in *" ActiveState "*) echo "${STUB_NOTIFY_ACTIVE:-active}" ;; *) echo "${STUB_NOTIFY_ENABLED:-enabled}" ;; esac ;;
   # A scope is over by the time ergon-watch asks; the poll exists for the
   # moment before that, and a stub that never says "active" still exercises it.
   *"-p ActiveState"*) echo failed ;;
@@ -577,6 +580,15 @@ check "a pane opened before the policy says a new one is contained" \
   has <(pane app.slice) '"state":"warn".*a new pane or window is'
 check "  and does not send that person to re-provision" \
   not has <(pane app.slice) 're-run provisioning'
+check "the oomd notifier enabled and running is ok"  has <(doctor oom-notify) '"state":"ok"'
+# Enabled is not running: a follower that kept dying sits in failed with its
+# wants symlink intact, and a row that read the symlink would call it healthy.
+check "  enabled but failed is a failure" \
+  has <(STUB_NOTIFY_ACTIVE=failed doctor oom-notify) '"state":"fail".*enabled and failed'
+check "  running but not enabled is one too, gone at the next login" \
+  has <(STUB_NOTIFY_ENABLED=disabled doctor oom-notify) '"state":"fail"'
+check "  under sudo it says it cannot answer" \
+  has <(SUDO_USER=someone doctor oom-notify) '"state":"warn"'
 
 # --- the answer a ROOT shell can honestly give -------------------------------
 # doctor tells you to run itself under sudo for the rows that need root, and
@@ -605,6 +617,79 @@ check "  and the note survives the escaping intact" \
 unset WAYLAND_DISPLAY
 check "outside a graphical session and outside tmux the row is not asked at all" \
   test -z "$(doctor shell-slice)"
+
+# --- a kill nobody was watching (ERGON-50) ------------------------------------
+# ergon-oom-notify against a journal rather than a transcript. The stub applies
+# FIELD=VALUE matches the way journalctl does, and keeps what was written before
+# it started (old) apart from what arrives while it follows (new) -- so a wrong
+# MESSAGE_ID, a dropped _UID or a dropped --lines=0 each change WHAT ARRIVES,
+# not a string in an argv. Entries carry the fields measured off a real kill.
+cat > "$T/stub/journalctl" <<'EOF'
+#!/usr/bin/env bash
+f=. follow=0 lines=10 out=short
+for a; do case "$a" in
+  --follow) follow=1 ;; --lines=*) lines=${a#*=} ;; --output=*) out=${a#*=} ;;
+  [A-Z_]*=*) f="$f | select(.${a%%=*} == \"${a#*=}\")" ;;
+esac; done
+[ -z "${STUB_JOURNAL_DIES:-}" ] || exit 1
+if [ "$follow" = 1 ]; then
+  # Held open, as a real follower is: EOF is what would flush a stage that buffers.
+  { jq -c "$f" "$TEST_ROOT/journal.old" | tail -n "$lines"; jq -c "$f" "$TEST_ROOT/journal.new"; exec sleep 30; }
+else
+  cat "$TEST_ROOT/journal.old" "$TEST_ROOT/journal.new" | jq -c "$f" | tail -n "$lines"
+fi | if [ "$out" = cat ]; then jq -r .MESSAGE; else cat; fi
+EOF
+# Logged as a server receives it: the real notify-send g_strcompress()es its BODY,
+# the last argument, so \\ arrives as \ and \x2d as x2d.
+cat > "$T/stub/notify-send" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s\n' "${*:1:$#-1}" "$(printf '%s' "${!#}" | sed 's/\\\(.\)/\1/g')" >> "$TEST_ROOT/log/notify-send"
+EOF
+chmod +x "$T/stub/journalctl" "$T/stub/notify-send"
+KILL=d989611b15e44c9dbf31e3c81256e4ed; START=39f53479d3a045ac8e11786248231fbf
+entry() {  # entry <message-id> <unit> <invocation> <message> [uid]
+  printf '{"MESSAGE_ID":"%s","USER_UNIT":"%s","USER_INVOCATION_ID":"%s","MESSAGE":"%s","_UID":"%s"}\n' \
+    "$1" "$2" "$3" "$4" "${5:-$(id -u)}"
+}
+TERM_U='app-Hyprland-ergon\\x2dterm-cafef00d.scope'   # as JSON carries it
+{ entry $START 'app-Hyprland-foot-11111111.scope' i1 'Started foot.'
+  entry $KILL  'app-Hyprland-foot-11111111.scope' i1 'killed earlier'
+  entry $START "$TERM_U" i2 'Started ergon-term.'; } > "$T/journal.old"
+{ entry $KILL  "$TERM_U" i2 'systemd-oomd killed 3 process(es) in this unit.'
+  entry d9b373ed55a64feb8242e02dbe79a49c "$TERM_U" i2 "Failed with result 'oom-kill'."
+  entry $START 'ergon-watch-fit-4242.scope' i3 'Started [systemd-run] /usr/bin/python3 fit.py.'
+  entry $KILL  'ergon-watch-fit-4242.scope' i3 'systemd-oomd killed 1 process(es) in this unit.'
+  entry $KILL  'app-Hyprland-other-22222222.scope' i4 'not ours' $(( $(id -u) + 1 ))
+  entry $KILL  'app-Hyprland-gone-33333333.scope' i9 'systemd-oomd killed 1 process(es) in this unit.'; } > "$T/journal.new"
+rm -f "$L"/*
+# Waited for by the LAST kill, so every line before it has been handled; timeout
+# because it signals its whole process group, the stub's sleep included.
+timeout 20 "$REPO/bin/ergon-oom-notify" >/dev/null 2>&1 & fp=$!
+for _ in $(seq 100); do hasf "$L/notify-send" gone-33333333 && break; sleep 0.1; done
+kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null
+check "each kill is announced as it arrives, while the journal is still open" \
+  hasf "$L/notify-send" 'app-Hyprland-gone-33333333.scope'
+check "two kills in the session are exactly two notifications" \
+  test "$(wc -l < "$L/notify-send" 2>/dev/null)" = 2
+check "  naming the unit that died, as the manager wrote it" \
+  hasf "$L/notify-send" 'app-Hyprland-ergon\x2dterm-cafef00d.scope'
+check "  and what it was, from the line that started it, at critical urgency" \
+  hasf "$L/notify-send" '-u critical ergon-term was killed for memory'
+check "an ergon watch scope, which ergon watch announces itself, is not announced twice" \
+  not hasf "$L/notify-send" 'ergon-watch-fit'
+check "a kill already in the journal when the follower started is not announced again" \
+  not hasf "$L/notify-send" 'app-Hyprland-foot-11111111'
+check "a kill in another user's manager is not this session's" \
+  not hasf "$L/notify-send" 'app-Hyprland-other-22222222'
+check "with no Started line left to read, the unit name is the summary" \
+  hasf "$L/notify-send" 'app-Hyprland-gone-33333333.scope was killed for memory'
+# The unit restarts on-failure, which only works if a dead follower IS a failure.
+check "a follower whose journal dies exits non-zero, so Restart= brings it back" \
+  not env STUB_JOURNAL_DIES=1 "$REPO/bin/ergon-oom-notify"
+NU="$REPO/systemd/ergon-oom-notify.service"
+check "  and the unit does restart it" has "$NU" '^Restart=on-failure$'
+check "the notifier is not in app.slice, where the kill it reports could take it" \
+  has "$NU" '^Slice=session\.slice$'
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

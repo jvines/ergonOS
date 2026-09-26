@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# ergon:summary=Say on the desktop what systemd-oomd killed, whoever started it
+# ergon:group=system
+# ergon:args=
+#
+# Run by systemd/ergon-oom-notify.service for as long as the user manager runs.
+#
+# ERGON-50. `ergon watch` names what it lost when oomd kills its run; nothing
+# else did. A bare `python fit.py` in a terminal takes the terminal's whole
+# scope with it and the window simply disappears -- the mystery ERGON-19 set out
+# to end, still standing for everything not started through `ergon watch`.
+#
+# The MANAGER's line, not oomd's. Measured on systemd 262 with a real kill under
+# MemoryHigh (ergon64-closure): oomd's own line is prose ("Marked <cgroup> for
+# killing due to memory pressure ...") with no MESSAGE_ID, in system.journal,
+# which only wheel, adm and systemd-journal may read. The user manager that owned
+# the cgroup logs the same kill structured -- MESSAGE_ID below, USER_UNIT=<the
+# unit>, _UID=<us> -- into user-<uid>.journal, which its owner reads with no
+# group at all (measured with a user in no supplementary group). Every cgroup
+# oomd may touch here is under that manager's app.slice (provisioning's
+# out-of-memory stage), so this is every kill in the session and nobody else's.
+set -euo pipefail
+
+KILLED=d989611b15e44c9dbf31e3c81256e4ed    # "systemd-oomd killed N process(es) in this unit"
+STARTED=39f53479d3a045ac8e11786248231fbf   # "Started <description>."
+
+# --lines=0: a restart must not announce again the kills it already announced.
+# journalctl -f follows rotation and a journald restart by itself (measured), so
+# an exit here is a fault, and the unit's Restart= is what answers it.
+journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID="$KILLED" _UID="$(id -u)" \
+  | jq --unbuffered -r '"\(.USER_INVOCATION_ID // "-") \(.USER_UNIT // "")"' \
+  | while read -r inv unit; do
+  [ -n "$unit" ] || continue
+  # ergon watch names its scope ergon-watch-<name>-<pid> and notifies for it
+  # itself, with the run's name and peak memory; a second popup is noise. ALL of
+  # them, not only those whose watcher is still alive: measured, a watcher that
+  # exits with its job is gone before this line runs, so that question races.
+  # The price is a job whose terminal oomd took first -- its later kill is not
+  # named here -- and the terminal's own kill still is.
+  case "$unit" in ergon-watch-*.scope) continue ;; esac
+  # WHAT it was, which the unit name often does not say and the unit itself can
+  # no longer: uwsm-app's scopes are --collect, so they are unloaded before
+  # anyone can ask. Its "Started" line, under the same invocation, still is.
+  what=$(journalctl --output=cat --lines=1 MESSAGE_ID="$STARTED" USER_INVOCATION_ID="$inv" 2>/dev/null) || what=""
+  what=${what#Started }; what=${what%.}
+  # Critical, so mako holds it until it is dismissed: the window it would
+  # otherwise have explained is gone, and a popup that times out while you are
+  # in the other room explains nothing. Backslashes doubled in the body only:
+  # notify-send g_strcompress()es it and not the summary (libnotify 0.8.8,
+  # measured); ergon\x2dterm arrived as ergonx2dterm, a unit that is not there.
+  notify-send -u critical "${what:-$unit} was killed for memory" \
+    "systemd-oomd ended ${unit//\\/\\\\} and everything running in it. \`ergon watch\` gives a long job a scope of its own." \
+    || printf 'could not deliver the notification for %s (no session bus?)\n' "$unit" >&2
+done

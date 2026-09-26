@@ -170,7 +170,7 @@ sync() {  # sync [args...] -> status in $RC, output in $T/out, stubs in $LOG
 
 # --- a commit that provisioning does not read -------------------------------
 # systemd/ is here because ergon-sync used to watch it. Its only readers are
-# install.sh's two `cp`s into ~/.config/systemd/user, so watching it meant an
+# install.sh's `cp`s into ~/.config/systemd/user, so watching it meant an
 # edit to ergon-battery.timer told every machine to re-provision -- and with
 # --yes, to upgrade itself unattended.
 stamp "$(git -C "$M" rev-parse HEAD)"
