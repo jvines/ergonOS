@@ -618,4 +618,145 @@ else
   rc=1
 fi
 
+# ---------------------------------------------------------------------------
+# ERGON-41: every command and bind a knowledge topic NAMES actually exists.
+#
+# knowledge/*.md is read once and trusted, unlike `ergon --list` and `ergon
+# keys`, which are regenerated from the running system every time -- so a
+# command renamed or a bind moved leaves a topic pointing at nothing, silently,
+# with nothing before this to notice.
+#
+# Checked only inside backticks and 4-space-indented blocks, because ordinary
+# prose contains "ergon" without naming a command: security.md says "ergon
+# policy" and "ergon installs no extension" in running sentences, and
+# troubleshooting.md's own `environment.d/10-ergon-path.conf` and
+# `49-ergon-desktop.rules` are paths that happen to contain the string
+# "ergon-", not commands -- excluded by requiring nothing word-ish (a letter,
+# digit, dot, slash or another hyphen) immediately before the match.
+#
+# Only the word right after ergon/ergon-/erg- is resolved against bin/: `ergon
+# bundle add` and `ergon-hardware detect` name a subcommand or an argument, and
+# confirming those exist would mean running the command, not reading bin/.
+# Hyphenated command names (`ergon-launch-tui`, `ergon-wallpaper-gen`) are kept
+# whole rather than cut at the first hyphen.
+#
+# Chords are canonicalised the same way the keybinding check above does --
+# modifier order and case do not matter to Hyprland -- and checked against
+# every literal chord hypr/common/*.lua actually binds, direct or through the
+# local `bind()` wrapper (binds.lua, media.lua). A chord whose final key is a
+# bare digit is skipped rather than checked: troubleshooting.md's "SHIFT+7"
+# is a keyboard-layout illustration (what the US "/" key types on a Latin
+# American layout), not a claim that this repo binds it, and workspace
+# switching is bound in a runtime loop the same way the check above already
+# excludes from its own duplicate detection.
+knowledge_py=$(cat <<'PY'
+import os, re, sys
+
+root = sys.argv[1]
+cmds = {f[len("ergon-"):] for f in os.listdir(os.path.join(root, "bin"))
+        if f.startswith("ergon-") and os.path.isfile(os.path.join(root, "bin", f))}
+
+MOD = {"SUPER": "SUPER", "WIN": "SUPER", "LOGO": "SUPER", "MOD4": "SUPER", "META": "SUPER",
+       "CTRL": "CTRL", "CONTROL": "CTRL", "ALT": "ALT", "MOD1": "ALT",
+       "SHIFT": "SHIFT", "CAPS": "CAPS", "MOD2": "MOD2", "MOD3": "MOD3", "MOD5": "MOD5"}
+ORDER = ["SUPER", "CTRL", "ALT", "SHIFT", "CAPS", "MOD2", "MOD3", "MOD5"]
+
+def canon(chord):
+    mods, key = set(), ""
+    for p in chord.split("+"):
+        p = p.strip().upper()
+        if p in MOD:
+            mods.add(MOD[p])
+        else:
+            key = p
+    return " + ".join(m for m in ORDER if m in mods) + " + " + key
+
+# A chord that is ONLY modifiers and a key, with nothing else in the string.
+# Reused below to catch a bind reached through a variable rather than a
+# literal argument -- binds.lua's help_key/help_alt are chosen per-layout
+# (if layout.slash_unshifted ... else ...) and never appear as a literal
+# hl.bind(...)/bind(...) argument at all, so the two loops above miss both
+# real chords it assigns. Found the hard way: appending `SUPER+F1` to a
+# knowledge topic reported it as unbound although it is the default help key
+# on half the world's keyboard layouts.
+CHORD_LITERAL = re.compile(
+    r'(?:SUPER|WIN|LOGO|MOD[1-5]|META|CTRL|CONTROL|ALT|SHIFT|CAPS)'
+    r'(?:\s*\+\s*[A-Za-z0-9_]+)+', re.IGNORECASE)
+
+binds = set()
+hypr_dir = os.path.join(root, "hypr", "common")
+for f in sorted(os.listdir(hypr_dir)) if os.path.isdir(hypr_dir) else []:
+    if not f.endswith(".lua"):
+        continue
+    with open(os.path.join(hypr_dir, f), encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    for m in re.finditer(r'hl\.bind\(\s*"([^"]+)"', text):
+        binds.add(canon(m.group(1)))
+    for m in re.finditer(r'(?<![\w.])bind\(\s*"([^"]+)"', text):
+        binds.add(canon(m.group(1)))
+    for m in re.finditer(r'"([^"]+)"', text):
+        if CHORD_LITERAL.fullmatch(m.group(1)):
+            binds.add(canon(m.group(1)))
+
+# The lookahead excludes a command name that is really the start of a longer
+# word: `ergon-reap.timer`, `ergon-boot-ok.service` and the `--class
+# ergon-float` app_id all otherwise resolve `reap`, `boot-ok` and `float` as
+# invented commands. This repo ships unit files and window classes named
+# exactly that way, and a topic that names one in backticks is not claiming a
+# command exists.
+CMD = re.compile(r'(?<![\w./-])(?:ergon[ -]|erg-)([a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*)(?![\w.])')
+CHORD = re.compile(r'\b(?:SUPER|WIN|LOGO|MOD[1-5]|META|CTRL|CONTROL|ALT|SHIFT|CAPS)\b'
+                    r'(?:\s*\+\s*[A-Za-z0-9_]+)+')
+SPAN = re.compile(r'`([^`]+)`')
+
+n_cmd = n_chord = 0
+kdir = os.path.join(root, "knowledge")
+for name in sorted(os.listdir(kdir)):
+    if not name.endswith(".md"):
+        continue
+    path = os.path.join(kdir, name)
+    rel = os.path.relpath(path, root)
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        lines = fh.readlines()
+    for lineno, line in enumerate(lines, 1):
+        spans = SPAN.findall(line)
+        if line.startswith("    "):
+            spans.append(line[4:])
+        for span in spans:
+            for m in CMD.finditer(span):
+                n_cmd += 1
+                w = m.group(1)
+                if w not in cmds:
+                    print(f"{rel}\t{lineno}\tno such command 'ergon {w}' (bin/ergon-{w} does not exist)")
+            for m in CHORD.finditer(span):
+                key = canon(m.group(0)).rsplit(" ", 1)[-1]
+                if key.isdigit():
+                    continue
+                n_chord += 1
+                c = canon(m.group(0))
+                if c not in binds:
+                    print(f"{rel}\t{lineno}\t'{m.group(0)}' is not bound anywhere in hypr/common/*.lua")
+print(f"=\t{n_cmd}\t{n_chord}")
+PY
+)
+kn_bad=0; kn_cmd=0; kn_chord=0
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "  FAIL no python3, so nothing checks knowledge/*.md's commands and binds against reality" >&2
+  rc=1
+elif kn_out=$(python3 -I -c "$knowledge_py" "$ERGON"); then
+  while IFS=$'\t' read -r f l m; do
+    case "$f" in
+      '') ;;
+      =) kn_cmd=$l; kn_chord=$m ;;
+      *) report "$f" "$l" "$m"; kn_bad=$((kn_bad + 1)) ;;
+    esac
+  done <<< "$kn_out"
+  if [ "$kn_bad" = 0 ]; then
+    echo "  ok   $kn_cmd command mention(s) and $kn_chord chord mention(s) in knowledge/*.md, each real"
+  fi
+else
+  echo "  FAIL the knowledge-reference check did not run (python3 exited non-zero)" >&2
+  rc=1
+fi
+
 exit $rc

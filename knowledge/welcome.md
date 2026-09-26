@@ -16,4 +16,6 @@ Where to look first:
 - `ergon explain --list` — what this machine knows, by topic;
   `ergon explain <topic>` reads one. Advice written for other desktops is
   often wrong here, so start with these.
+- `ergon explain using-ergon` — the day-to-day picture: rollback, backup,
+  bundles, sleep, updates, and where the things you make land.
 - `ergon doctor` — when something is quietly wrong.
