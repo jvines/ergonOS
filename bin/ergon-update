@@ -33,6 +33,13 @@
 # point is now its own deliberate --no-snapshot; unread news is cleared by
 # reading it.
 #
+# --check changes nothing on the system (the AUR report may refresh its clones
+# under ~/.cache/aur) and gets past the gates: it names each one a real run
+# would stop at, and prints its reports anyway, all but firmware. It exits 1 when
+# any gate would have stopped a real run, so `ergon update --check` answers
+# "would an update go through" by status too; 0 means one would, not that
+# nothing is pending.
+#
 # The transaction runs under `systemd-run --scope` while a
 # sleep:shutdown:handle-lid-switch inhibitor is held. There are three ways a
 # pacman stops half way through, none of them pacman's doing: a terminal opened
@@ -58,6 +65,17 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   ok   %s\n' "$*"; }
 warn() { printf '   !!   %s\n' "$*" >&2; }
 die()  { printf '   FAIL %s\n' "$*" >&2; exit 1; }
+# A gate stops a real run where it stands. Under --check it is recorded and the
+# run goes on: it used to die here too, so a machine with unread news -- the one
+# most likely to need the orphan, .pacnew and reboot lines -- got none of them,
+# from the one flag whose whole purpose is to say what an update would do.
+STOPS=()
+gate() {  # gate <name> <message...>
+  local name=$1; shift
+  [ "$CHECK_ONLY" = 1 ] || die "$*"
+  printf '   !!   a real run stops here: %s\n' "$*" >&2
+  STOPS+=("$name")
+}
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 # shellcheck source=../lib/transaction.sh
@@ -73,18 +91,21 @@ say "space"
 # Two separate places, and they fail differently. / filling mid-transaction
 # corrupts a package set; the cache filling just aborts the download.
 root_free=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
-[ "$root_free" -ge "$MIN_ROOT_GIB" ] \
-  || die "only ${root_free} GiB free on / — need ${MIN_ROOT_GIB} GiB. Run 'ergon update' after 'sudo paccache -rk1'"
-ok "${root_free} GiB free on /"
+if [ "$root_free" -ge "$MIN_ROOT_GIB" ]; then
+  ok "${root_free} GiB free on /"
+else
+  gate space "only ${root_free} GiB free on / — need ${MIN_ROOT_GIB} GiB. Run 'ergon update' after 'sudo paccache -rk1'"
+fi
 
 # Snapshots live on the same filesystem and are not free. A btrfs filesystem
 # that reports space in df can still be out of METADATA, which fails in a way
 # that looks nothing like a full disk.
 if [ "$(findmnt -no FSTYPE /)" = btrfs ]; then
   if btrfs filesystem usage / 2>/dev/null | grep -qE 'Metadata.*Free.*0\.00'; then
-    die "btrfs metadata is exhausted on / — run 'sudo btrfs balance start -m /' first"
+    gate "btrfs metadata" "btrfs metadata is exhausted on / — run 'sudo btrfs balance start -m /' first"
+  else
+    ok "btrfs metadata has headroom"
   fi
-  ok "btrfs metadata has headroom"
 fi
 
 say "rollback point"
@@ -94,7 +115,7 @@ elif [ "$NO_SNAPSHOT" = 1 ]; then
   warn "no snapper/snap-pac, and --no-snapshot: this upgrade will NOT be rollback-able"
 else
   warn "no snapper/snap-pac: this upgrade would NOT be rollback-able"
-  die "refusing an unsnapshotted upgrade; pass --no-snapshot to accept that"
+  gate "rollback point" "refusing an unsnapshotted upgrade; pass --no-snapshot to accept that"
 fi
 
 say "keyring"
@@ -110,9 +131,10 @@ if command -v informant >/dev/null; then
   if ! informant check >/dev/null 2>&1; then
     warn "unread Arch news — read it before upgrading:"
     informant list -r 2>/dev/null | head -5 || true
-    die "run 'informant read' first"
+    gate news "run 'informant read' first"
+  else
+    ok "no unread news"
   fi
-  ok "no unread news"
 else
   warn "informant not installed — manual-intervention notices are not gated"
 fi
@@ -220,6 +242,47 @@ report_rebuild() {
   done
 }
 
+# checkrebuild answers whether a foreign package still RUNS, never whether a
+# newer one exists -- so claude-code and openai-codex-bin sat at the release of
+# the day they were built while both of doctor's AUR rows stayed green. This is
+# the one place that asks the AUR: doctor must stay offline, and an update has
+# just been on the network anyway.
+#
+# Reported, never built, --yes or not. A pin is a reviewed commit, and moving
+# it is a person reading a PKGBUILD log; an unpinned package would build
+# whatever its packager last pushed. ergon-aur prints the command for each.
+#
+# A hard bound on the WHOLE call, not only the RPC's own --max-time: a pinned
+# package also fetches its clone, and an upgrade that has already finished must
+# not sit behind an AUR that accepts the connection and then says nothing. A
+# timeout is reported as one, never as everything being current.
+#
+# The bound is a SESSION, waited on in the background, because timeout's own
+# process-group kill was measured to miss two things. ergon-aur's `timeout 20
+# git fetch` makes a group of its own, so the fetch outlived the bound, still
+# writing into the clone the warning below says to ask about again. And a
+# timeout in its own group never sees the terminal's Ctrl-C, and bash waiting
+# on it in the foreground sat out the whole bound, then carried on to firmware
+# and exited 0. A `wait` is interrupted at once; `pkill -s` reaches every group
+# ergon-aur made, after the bound and, from the trap, after a Ctrl-C.
+AUR_TIMEOUT="${ERGON_UPDATE_AUR_TIMEOUT:-30}"
+report_outdated() {
+  say "AUR releases"
+  local rc=0 sid
+  setsid timeout -k 5 "$AUR_TIMEOUT" "$ERGON/bin/ergon-aur" --outdated < /dev/null &
+  sid=$!
+  # stderr goes first: bash reports the job it sees killed, and ^C said enough.
+  trap 'exec 2>/dev/null; pkill -KILL -s "$sid" || true; exit 130' INT TERM
+  wait "$sid" || rc=$?
+  trap - INT TERM
+  pkill -KILL -s "$sid" 2>/dev/null || true
+  case "$rc" in
+    0) ;;
+    124|137) warn "the AUR did not answer within ${AUR_TIMEOUT}s — nothing here says what is current. Ask again: ergon aur --outdated" ;;
+    *) warn "ask again once the AUR answers: ergon aur --outdated" ;;
+  esac
+}
+
 # .pacnew files are the quiet half of an Arch upgrade: pacman never merges a
 # config you edited, it writes the new one beside yours and moves on, so a file
 # you changed once keeps running against defaults that have moved on without it.
@@ -308,10 +371,14 @@ upgrade() {
 if [ "$CHECK_ONLY" = 1 ]; then
   report_orphans
   report_rebuild
+  report_outdated
   report_pacnew
   report_restart
   printf '\n   --check: nothing applied\n'
-  exit 0
+  [ "${#STOPS[@]}" -gt 0 ] || exit 0
+  s=$(printf '%s, ' "${STOPS[@]}")
+  printf '   a real run would stop at: %s\n' "${s%, }"
+  exit 1
 fi
 
 if [ "$PENDING" = 1 ]; then
@@ -327,6 +394,7 @@ fi
 
 report_orphans
 report_rebuild
+report_outdated
 
 say "firmware"
 # Reported, never applied automatically. A firmware update is the one thing here

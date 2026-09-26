@@ -18,12 +18,17 @@
 # than assumed; --yes meaning only --noconfirm -- it
 # waives neither gate and never removes an orphan; nothing pending still
 # reporting orphans, firmware, .pacnew and what needs restarting; a replaced
-# kernel and a replaced compositor; --check writing nothing at all; and
+# kernel and a replaced compositor; --check writing nothing at all, and still
+# reporting past every gate a real run would stop at (ERGON-46); and
 # ERGON-29's rebuild step -- which foreign packages checkrebuild's output
 # actually names, that --yes rebuilds them without asking while it still
-# refuses to remove an orphan, and that --check rebuilds nothing.
+# refuses to remove an orphan, and that --check rebuilds nothing; and ERGON-44:
+# the AUR asked once, after the transaction, its answer reported and never
+# built, an AUR that never answers bounded by a hard timeout, and neither that
+# nor a Ctrl-C there leaving a fetch running behind the run.
 #
-# DOES NOT COVER: a real pacman transaction, real logind, or real firmware.
+# DOES NOT COVER: a real pacman transaction, real logind, real firmware, or the
+# real AUR (bin/test-aur.sh covers what ergon-aur --outdated makes of a reply).
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd -P)"
@@ -39,6 +44,25 @@ not()  { ! "$@"; }
 # The gates refuse before pacman is reached at all, so the log may not exist --
 # which is a pass, not a missing file to complain about on stderr.
 noxact() { ! grep -qE -- '^-S[yu]' "$L/pacman" 2>/dev/null; }
+# ergon-aur is asked --outdated on every run now, so "rebuilt nothing" is about
+# --rebuild in its log, not about the log existing.
+norebuild() { ! grep -q -- "^--rebuild" "$L/aur" 2>/dev/null; }
+# The AUR report carries `ergon aur --rebuild` too, so the rebuild report is
+# only ever asserted by its own line -- the shorter string passed with that
+# report deleted from --check.
+REBUILD_SAYS="rebuild them with: ergon aur --rebuild PKG"
+# Killed a moment ago, a process can still be a zombie its new parent has not
+# reaped yet; that is gone as well.
+gone() {  # gone <pid>
+  local s _
+  [ -n "$1" ] || return 1
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    s=$(ps -o stat= -p "$1") || return 0
+    [[ $s != Z* ]] || return 0
+    sleep 0.2
+  done
+  return 1
+}
 
 mkdir -p "$T/stub" "$T/log"
 EU="$T/ergon-update"
@@ -161,9 +185,20 @@ mkdir -p "$T/ergon/bin" "$T/ergon/lib"
 # pin down are built in there, and a throwaway tree missing it would only
 # prove that a missing file makes the script exit.
 cp "$REPO/lib/transaction.sh" "$T/ergon/lib/transaction.sh"
+# --outdated notes whether -Su had already run when it was asked, which is the
+# ordering claim, and can stand in for an AUR that never answers -- hanging
+# where the real one does, in a fetch under a timeout of its own, which puts it
+# in a process group of its own.
 cat > "$T/ergon/bin/ergon-aur" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/aur"
+[ "$1" = --outdated ] || exit 0
+grep -q '^-Su' "$TEST_ROOT/log/pacman" 2>/dev/null && w=after || w=before
+echo "$w" >> "$TEST_ROOT/log/aur-asked"
+if [ -n "${STUB_AUR_HANG:-}" ]; then
+  timeout 50 sleep 60 & echo $! > "$TEST_ROOT/log/aur-fetch"; wait; exit
+fi
+echo "   ·    claude-code 2.0-1 → 2.1-1   (ergon aur --rebuild claude-code)"
 EOF
 chmod +x "$T/ergon/bin/ergon-aur"
 
@@ -291,6 +326,27 @@ check "  trims no cache and refreshes no firmware" test ! -e "$L/paccache" -a ! 
 check "  removes no orphan" not grep -q -- '-Rns' "$L/pacman"
 check "  but still reports them" has "$T/out" "libfoo"
 check "  and says nothing was applied" has "$T/out" "--check: nothing applied"
+check "  and no gate it would have stopped at" not has "$T/out" "would stop at"
+
+# ERGON-46. The gates used to die under --check exactly as in a real run, so the
+# machine with unread news -- the one about to need the rest -- was told nothing.
+rm -f "$VMLINUZ"
+update STUB_PENDING=vim STUB_NEWS=1 STUB_ORPHANS=libfoo STUB_FOREIGN=waybar-git \
+       STUB_REBUILD=foreign/waybar-git STUB_PACNEW=/etc/pacman.conf.pacnew -- --check
+check "unread news: --check exits 1, because a real run would not go through" test "$?" -eq 1
+check "  but still reports orphans" has "$T/out" "libfoo"
+check "  rebuilds" has "$T/out" "$REBUILD_SAYS"
+check "  .pacnew files" has "$T/out" "/etc/pacman.conf.pacnew"
+check "  and a kernel that needs a reboot" has "$T/out" "reboot when convenient"
+check "  and names the gate" has "$T/out" "a real run would stop at: news"
+check "  having written nothing" noxact
+: > "$VMLINUZ"
+update STUB_PENDING=vim STUB_NO_SNAPPAC=1 STUB_ORPHANS=libfoo -- --check
+check "no snap-pac: --check still reports" has "$T/out" "libfoo"
+check "  and names that gate" has "$T/out" "a real run would stop at: rollback point"
+update STUB_PENDING=vim STUB_NEWS=1 STUB_NO_SNAPPAC=1 STUB_FREE_GIB=2 -- --check
+check "every gate is named, not only the first" \
+  has "$T/out" "a real run would stop at: space, rollback point, news"
 
 echo "== foreign packages left linked against a library that is gone"
 # checkrebuild names repo packages too; those are pacman's problem. Only the
@@ -310,24 +366,61 @@ update STUB_PENDING=vim STUB_ORPHANS=libfoo STUB_FOREIGN=waybar-git STUB_REBUILD
 check "  while the same --yes still refuses to remove an orphan" not grep -q -- '-Rns' "$L/pacman"
 
 update STUB_PENDING=vim STUB_FOREIGN="waybar-git" -- --yes
-check "nothing broken: nothing is rebuilt" test ! -e "$L/aur"
+check "nothing broken: nothing is rebuilt" norebuild
 check "  and it says so" has "$T/out" "no foreign package links a library that is gone"
 
 update STUB_FOREIGN=waybar-git STUB_REBUILD=foreign/waybar-git -- --yes
 check "a machine with nothing pending is still checked for rebuilds" hasx "$L/aur" "--rebuild waybar-git"
 
 update STUB_PENDING=vim STUB_FOREIGN=waybar-git STUB_REBUILD=foreign/waybar-git -- --check
-check "--check rebuilds nothing" test ! -e "$L/aur"
-check "  and prints the command instead" has "$T/out" "ergon aur --rebuild"
+check "--check rebuilds nothing" norebuild
+check "  and prints the command instead" has "$T/out" "$REBUILD_SAYS"
 
 update STUB_PENDING=vim STUB_FOREIGN=waybar-git STUB_REBUILD=foreign/waybar-git --
-check "no --yes and no terminal: nothing is rebuilt unasked" test ! -e "$L/aur"
+check "no --yes and no terminal: nothing is rebuilt unasked" norebuild
 
 mv "$T/stub/checkrebuild" "$T/checkrebuild.off"
 update STUB_PENDING=vim STUB_FOREIGN=waybar-git -- --yes
 check "no rebuild-detector: it says nothing is watching, rather than 'none'" \
   has "$T/out" "rebuild-detector not installed"
 mv "$T/checkrebuild.off" "$T/stub/checkrebuild"
+
+echo "== what the AUR has that is newer"
+# ERGON-44. checkrebuild says whether a foreign package still runs, never
+# whether a newer one exists, and nothing asked the AUR.
+update STUB_PENDING=vim STUB_FOREIGN=claude-code -- --yes
+check "the AUR is asked" hasx "$L/aur" "--outdated"
+check "  once, after the transaction" test "$(cat "$L/aur-asked" 2>/dev/null)" = after
+check "  and what it says reaches the output, with the command" \
+  has "$T/out" "(ergon aur --rebuild claude-code)"
+check "  which is printed, not run -- even under --yes" norebuild
+SECONDS=0
+update STUB_PENDING=vim STUB_AUR_HANG=1 ERGON_UPDATE_AUR_TIMEOUT=1 -- --yes
+rc=$? took=$SECONDS
+check "an AUR that never answers does not hold the update (${took}s)" test "$took" -lt 10
+check "  which still succeeds" test "$rc" -eq 0
+check "  says the AUR did not answer, rather than that all is current" \
+  has "$T/out" "did not answer within 1s"
+check "  and still reaches the reports after it" hasx "$L/pacdiff" "-o"
+check "  leaving nothing running, not even the fetch in a group of its own" \
+  gone "$(cat "$L/aur-fetch" 2>/dev/null)"
+
+# Ctrl-C there. `set -m` gives the run a process group of its own, as a shell
+# at a terminal does, and the interrupt goes to that group; without it bash
+# starts a background job with SIGINT ignored, and no trap could see it at all.
+rm -rf "$L"; mkdir -p "$L"
+set -m
+env STUB_PENDING=vim STUB_AUR_HANG=1 ERGON_UPDATE_AUR_TIMEOUT=20 "$EU" --yes > "$T/out" 2>&1 < /dev/null &
+p=$!
+set +m
+for _ in $(seq 50); do [ -s "$L/aur-fetch" ] && break; sleep 0.1; done
+SECONDS=0
+kill -INT -- -"$p"
+wait "$p"; rc=$? took=$SECONDS
+check "Ctrl-C while the AUR says nothing ends the run then (${took}s)" test "$took" -lt 10
+check "  as an interrupt, 130" test "$rc" -eq 130
+check "  without carrying on to the reports after it" test ! -e "$L/pacdiff"
+check "  and leaves nothing of the AUR call running" gone "$(cat "$L/aur-fetch" 2>/dev/null)"
 
 echo
 check "no stub saw a command it did not expect" test ! -e "$L/violations"

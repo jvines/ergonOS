@@ -762,6 +762,18 @@ else
   [ "$AT" = "$PIN" ] \
     && ok "  and the clone it builds in is checked out at exactly that commit" \
     || bad "  but the clone sits at '${AT:-nothing}', not $PIN"
+  # ERGON-45: the plain form provisioning calls now reads the pin and that
+  # record before it returns, and the ERGON-22 sync above re-provisioned through
+  # it. Had the two been looked up in different places under `su -`, waybar-git
+  # would have been rebuilt there -- on every provision, on every machine.
+  if ! grep -q "AUR packages" /tmp/sync.log 2>/dev/null; then
+    note "the ERGON-22 sync never reached provisioning's AUR stage; nothing to compare"
+  elif grep -q "waybar-git (already installed)" /tmp/sync.log; then
+    ok "  and re-provisioning left it alone, because it still matches the pin"
+  else
+    bad "  but re-provisioning did not leave it alone:"
+    grep 'waybar-git' /tmp/sync.log | head -3 | sed 's/^/       /'
+  fi
 fi
 
 # ERGON-29: the rebuild `ergon update` performs builds the SAME commit again --

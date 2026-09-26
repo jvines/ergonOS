@@ -13,6 +13,7 @@
 # Three modes of the same small tool, not a package manager:
 #
 #   <pkgname>            build and install, unless it is already installed
+#                        (and, if pinned, was built from that pin)
 #   --rebuild <pkgname>  build and install even though it is
 #   --outdated           say what has moved; build nothing, install nothing
 #
@@ -109,14 +110,29 @@ fi
 pkg="${1:?usage: ergon-aur <pkgname> | --rebuild <pkgname> | --outdated}"
 _is_pkg "$pkg" || { echo "ergon-aur: '$pkg' is not a package name" >&2; exit 2; }
 
+pin=$(_pin "$pkg")
+
 # --rebuild differs from the plain form in exactly this: the package being
 # installed already is the whole reason it was called.
+#
+# Unless it is pinned and was not built from that pin. The plain form is what
+# provisioning calls, and a pin moved in packages/aur is what makes `ergon
+# sync` re-provision -- so returning here before the pin was read meant the one
+# path that reacts to a pin bump could not apply it, the stamp said it had, and
+# doctor's aur-pins row warned forever. The comparison is doctor's own, so once
+# this has run that row is green. A matching record still returns here:
+# provisioning must not rebuild waybar-git every time. No record at all is a
+# rebuild, once -- every machine built before the pins existed, which doctor
+# already refuses to call ok.
 if [ "$MODE" = install ] && pacman -Qi -- "$pkg" >/dev/null 2>&1; then
-  printf '   ·   %s (already installed)\n' "$pkg"
-  exit 0
+  was=$(awk -v p="$pkg" '$1 == p { print $2 }' "$BUILT" 2>/dev/null || true)
+  if [ -z "$pin" ] || [ "${was:0:${#pin}}" = "$pin" ]; then
+    printf '   ·   %s (already installed)\n' "$pkg"
+    exit 0
+  fi
+  printf '   ·   %s is installed, but not from the commit packages/aur pins; rebuilding\n' "$pkg"
 fi
 
-pin=$(_pin "$pkg")
 [ -d "$AURDIR/$pkg" ] || git clone -q -- "https://aur.archlinux.org/$pkg.git" "$AURDIR/$pkg"
 cd "$AURDIR/$pkg"
 if [ -n "$pin" ]; then

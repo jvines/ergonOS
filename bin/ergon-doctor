@@ -278,7 +278,7 @@ fi
 # works offline. Deliberately NOT a query to the AUR: doctor runs every time
 # someone is already annoyed, and a check that waits on a network is a check
 # people stop running. `ergon aur --outdated` is where the network question
-# lives.
+# lives, and `ergon update` asks it after every upgrade.
 if command -v pacman >/dev/null 2>&1; then
   mapfile -t fgn < <(pacman -Qm 2>/dev/null | awk '{print $1}')
   if [ "${#fgn[@]}" -eq 0 ]; then
@@ -317,11 +317,12 @@ if command -v pacman >/dev/null 2>&1; then
     if [ -z "$was" ]; then
       # Installed, pinned, and nothing here ever recorded building it. That is
       # every machine provisioned before the pins existed: the package was built
-      # once from whatever the AUR had that day, and the shortcut for an
-      # already-installed package means re-provisioning never rebuilds it. It
+      # once from whatever the AUR had that day, and nothing noted which. It
       # was reported "ok" for exactly as long as nobody had checked -- which is
       # the opposite of what this check is for, so it is a warning until a
-      # rebuild here makes it an answer.
+      # rebuild here makes it an answer. The next provision is one: ergon-aur's
+      # plain form rebuilds a pinned package it finds in either state here --
+      # unless ERGON_SKIP_AUR=1 left it out as a slow build, as it does wezterm.
       unbuilt="${unbuilt:+$unbuilt }$p"
     elif [ "${was:0:${#pin}}" != "$pin" ]; then
       drift="${drift:+$drift }$p"
