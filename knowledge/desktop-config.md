@@ -137,25 +137,67 @@ sixteen ANSI slots were being discarded with no error anywhere.
 
     ./bin/test-hypr-config.sh      # what the list below is, run for real
 
-`./bin/test-hypr-config.sh` loads eight files through the parser that will
+`./bin/test-hypr-config.sh` loads thirteen files through the parser that will
 actually read each one: `hypr/hyprland.lua` (which is what pulls in the
-rendered `looknfeel.lua`), `fuzzel.ini`, `foot.ini`, `mako/config`,
-`hypridle.conf`, `hyprlock.conf`, and the two stylesheets — `waybar/style.css`
-through GTK3 and `swayosd/style.css` through GTK4, because those two CSS
-engines do not accept the same file. `waybar/config.jsonc` is exercised
-functionally instead: the VM session suite starts a real bar and asserts it
-maps a layer surface, which is stronger than parsing it.
+rendered `looknfeel.lua`), `fuzzel.ini`, `foot.ini`, `wezterm/wezterm.lua`,
+`newsboat/config`, `lazygit/config.yml`, `lazydocker/config.yml`,
+`mako/config`, `hypridle.conf`, `hyprlock.conf`, and three stylesheets through
+the GTK engine that actually reads each — `waybar/style.css` and `gtk/gtk.css`
+through GTK3, `swayosd/style.css` and `gtk/gtk.css` again through GTK4, because
+`gtk.css` is linked into both and the two engines do not accept the same file.
+`waybar/config.jsonc` is exercised functionally instead: the VM session suite
+starts a real bar and asserts it maps a layer surface, which is stronger than
+parsing it.
 
-**Ten of the seventeen rendered files are checked by nothing** — a known gap,
-ERGON-52: `gtk/gtk.css`, `gtk/settings.ini`, `newsboat/config`,
-`yazi/theme.toml`, `lnav/config.json`, `lazygit/config.yml`,
-`lazydocker/config.yml`, `btop`'s theme, `bat`'s tmTheme and
-`wezterm/wezterm.lua`. Three things are worth knowing about that list: `bat`
-compiles its tmTheme (`bat cache --build`, which `install.sh` already runs), so
-a broken one is at least loud on a real install; `lnav -C` exits 0 on a config
-it cannot use, so it is not a check; and `wezterm` is an AUR git build present
-on no machine this repo tests on, which is an environment problem rather than a
-missing script.
+`wezterm` is an AUR git build present on no machine this repo tests on, so the
+container installs Arch `[extra]`'s released wezterm instead — an OLDER one
+(see `packages/aur` for why `wezterm-git` is pinned over it), close enough to
+validate the schema but not proof against a field renamed or removed since.
+Its own `ls-fonts` is not a `--check-config`: measured against a Lua syntax
+error, an unknown field and a wrong-typed value, wezterm exits 0 on all three
+and prints its own defaults, exactly the silent-fallback shape that hid the
+foot bug. Each one does log an ERROR line to stderr, which is what the check
+reads instead of `$?`.
+
+`newsboat` has no `--check-config` flag either, but does not need one: an
+unrecognised directive (measured against a renamed `color` target) is a fatal
+parse error on stderr with exit 1, before curses starts or a feed is fetched,
+so `-x print-unread` against a placeholder URL file is a real check. Measured
+separately: a missing or empty rendered file is not an error to newsboat (exit
+0, nothing printed) — indistinguishable from a config that was read and found
+clean — so the script checks the file exists before trusting silence from the
+run below it.
+
+`lazygit` and `lazydocker` have no config-check flag either, but both parse
+their whole YAML file before reaching anything else this container lacks — a
+git repository for lazygit, a docker socket for lazydocker — so a bad key or a
+wrong-typed value (measured against both) surfaces on stderr as a `yaml:` line
+before either of those unrelated, always-fatal-here errors does. `lazygit
+-ucf` points straight at the rendered file; `lazydocker` has no such flag, so
+it is symlinked into `~/.config/lazydocker` instead.
+
+**Five of the seventeen rendered files are still checked by nothing**, each
+for a measured reason rather than an assumed one:
+
+- `gtk/settings.ini` — read with `GLib.KeyFile`, the same loader GTK's own
+  settings reader is built on, but that loader has no schema: measured, a
+  bogus key and a wrong-typed value are both perfectly valid keyfile syntax.
+  Only gross syntax breaks it, which nothing this template produces comes
+  close to.
+- `yazi/theme.toml` — yazi opens a real TTY before it does anything else and
+  fails identically (`Inappropriate ioctl for device`) whether the theme is
+  valid, has an unknown key, or is not parseable TOML at all — measured
+  against all three; headless makes no distinction between them.
+- `lnav/config.json` — `lnav -C` exits 0 on a config it cannot use, so it is
+  not a check.
+- `btop`'s theme — no check flag, and in this repo's own Arch container
+  `btop` cannot even execute (`Operation not permitted`): its package sets
+  file capabilities (`cap_dac_read_search`, `cap_perfmon`) on the binary,
+  which a sandboxed docker denies at `execve` without new privileges. Whether
+  the CI runner's own docker hits the same wall was not checked from here.
+- `bat`'s tmTheme — compiles into bat's cache (`bat cache --build`, which
+  `install.sh` already runs), so a broken one is at least loud on a real
+  install rather than silent.
 
 The GTK check has a limit worth knowing: it validates syntax, property names
 and value grammar, and it catches an unexpanded `@COOL_*@`. It does **not**

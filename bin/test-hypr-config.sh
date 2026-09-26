@@ -29,7 +29,7 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
   # file. They also cannot share a process: one python may load one Gtk
   # typelib, so the two checks below are two interpreters.
   pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot \
-    python-gobject gtk3 gtk4 uwsm >/dev/null 2>&1
+    python-gobject gtk3 gtk4 uwsm wezterm newsboat lazygit lazydocker >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
   # you not to use it, so everything runs as a real user.
@@ -60,6 +60,15 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
   cp -r /tmp/repo/hypr    /home/t/.config/hypr
   cp -r /tmp/repo/waybar  /home/t/.config/waybar
   cp -r /tmp/repo/swayosd /home/t/.config/swayosd
+  # gtk.css has the identical trap: it is linked into BOTH gtk-3.0 and
+  # gtk-4.0 (install.sh), and its own @import is relative, so it too has to
+  # sit where a real desktop puts it or "../ergon/gtk.css" resolves nowhere.
+  install -d /home/t/.config/gtk-3.0 /home/t/.config/gtk-4.0
+  cp /tmp/repo/gtk/gtk.css /home/t/.config/gtk-3.0/gtk.css
+  cp /tmp/repo/gtk/gtk.css /home/t/.config/gtk-4.0/gtk.css
+  # lazydocker has no --use-config-file (lazygit does, used below instead);
+  # its config is only ever found at $XDG_CONFIG_HOME/lazydocker/config.yml.
+  ln -s /tmp/repo/lazydocker /home/t/.config/lazydocker
   chown -R t:t /home/t/.config
   # hyprland.lua reads /etc/hostname for the per-host seam.
   echo "'"$HOSTNAME_FOR_TEST"'" > /etc/hostname
@@ -161,6 +170,21 @@ PYEOF
   echo "@@foot"
   run "foot --check-config -c /tmp/repo/foot/foot.ini" || true
 
+  # wezterm. The build this repo ships is an AUR git checkout (see
+  # wezterm/wezterm.lua.in) present on no machine this script runs on, but
+  # Arch'"'"'s own [extra] carries a released wezterm -- an OLDER one (see
+  # packages/aur for why wezterm-git is pinned instead), close enough for a
+  # schema check but not proof against a field renamed or removed since.
+  # `ls-fonts` loads the config before doing anything font-related, but it is
+  # NOT a --check-config:
+  # measured against a Lua syntax error, an unknown field and a wrong-typed
+  # value, all three exit 0 and print wezterm'"'"'s own defaults on stdout, exactly
+  # like foot degraded silently before -c. Each one DOES log an ERROR line to
+  # stderr, which is what this reads instead of $?.
+  echo "@@wezterm"
+  run "wezterm --config-file /tmp/repo/wezterm/wezterm.lua ls-fonts >/dev/null" \
+    | grep -iE "error" || true
+
   # The waybar and swayosd stylesheets. Neither program can be asked to check
   # its own config: waybar exits on "cannot open display" before it reads
   # anything, and swayosd-server has no check flag and initialises GTK before
@@ -173,6 +197,27 @@ PYEOF
   echo "@@swayosd-css"
   run "python3 /tmp/css4.py /home/t/.config/swayosd/style.css" || true
 
+  # gtk.css through BOTH engines too, same reason as the pair above: it is
+  # linked into gtk-3.0 AND gtk-4.0 (install.sh), and one syntax is not the
+  # other. Flagged as unvalidated before ERGON-52 review, when it was really
+  # just the same two parsers already in this container, pointed at one more
+  # file.
+  echo "@@gtk-css"
+  run "python3 /tmp/css3.py /home/t/.config/gtk-3.0/gtk.css" || true
+  run "python3 /tmp/css4.py /home/t/.config/gtk-4.0/gtk.css" || true
+
+  # lazygit and lazydocker. Neither has a --check-config, but both parse their
+  # whole YAML file before they need anything this container lacks -- a git
+  # repo, a TTY, a docker socket -- so a bad key or a wrong type surfaces
+  # first. Measured: rc is 1 either way (a missing repo/socket is also fatal),
+  # so stderr'"'"'s "yaml:" line is what is read, not $?.
+  echo "@@lazygit-config"
+  run "cd /tmp && timeout 5 lazygit -ucf /tmp/repo/lazygit/config.yml" \
+    | grep -i "yaml:" || true
+
+  echo "@@lazydocker-config"
+  run "timeout 5 lazydocker" | grep -i "yaml:" || true
+
   echo "@@mako"
   run "timeout 5 mako --config /tmp/repo/mako/config" \
     | grep -iE "failed to parse|invalid" || true
@@ -184,6 +229,29 @@ PYEOF
   echo "@@hyprlock"
   run "timeout 5 hyprlock -c /home/t/.config/hypr/hyprlock.conf" \
     | grep -iE "config error|does not exist|Config has errors" || true
+
+  # newsboat. Unlike wezterm it does NOT fall back silently: an unrecognised
+  # directive (measured against a renamed `color` target) is a fatal parse
+  # error on stderr, exit 1, before curses ever starts or a feed is touched --
+  # so this is a real --check-config even without the flag. -u points at a
+  # placeholder: only the config is under test, and reload is never invoked.
+  # A missing -C target is not an error to newsboat -- measured: rc 0, zero
+  # output, indistinguishable from a clean config that was actually read. So
+  # this checks for the file before trusting silence from the run below, the
+  # same reason @@hyprland checks for its banner rather than trusting $?.
+  echo "@@newsboat"
+  if [ ! -s /tmp/repo/newsboat/config ]; then
+    echo "newsboat/config is missing or empty -- the check below read nothing"
+  fi
+  echo "http://ergon52.invalid/feed" > /tmp/newsboat-urls
+  chown t /tmp/newsboat-urls
+  nbrc=0
+  nbout=$(run "timeout 5 newsboat -C /tmp/repo/newsboat/config -u /tmp/newsboat-urls -x print-unread >/dev/null") || nbrc=$?
+  if [ "$nbrc" = 124 ]; then
+    echo "newsboat hung for 5s instead of finishing"
+  elif [ -n "$nbout" ]; then
+    printf "%s\n" "$nbout"
+  fi
 
   # ERGON-64. uwsm/env-hyprland.d/ergon-keyring through uwsm'"'"'s own loader, which
   # picks env-hyprland.d/ for -D Hyprland and sources it (sh, `.`, then `env -0`, so
@@ -214,7 +282,8 @@ rc=0
 grep -qx '@@end' <<<"$out" || {
   printf '   FAIL the container script stopped before the end; last lines:\n'
   printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
-for tool in hyprland hyprland-degraded fuzzel foot waybar-css swayosd-css mako hypridle hyprlock uwsm-env; do
+for tool in hyprland hyprland-degraded fuzzel foot wezterm waybar-css swayosd-css gtk-css \
+  lazygit-config lazydocker-config mako hypridle hyprlock newsboat uwsm-env; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"
