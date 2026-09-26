@@ -226,9 +226,15 @@ PYEOF
   # repo, a TTY, a docker socket -- so a bad key or a wrong type surfaces
   # first. Measured: rc is 1 either way (a missing repo/socket is also fatal),
   # so stderr'"'"'s "yaml:" line is what is read, not $?.
+  #
+  # ERGON-68: a schema lazygit has deprecated still parses -- it is valid YAML
+  # -- so "yaml:" alone missed it. lazygit instead migrates the file in place
+  # and prints "must be migrated" before falling through to the same git-repo
+  # prompt, so that line has to be read too. Measured against the old
+  # git.paging/pager template (lazygit 0.65.1): this is the line it prints.
   echo "@@lazygit-config"
   run "cd /tmp && timeout 5 lazygit -ucf /tmp/repo/lazygit/config.yml" \
-    | grep -i "yaml:" || true
+    | grep -iE "yaml:|must be migrated" || true
 
   echo "@@lazydocker-config"
   run "timeout 5 lazydocker" | grep -i "yaml:" || true
