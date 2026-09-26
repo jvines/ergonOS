@@ -29,7 +29,7 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
   # file. They also cannot share a process: one python may load one Gtk
   # typelib, so the two checks below are two interpreters.
   pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot \
-    python-gobject gtk3 gtk4 uwsm >/dev/null 2>&1
+    python-gobject gtk3 gtk4 uwsm wezterm newsboat >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
   # you not to use it, so everything runs as a real user.
@@ -161,6 +161,19 @@ PYEOF
   echo "@@foot"
   run "foot --check-config -c /tmp/repo/foot/foot.ini" || true
 
+  # wezterm. The build this repo ships is an AUR git checkout (see
+  # wezterm/wezterm.lua.in) present on no machine this script runs on, but
+  # Arch'"'"'s own [extra] carries a released wezterm -- a different build of the
+  # SAME config schema, which is all a schema check needs. `ls-fonts` loads the
+  # config before doing anything font-related, but it is NOT a --check-config:
+  # measured against a Lua syntax error, an unknown field and a wrong-typed
+  # value, all three exit 0 and print wezterm'"'"'s own defaults on stdout, exactly
+  # like foot degraded silently before -c. Each one DOES log an ERROR line to
+  # stderr, which is what this reads instead of $?.
+  echo "@@wezterm"
+  run "wezterm --config-file /tmp/repo/wezterm/wezterm.lua ls-fonts >/dev/null" \
+    | grep -iE "error" || true
+
   # The waybar and swayosd stylesheets. Neither program can be asked to check
   # its own config: waybar exits on "cannot open display" before it reads
   # anything, and swayosd-server has no check flag and initialises GTK before
@@ -184,6 +197,16 @@ PYEOF
   echo "@@hyprlock"
   run "timeout 5 hyprlock -c /home/t/.config/hypr/hyprlock.conf" \
     | grep -iE "config error|does not exist|Config has errors" || true
+
+  # newsboat. Unlike wezterm it does NOT fall back silently: an unrecognised
+  # directive (measured against a renamed `color` target) is a fatal parse
+  # error on stderr, exit 1, before curses ever starts or a feed is touched --
+  # so this is a real --check-config even without the flag. -u points at a
+  # placeholder: only the config is under test, and reload is never invoked.
+  echo "@@newsboat"
+  echo "http://ergon52.invalid/feed" > /tmp/newsboat-urls
+  chown t /tmp/newsboat-urls
+  run "timeout 5 newsboat -C /tmp/repo/newsboat/config -u /tmp/newsboat-urls -x print-unread >/dev/null" || true
 
   # ERGON-64. uwsm/env-hyprland.d/ergon-keyring through uwsm'"'"'s own loader, which
   # picks env-hyprland.d/ for -D Hyprland and sources it (sh, `.`, then `env -0`, so
@@ -214,7 +237,7 @@ rc=0
 grep -qx '@@end' <<<"$out" || {
   printf '   FAIL the container script stopped before the end; last lines:\n'
   printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
-for tool in hyprland hyprland-degraded fuzzel foot waybar-css swayosd-css mako hypridle hyprlock uwsm-env; do
+for tool in hyprland hyprland-degraded fuzzel foot wezterm waybar-css swayosd-css mako hypridle hyprlock newsboat uwsm-env; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"

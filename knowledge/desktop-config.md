@@ -137,25 +137,37 @@ sixteen ANSI slots were being discarded with no error anywhere.
 
     ./bin/test-hypr-config.sh      # what the list below is, run for real
 
-`./bin/test-hypr-config.sh` loads eight files through the parser that will
+`./bin/test-hypr-config.sh` loads ten files through the parser that will
 actually read each one: `hypr/hyprland.lua` (which is what pulls in the
-rendered `looknfeel.lua`), `fuzzel.ini`, `foot.ini`, `mako/config`,
-`hypridle.conf`, `hyprlock.conf`, and the two stylesheets — `waybar/style.css`
-through GTK3 and `swayosd/style.css` through GTK4, because those two CSS
-engines do not accept the same file. `waybar/config.jsonc` is exercised
-functionally instead: the VM session suite starts a real bar and asserts it
-maps a layer surface, which is stronger than parsing it.
+rendered `looknfeel.lua`), `fuzzel.ini`, `foot.ini`, `wezterm/wezterm.lua`,
+`newsboat/config`, `mako/config`, `hypridle.conf`, `hyprlock.conf`, and the two
+stylesheets — `waybar/style.css` through GTK3 and `swayosd/style.css` through
+GTK4, because those two CSS engines do not accept the same file.
+`waybar/config.jsonc` is exercised functionally instead: the VM session suite
+starts a real bar and asserts it maps a layer surface, which is stronger than
+parsing it.
 
-**Ten of the seventeen rendered files are checked by nothing** — a known gap,
-ERGON-52: `gtk/gtk.css`, `gtk/settings.ini`, `newsboat/config`,
-`yazi/theme.toml`, `lnav/config.json`, `lazygit/config.yml`,
-`lazydocker/config.yml`, `btop`'s theme, `bat`'s tmTheme and
-`wezterm/wezterm.lua`. Three things are worth knowing about that list: `bat`
+`wezterm` is an AUR git build present on no machine this repo tests on, so the
+container installs Arch `[extra]`'s released wezterm instead — a different
+build of the same config schema, which is all a schema check needs. Its own
+`ls-fonts` is not a `--check-config`: measured against a Lua syntax error, an
+unknown field and a wrong-typed value, wezterm exits 0 on all three and prints
+its own defaults, exactly the silent-fallback shape that hid the foot bug. Each
+one does log an ERROR line to stderr, which is what the check reads instead of
+`$?`.
+
+`newsboat` has no `--check-config` flag either, but does not need one: an
+unrecognised directive (measured against a renamed `color` target) is a fatal
+parse error on stderr with exit 1, before curses starts or a feed is fetched,
+so `-x print-unread` against a placeholder URL file is a real check.
+
+**Eight of the seventeen rendered files are checked by nothing** — a known
+gap, ERGON-52: `gtk/gtk.css`, `gtk/settings.ini`, `yazi/theme.toml`,
+`lnav/config.json`, `lazygit/config.yml`, `lazydocker/config.yml`, `btop`'s
+theme and `bat`'s tmTheme. Two things are worth knowing about that list: `bat`
 compiles its tmTheme (`bat cache --build`, which `install.sh` already runs), so
-a broken one is at least loud on a real install; `lnav -C` exits 0 on a config
-it cannot use, so it is not a check; and `wezterm` is an AUR git build present
-on no machine this repo tests on, which is an environment problem rather than a
-missing script.
+a broken one is at least loud on a real install; and `lnav -C` exits 0 on a
+config it cannot use, so it is not a check.
 
 The GTK check has a limit worth knowing: it validates syntax, property names
 and value grammar, and it catches an unexpanded `@COOL_*@`. It does **not**
