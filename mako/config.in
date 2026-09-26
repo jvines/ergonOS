@@ -9,7 +9,7 @@
 # heads-down in a sampler is exactly the message that must still be on screen
 # when you look up.
 
-font=JetBrainsMono Nerd Font 11
+font=JetBrainsMono Nerd Font @TYPE:11@
 background-color=@COOL_BG1@
 text-color=@COOL_FG0@
 border-color=@COOL_BG2@

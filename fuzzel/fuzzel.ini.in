@@ -8,7 +8,7 @@
 # has no plugin surface, and is one ini file. Both of those are the point.
 
 [main]
-font=JetBrainsMono Nerd Font:size=12
+font=JetBrainsMono Nerd Font:size=@TYPE:12@
 dpi-aware=no
 prompt="  "
 # From the palette, not hardcoded. ergon-theme decides light or dark from the

@@ -23,7 +23,7 @@
 # terminal that looked wrong. `foot --check-config` is in test-hypr-config.sh
 # now, which is what would have caught it.
 
-font=JetBrainsMono Nerd Font:size=11
+font=JetBrainsMono Nerd Font:size=@TYPE:11@
 pad=8x8
 dpi-aware=yes
 

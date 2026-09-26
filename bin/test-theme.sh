@@ -41,8 +41,8 @@ E=$T/ergon
 mkdir -p "$E/bin" "$E/lib" "$E/theme" "$T/stub" "$T/log" "$T/home"
 cp "$REPO/bin/ergon-theme" "$E/bin/"
 cp "$REPO/lib/user-config.sh" "$E/lib/"
-cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/gruvbox-light.env" "$E/theme/"
-for d in foot mako waybar swayosd fuzzel gtk btop/themes; do
+cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/gruvbox-light.env" "$REPO/theme/type.env" "$E/theme/"
+for d in foot mako waybar swayosd fuzzel gtk btop/themes wezterm; do
   mkdir -p "$E/$d"; cp "$REPO/$d"/*.in "$E/$d/" 2>/dev/null
 done
 
@@ -230,6 +230,39 @@ check "  and a light palette reaches the launcher's icons, which it never did" \
   has "$E/fuzzel/fuzzel.ini" "icon-theme=Papirus-Light"
 check "  the same way it reaches GTK's" \
   has "$E/gtk/settings.ini" "gtk-icon-theme-name=Papirus-Light"
+
+# --- text size (ERGON-37): one number, every surface, nothing else -----------
+check "type.env is not offered as a palette" not has <(run --list) "type"
+run type >/dev/null 2>&1
+check "  and naming it is refused before it is remembered" \
+  hasx "$T/state/ergon/palette" "gruvbox-light"
+check "the default size leaves GTK's text at 1.00" \
+  hasx "$T/log/gsettings" "set org.gnome.desktop.interface text-scaling-factor 1.00"
+reset_logs
+run --text 16 >/dev/null 2>&1
+check "--text 16 exits 0" test "$?" = 0
+# 16/11 of each designed size, rounded: 11 -> 16, 12 -> 17, 13 -> 19.
+check "  foot, mako and wezterm follow it" bash -c '
+  grep -qx "font=JetBrainsMono Nerd Font:size=16" "$1/foot/foot.ini" &&
+  grep -qx "font=JetBrainsMono Nerd Font 16" "$1/mako/config" &&
+  grep -qx "config.font_size = 16.0" "$1/wezterm/wezterm.lua"' _ "$E"
+check "  the launcher and the bar keep their proportion to it" bash -c '
+  grep -qx "font=JetBrainsMono Nerd Font:size=17" "$1/fuzzel/fuzzel.ini" &&
+  grep -qx "  font-size: 19px;" "$1/waybar/style.css"' _ "$E"
+check "  and so does GTK's text scale" \
+  hasx "$T/log/gsettings" "set org.gnome.desktop.interface text-scaling-factor 1.45"
+# Each refusal must leave the size in use alone, in the file and on screen.
+for v in 7 33 110 1.5 ab "9 " -1; do
+  run --text "$v" >/dev/null 2>&1
+  check "--text '$v' is refused" test "$?" != 0
+done
+check "  and none of them replaced the size in use" hasx "$T/state/ergon/type.env" "TEXT_SIZE=16"
+check "  or reached a rendered file" has "$E/foot/foot.ini" "size=16"
+check "bare --text prints the size in use" test "$(run --text 2>/dev/null)" = 16
+# A hand-edited file is held to the same rules.
+printf "TEXT_SIZE=16\nFONT_SIZE=12\n" > "$T/state/ergon/type.env"
+run >/dev/null 2>&1
+check "a type.env carrying any other key stops the render" test "$?" != 0
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

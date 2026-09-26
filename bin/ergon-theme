@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Render every themed config from the palette
 # ergon:group=theme
-# ergon:args=[--check] [palette]
+# ergon:args=[--check] [--no-apply] [--text [N]] [palette]
 # Expands the palette into every committed config that carries colours.
 #
 #   ergon-theme                   # render, report what changed
@@ -107,9 +107,41 @@ if [ "${1:-}" = "--list" ]; then
   _active=$( [ -f "$PALETTE_FILE" ] && cat "$PALETTE_FILE" || echo cool )
   for _p in "$ERGON"/theme/*.env; do
     _n=$(basename "$_p" .env)
+    [ "$_n" != type ] || continue
     [ "$_n" = "$_active" ] && printf '   * %s\n' "$_n" || printf '     %s\n' "$_n"
   done
   exit 0
+fi
+
+# Text size, in a file of its own: theme/type.env is the default, and
+# `--text N` (what `ergon display text N` runs) keeps yours in $STATE. Not in
+# the palette, whose values must all be hex so that a typo cannot become a sed
+# program -- and a size is not a colour. This file gets the same treatment in
+# its own terms: one key, a whole number, 8..32. The range is the point: 110
+# for 11 would leave no surface legible enough to fix it from.
+TYPE_FILE="$STATE/type.env"
+read_type() {  # read_type FILE -> the size on stdout, or a refusal on stderr
+  local k v n=""
+  while IFS='=' read -r k v || [ -n "$k" ]; do
+    case "$k" in ''|'#'*) continue ;; TEXT_SIZE) ;; *) echo "bad key in $1: $k" >&2; return 1 ;; esac
+    case "$v" in ''|*[!0-9]*) echo "TEXT_SIZE is not a whole number: '$v'" >&2; return 1 ;; esac
+    [ "${#v}" -le 2 ] && [ "$((10#$v))" -ge 8 ] && [ "$((10#$v))" -le 32 ] \
+      || { echo "TEXT_SIZE $v is outside 8..32" >&2; return 1; }
+    n=$((10#$v))
+  done < "$1"
+  [ -n "$n" ] || { echo "no TEXT_SIZE in $1" >&2; return 1; }
+  echo "$n"
+}
+type_src() { if [ -f "$TYPE_FILE" ]; then echo "$TYPE_FILE"; else echo "$ERGON/theme/type.env"; fi; }
+if [ "${1:-}" = "--text" ]; then
+  [ -n "${2:-}" ] || { read_type "$(type_src)"; exit; }
+  # Validated as the file it would become, before it becomes it: a refused
+  # size must leave the one in use alone, or every later render fails too.
+  mkdir -p "$STATE"
+  printf 'TEXT_SIZE=%s\n' "$2" > "$TYPE_FILE.new"
+  read_type "$TYPE_FILE.new" >/dev/null || { rm -f "$TYPE_FILE.new"; exit 1; }
+  mv -f "$TYPE_FILE.new" "$TYPE_FILE"
+  shift 2
 fi
 
 # --next / --prev step through theme/*.env in name order, wrapping. This is how
@@ -124,7 +156,7 @@ fi
 case "${1:-}" in
   --next|--prev)
     _dir="$1"; shift
-    _all=(); for _p in "$ERGON"/theme/*.env; do _all+=("$(basename "$_p" .env)"); done
+    _all=(); for _p in "$ERGON"/theme/*.env; do [ "${_p##*/}" = type.env ] || _all+=("$(basename "$_p" .env)"); done
     [ "${#_all[@]}" -gt 1 ] || { echo "only one palette installed" >&2; exit 0; }
     _cur=$( [ -f "$PALETTE_FILE" ] && cat "$PALETTE_FILE" || echo cool )
     _i=-1; for _n in "${!_all[@]}"; do [ "${_all[$_n]}" = "$_cur" ] && { _i=$_n; break; }; done
@@ -154,6 +186,9 @@ case "$_want" in
   *)           PALETTE="$ERGON/theme/$_want.env" ;;
 esac
 [ -f "$PALETTE" ] || PALETTE="$_want"
+# Refused before it is recorded below: remembered as the palette, it would
+# fail every render after this one.
+[ "$PALETTE" != "$ERGON/theme/type.env" ] || { echo "theme/type.env is the text size, not a palette" >&2; exit 1; }
 
 [ -f "$PALETTE" ] || {
   echo "no palette '$_want' (try: ergon theme --list)" >&2; exit 1
@@ -218,13 +253,28 @@ fi
   printf 's|@COOL_ICON_THEME@|%s|g\n'  "$ICON_THEME"
 } >> "$SEDPROG"
 
+# Sizes. A template keeps the number it was designed at, as @TYPE:<n>@, and
+# gets round(n * TEXT_SIZE / 11) -- 11 being the size every one of those
+# numbers was chosen at -- so the surfaces keep their proportions to each other
+# and the default renders exactly the designed numbers. 6..48 covers any font
+# size a template would name; outside it the token is left unexpanded, which
+# the check below refuses.
+TEXT_SIZE=$(read_type "$(type_src)") || exit 1
+for _n in $(seq 6 48); do
+  printf 's|@TYPE:%s@|%s|g\n' "$_n" "$(( (2 * _n * TEXT_SIZE + 11) / 22 ))"
+done >> "$SEDPROG"
+# GTK has no template size to scale: its font is Noto Sans 11 in settings.ini,
+# and GTK3 and GTK4 on Wayland both multiply every size by this key instead.
+_ts=$(( (200 * TEXT_SIZE + 11) / 22 ))
+TEXT_SCALE=$(printf '%d.%02d' $((_ts / 100)) $((_ts % 100)))
+
 rc=0; rendered=0; changed=0
 while IFS= read -r tpl; do
   out="${tpl%.in}"
   new=$(sed -f "$SEDPROG" "$tpl")
 
-  if leftover=$(printf '%s\n' "$new" | grep -oE '@COOL_[A-Z0-9_]+(:raw)?@' | sort -u); then
-    echo "!! $tpl references undefined colours:" >&2
+  if leftover=$(printf '%s\n' "$new" | grep -oE '@(COOL_[A-Z0-9_]+(:raw)?|TYPE:[^@]*)@' | sort -u); then
+    echo "!! $tpl references undefined colours or sizes:" >&2
     # Unquoted on purpose: grep -o gives one placeholder per line and the
     # split is what puts each on its own printf iteration.
     # shellcheck disable=SC2086
@@ -394,6 +444,7 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
     gsettings set org.gnome.desktop.interface color-scheme "$_cs"       2>/dev/null || true
     gsettings set org.gnome.desktop.interface gtk-theme   "$GTK_THEME"  2>/dev/null || true
     gsettings set org.gnome.desktop.interface icon-theme  "$ICON_THEME" 2>/dev/null || true
+    gsettings set org.gnome.desktop.interface text-scaling-factor "$TEXT_SCALE" 2>/dev/null || true
   fi
   "$ERGON/bin/ergon-wallpaper" --force >/dev/null 2>&1 || true
   hyprctl reload >/dev/null 2>&1 || true

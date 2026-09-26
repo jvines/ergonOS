@@ -127,6 +127,11 @@ why a fresh clone has none of them until something renders.
 To change a colour, edit `theme/<palette>.env`. To change the structure, edit
 the `.in`. Editing the output changes your desktop until the next install.
 
+Text size is the one input that is not the palette. `ergon display text N`
+(8 to 32; the default is in `theme/type.env`) turns every `@TYPE:<n>@` -- a
+size as the template was designed at 11 -- into `n * N / 11`, and sets GTK's
+`text-scaling-factor` to `N / 11`.
+
 ### What checks them, and what does not
 
 Rendered configs are gitignored, so nobody reads them in a diff. The only thing
