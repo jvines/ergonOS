@@ -584,14 +584,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# The Vulkan ICD (and NVIDIA's module, per ERGON-36) is chosen from what is on
-# the PCI bus, not assumed -- packages/pacman carries mesa and the loader,
-# which every machine needs regardless. That choice now lives entirely under
-# "hardware" below, in bin/ergon-hardware: it used to grep lspci's product
-# string here, and "ati" is a substring of "Corporation", so that also matched
-# "NVIDIA Corporation" and "Intel Corporation" and put vulkan-radeon on both.
-# ergon-hardware reads the PCI vendor id instead, the way it already did for
-# NVIDIA. ERGON-71.
+# The Vulkan ICD and NVIDIA's module are chosen by bin/ergon-hardware, under
+# "hardware" below -- see it for why (ERGON-71, ERGON-36). packages/pacman
+# still carries mesa and the loader, which every machine needs regardless.
 
 # ---------------------------------------------------------------------------
 say "hardware"

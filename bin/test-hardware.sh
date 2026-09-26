@@ -293,6 +293,8 @@ reset_logs; apply am5
 check "NVIDIA drives the display beside an iGPU and a BMC: the global env, no prime-run" \
   hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open libva-nvidia-driver"
 check "  and the env file" test -e "$T/am5/dest/etc/ergon/hypr/nvidia.lua"
+check "  the idle AMD iGPU still gets its ICD (ERGON-71: a second _gpus | grep -q used to SIGPIPE the first)" \
+  hasx "$T/log/pacman" "-S --needed --noconfirm vulkan-radeon"
 
 # A laptop: Intel drives the panel, the NVIDIA card is a 3D controller.
 R=$T/hyb/root
@@ -303,6 +305,8 @@ put "$T/hyb/dest/etc/ergon/hypr/nvidia.lua" "# Written by ergon-hardware from wh
 reset_logs; apply hyb
 check "hybrid: the module, and prime-run for offload" hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open nvidia-prime"
 check "  no global env, which would put every GL client on the dGPU" test ! -e "$T/hyb/dest/etc/ergon/hypr/nvidia.lua"
+check "  the panel's Intel iGPU gets its ICD too (ERGON-71: grep -q's early exit used to SIGPIPE _gpus)" \
+  hasx "$T/log/pacman" "-S --needed --noconfirm vulkan-intel intel-media-driver"
 ERGON_SYSROOT=$R "$EH" detect > "$T/out" 2>&1
 check "detect names the card" hasx "$T/out" "  nvidia:       0x2820"
 check "  and the hybrid" hasx "$T/out" "  hybrid gpu:   yes"

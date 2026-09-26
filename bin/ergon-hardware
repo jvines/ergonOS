@@ -285,12 +285,23 @@ EOF
   # discrete card) gets each one's packages; NVIDIA's own package is decided
   # below instead, next to _nvidia_modules, since it also depends on which
   # kernels are installed.
-  _gpus | grep -q '^0x1002 ' && GFX="$GFX vulkan-radeon"
-  _gpus | grep -q '^0x8086 ' && GFX="$GFX vulkan-intel intel-media-driver"
+  #
+  # gpus= once, not `_gpus | grep -q` twice: -q's early exit on the first
+  # match can SIGPIPE _gpus before it has written every device, so the second
+  # grep would see a truncated (or empty) list -- the same trap _hybrid's
+  # comment already names. Measured: an Intel iGPU + NVIDIA dGPU laptop lost
+  # vulkan-intel entirely, 8/8 runs, until _gpus was read into a variable once.
+  gpus=$(_gpus)
+  grep -q '^0x1002 ' <<<"$gpus" && GFX="$GFX vulkan-radeon"
+  grep -q '^0x8086 ' <<<"$gpus" && GFX="$GFX vulkan-intel intel-media-driver"
   if [ -n "$GFX" ]; then
     # shellcheck disable=SC2086
     sudo pacman -S --needed --noconfirm $GFX >/dev/null && ok "graphics:$GFX" \
       || warn "some graphics packages failed:$GFX"
+  elif [ -z "$gpus" ]; then
+    skip "graphics: no GPU recognised on the PCI bus -- mesa software rendering only"
+  else
+    skip "graphics: no AMD or Intel display controller"
   fi
 
   # NVIDIA. Turing and newer (device id >= 0x1e00, Omarchy's test in
