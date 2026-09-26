@@ -83,5 +83,49 @@ ver=$(cd "$REPO" && "$UV" run --quiet --no-project --with matplotlib \
         python -c 'import matplotlib; print(matplotlib.__version__)' 2>/dev/null)
 printf '   --   against matplotlib %s\n' "${ver:-unknown}"
 
+echo
+echo "== ergon-doctor's numpy-blas row (ERGON-63): graded on the runtime itself"
+# It has to catch what a bare env-var read cannot: OPENBLAS_NUM_THREADS=0 is
+# silently ignored by OpenBLAS (measured), so the row must still warn when the
+# var is set. Real venvs, built the uv way rather than through pyfleet, for the
+# same reason the rest of this file avoids it -- a doctor test has no business
+# depending on whether `pyfleet sync` has ever run on this host.
+BV="$T/blas-venv"
+"$UV" venv --quiet "$BV"
+"$UV" pip install --quiet --python "$BV/bin/python" numpy threadpoolctl
+
+blas_row() {  # blas_row <PYFLEET_VENV> [VAR=val ...] -> the numpy-blas JSON object
+  local venv=$1; shift
+  env -u WAYLAND_DISPLAY -u SUDO_USER "$@" PYFLEET_VENV="$venv" ERGON="$REPO" \
+    "$REPO/bin/ergon-doctor" --json 2>/dev/null | grep -o '{"name":"numpy-blas"[^}]*}'
+}
+
+row=$(blas_row "$BV" OPENBLAS_NUM_THREADS=1)
+case "$row" in
+  *'"state":"ok"'*) ok "capped to 1 thread reads ok" ;;
+  *) bad "capped to 1 thread should read ok: ${row:-<no row>}" ;;
+esac
+
+row=$(blas_row "$BV" OPENBLAS_NUM_THREADS=0)
+case "$row" in
+  *'"state":"warn"'*) ok "OPENBLAS_NUM_THREADS=0 -- set but not honoured -- still warns" ;;
+  *) bad "an env var the runtime ignores should still warn: ${row:-<no row>}" ;;
+esac
+
+NV="$T/no-threadpoolctl-venv"
+"$UV" venv --quiet "$NV"
+"$UV" pip install --quiet --python "$NV/bin/python" numpy
+row=$(blas_row "$NV")
+case "$row" in
+  *'threadpoolctl not installed'*) ok "numpy without threadpoolctl names the missing piece" ;;
+  *) bad "expected a threadpoolctl-missing warning: ${row:-<no row>}" ;;
+esac
+
+row=$(blas_row "$T/no-such-venv")
+case "$row" in
+  *'no pyfleet venv'*) ok "a missing venv names itself, not threadpoolctl" ;;
+  *) bad "expected a no-venv warning: ${row:-<no row>}" ;;
+esac
+
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

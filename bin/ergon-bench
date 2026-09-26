@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# ergon:summary=What this machine does, and whether threading is sane
+# ergon:summary=Time matmul, FFT and a likelihood loop under the current threads
 # ergon:group=system
 # ergon:args=[--json]
 #
 # Matmul, FFT and a sampler-shaped workload of many small likelihood calls,
-# reported next to the thread configuration.
+# timed in THIS process next to the thread configuration it ran under.
 #
-# Its real job is diagnostic. Mysteriously ten times slower than yesterday, or
-# than the same code on a node, is almost always numpy grabbing every core
-# underneath a process pool that already has them.
+# ERGON-63: this used to claim it diagnosed thread oversubscription -- numpy
+# grabbing every core underneath a process pool that already has them. It
+# cannot: there is no pool here, single-process timings can't show what
+# happens under one. That diagnosis, which runtime numpy actually loaded and
+# how many threads it holds right now, is `ergon doctor`.
 set -euo pipefail
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"

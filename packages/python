@@ -11,6 +11,8 @@
 
 numpy
 scipy
+threadpoolctl        # tiny, pure python; ergon doctor uses it to see which
+                     # BLAS/OpenMP runtime numpy actually loaded (ERGON-63)
 pandas
 matplotlib
 pillow               # ergon fig reads PNG metadata through it. matplotlib

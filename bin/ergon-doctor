@@ -61,6 +61,62 @@ else
   rec warn "pyfleet" "not built — run: pyfleet sync"
 fi
 
+# --- what the BLAS/OpenMP runtime is doing RIGHT NOW ------------------------
+# ERGON-63: bin/ergon-bench used to claim it diagnosed oversubscription and had
+# no process pool to observe one with. threadpoolctl.threadpool_info() asks the
+# loaded libraries themselves how many threads they hold -- the number a
+# sampler's pool multiplies -- rather than reading an env var and hoping it was
+# honoured. Importing numpy is enough to dlopen its BLAS; no matmul needed
+# (measured: threadpool_info() sees it with no array ever created).
+#
+# Graded on that count, not on whether an env var is merely set: measured,
+# OPENBLAS_NUM_THREADS=0 and OMP_NUM_THREADS=<garbage> are both silently
+# ignored by their own runtimes, so blas-threads above reads either as
+# "handled" while the runtime still holds every core. cpu is
+# sched_getaffinity(0) -- the same affinity-aware count nproc gives -- so a
+# cpuset/taskset-limited run isn't graded "capped" for holding every core it
+# can actually see.
+#
+# Named for python specifically, not "blas-runtime": R links BLAS too once
+# packages/bundles/r lands, and this only ever asks pyfleet's python.
+if [ -x "$VENV/bin/python" ]; then
+  tp=$("$VENV/bin/python" - <<'THREADPOOL' 2>/dev/null
+try:
+    import numpy
+except ImportError:
+    print("no numpy")
+else:
+    try:
+        import threadpoolctl, os
+    except ImportError:
+        print("no threadpoolctl")
+    else:
+        ENV = {"openblas": "OPENBLAS_NUM_THREADS", "mkl": "MKL_NUM_THREADS",
+               "openmp": "OMP_NUM_THREADS", "blis": "BLIS_NUM_THREADS"}
+        seen = {}
+        for i in threadpoolctl.threadpool_info():
+            seen.setdefault(i["internal_api"], i["num_threads"])
+        try:
+            cpu = len(os.sched_getaffinity(0))
+        except AttributeError:
+            cpu = os.cpu_count() or 1
+        state = "warn" if any(v > 1 and v >= cpu for v in seen.values()) else "ok"
+        note = ", ".join(f"{k} {v}/{cpu} ({ENV.get(k, k + '_NUM_THREADS')})"
+                          for k, v in sorted(seen.items()))
+        print(f"{state}|{note}")
+THREADPOOL
+)
+  case "$tp" in
+    "no numpy") rec warn "numpy-blas" "no numpy in the pyfleet venv — run: pyfleet sync" ;;
+    "no threadpoolctl") rec warn "numpy-blas" "threadpoolctl not installed — run: pyfleet sync" ;;
+    "") rec warn "numpy-blas" "could not find a loaded BLAS/OpenMP runtime to introspect" ;;
+    ok\|*)   rec ok   "numpy-blas" "${tp#ok|} — a process pool on top multiplies each" ;;
+    warn\|*) rec warn "numpy-blas" "${tp#warn|} — a process pool on top multiplies each" ;;
+  esac
+else
+  rec warn "numpy-blas" "no pyfleet venv — run: pyfleet sync"
+fi
+
 d="${XDG_DATA_HOME:-$HOME/.local/share}"
 if [ -w "$d" ]; then rec ok "data-dir" "$d writable"
 else rec fail "data-dir" "$d not writable by $(id -un) — uv will fail with a bare errno"; fi

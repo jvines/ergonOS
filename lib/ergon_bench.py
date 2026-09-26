@@ -1,10 +1,12 @@
-"""What this machine actually does, and whether threading is sane.
+"""What this machine's numpy actually does: matmul, FFT and a sampler-shaped
+likelihood workload, timed next to the thread configuration it ran under.
 
-Its real job is diagnostic. When something is mysteriously ten times slower
-than it was, or than the same code on a node, it is almost always thread
-oversubscription -- numpy grabbing every core underneath a process pool that
-already has them. This reports the numbers next to the thread configuration, so
-the answer is one command rather than an afternoon.
+ERGON-63: this used to claim it diagnosed thread oversubscription -- numpy
+grabbing every core underneath a process pool that already has them. It
+can't: there is no multiprocessing.Pool anywhere below, and a single-process
+timing cannot observe what happens under one. For which BLAS/OpenMP runtime
+is actually loaded and how many threads it holds right now, see `ergon
+doctor`, which introspects it with threadpoolctl.
 
     ergon bench
     ergon bench --json
