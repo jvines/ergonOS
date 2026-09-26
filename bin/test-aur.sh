@@ -12,7 +12,8 @@
 # directory it was run in. A pin is otherwise only a claim -- this is the recipe
 # that ran.
 #
-# COVERS: the plain form still refusing an installed package and --rebuild not;
+# COVERS: the plain form still refusing an installed package and --rebuild not,
+# unless a pin says what is installed was not built from it (ERGON-45);
 # a pin building exactly that commit, a pin moved forward, a pin that names a
 # commit the AUR does not have (fatal, rather than quietly building the previous
 # one), a pin removed, and the same pin built twice in a row over the package
@@ -247,10 +248,8 @@ check "a pin advanced in the repo but not on the machine is a warning" has <(doc
 check "  naming the package to rebuild" has <(doctor aur-pins) "demo-git"
 
 # Every machine provisioned before the pins existed has these packages installed
-# and no record of building them -- and the plain form of ergon-aur returns
-# early for an installed package, so re-provisioning never fills that in. Called
-# "ok", a whole fleet would have read as compliant on the strength of nobody
-# having looked.
+# and no record of building them. Called "ok", a whole fleet would have read as
+# compliant on the strength of nobody having looked.
 pinfile "$C1"; rm -f "$BUILT"
 check "a pinned package with no build recorded here is not called ok" \
   has <(doctor aur-pins) '"state":"warn"'
@@ -267,6 +266,26 @@ check "  naming it, with the command that fixes it" has <(doctor aur) "ergon aur
 export STUB_REBUILD=extra/vim
 check "a REPO package needing a rebuild is not reported as ours" has <(doctor aur) '"state":"ok"'
 unset STUB_REBUILD
+
+echo "== a moved pin reaches an installed machine through the form provisioning calls"
+# ERGON-45. A pin bump makes `ergon sync` re-provision, and provisioning calls
+# the PLAIN form -- which used to return at "already installed" before it read
+# the pin, so the one path that reacts to the bump could not apply it.
+pinfile "$C1"; run -- --rebuild demo-git
+run -- demo-git
+check "installed and built from its pin: the plain form builds nothing" test ! -e "$L/makepkg"
+pinfile "$C2"
+run -- demo-git
+check "the pin moved: the plain form builds the new one" test "$(built_from)" = "$C2"
+check "  and doctor's aur-pins row is green once it has" has <(doctor aur-pins) '"state":"ok"'
+rm -f "$BUILT"
+run -- demo-git
+check "installed with no build recorded: rebuilt from the pin too" test "$(built_from)" = "$C2"
+run -- demo-git
+check "  once -- the provision after that builds nothing" test ! -e "$L/makepkg"
+pinfile
+run -- demo-git
+check "an unpinned installed package is still left alone" test ! -e "$L/makepkg"
 
 echo
 check "no stub saw a command it did not expect" test ! -e "$L/violations"

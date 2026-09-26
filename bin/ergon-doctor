@@ -261,11 +261,11 @@ if command -v pacman >/dev/null 2>&1; then
     if [ -z "$was" ]; then
       # Installed, pinned, and nothing here ever recorded building it. That is
       # every machine provisioned before the pins existed: the package was built
-      # once from whatever the AUR had that day, and the shortcut for an
-      # already-installed package means re-provisioning never rebuilds it. It
+      # once from whatever the AUR had that day, and nothing noted which. It
       # was reported "ok" for exactly as long as nobody had checked -- which is
       # the opposite of what this check is for, so it is a warning until a
-      # rebuild here makes it an answer.
+      # rebuild here makes it an answer. The next provision is one: ergon-aur's
+      # plain form rebuilds a pinned package it finds in either state here.
       unbuilt="${unbuilt:+$unbuilt }$p"
     elif [ "${was:0:${#pin}}" != "$pin" ]; then
       drift="${drift:+$drift }$p"
