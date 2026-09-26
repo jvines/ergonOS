@@ -11,8 +11,9 @@
 #
 # COVERS: every capability on and off (s2idle-only + hibernation, amdgpu
 # panel, fprintd, light sensor + backlight, an NVIDIA card -- Turing,
-# pre-Turing, hybrid, a kernel with no prebuilt module, the dkms earlier
-# provisioning left -- and that UPower's
+# pre-Turing, hybrid, an iGPU beside a card that drives the display, a kernel
+# with no prebuilt module, either kind of module already installed, a failed
+# download -- and that UPower's
 # CriticalPowerAction is never overridden -- see ergon-hardware for why),
 # removal of a config whose capability went away (and never of a
 # hand-written one), kernel parameters from a profile, DMI matching,
@@ -49,10 +50,13 @@ done
 cat >> "$T/stub/sudo" <<'EOF'
 exec "$@"
 EOF
-# -Q answers from $TEST_ROOT/installed, one package per line.
+# -Q answers from $TEST_ROOT/installed, one package per line and then what it
+# provides: pacman -Q answers for a provided name too (measured). With
+# $TEST_ROOT/pacman-fails, every -S fails, as it does offline.
 cat >> "$T/stub/pacman" <<'EOF'
-case $1 in -Q*) grep -qxF -- "${!#}" "$TEST_ROOT/installed" 2>/dev/null; exit ;; esac
+case $1 in -Q*) awk -v n="${!#}" 'index(" " $0 " ", " " n " ") { print $1; f = 1; exit } END { exit !f }' "$TEST_ROOT/installed" 2>/dev/null; exit ;; esac
 printf '%s\n' "$*" >> "$TEST_ROOT/log/pacman"
+case $1 in -S*) [ ! -e "$TEST_ROOT/pacman-fails" ] ;; esac
 EOF
 cat >> "$T/stub/systemctl" <<'EOF'
 printf '%s\n' "$*" >> "$TEST_ROOT/log/systemctl"
@@ -73,9 +77,9 @@ reset_logs() { rm -f "$T"/log/*; }
 # apply <machine>: run against $T/<machine>/root, writing into $T/<machine>/dest
 apply() { ERGON_SYSROOT="$T/$1/root" ERGON_DESTROOT="$T/$1/dest" "$EH" apply > "$T/out" 2>&1; }
 put() { mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }
-# pci <root> <slot> <class> <vendor> <device>; kernel <root> <release> <pkgbase>
+# pci <root> <slot> <class> <vendor> <device> [boot_vga]; kernel <root> <release> <pkgbase>
 pci() { put "$1/sys/bus/pci/devices/$2/class" "$3"; put "$1/sys/bus/pci/devices/$2/vendor" "$4"
-        put "$1/sys/bus/pci/devices/$2/device" "$5"; }
+        put "$1/sys/bus/pci/devices/$2/device" "$5"; [ -z "${6:-}" ] || put "$1/sys/bus/pci/devices/$2/boot_vga" "$6"; }
 kernel() { put "$1/usr/lib/modules/$2/pkgbase" "$3"; }
 
 # --- three machines -------------------------------------------------------------
@@ -131,7 +135,7 @@ put "$R/proc/cmdline" "root=/dev/sda2"
 printf 'Filename\tType\tSize\tUsed\tPriority\n' > "$R/proc/swaps"
 mkdir -p "$R/sys/class/drm/card0-DP-1" "$R/sys/class/drm/card0/device"
 ln -s ../../../../bus/pci/drivers/amdgpu "$R/sys/class/drm/card0/device/driver"
-pci "$R" 0000:03:00.0 0x030000 0x1002 0x744c
+pci "$R" 0000:03:00.0 0x030000 0x1002 0x744c 1
 put "$R/sys/class/dmi/id/sys_vendor" "ASUS"; put "$R/sys/class/dmi/id/product_name" "System Product Name"
 put "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"'
 
@@ -221,42 +225,71 @@ echo "== NVIDIA"
 # A Turing desktop. The card's HDMI audio is vendor 0x10de too and the chipset's
 # USB controller is another vendor: neither is a GPU, so this is not hybrid.
 R=$T/nv/root; NV=$T/nv/dest/etc/ergon/hypr/nvidia.lua
-pci "$R" 0000:01:00.0 0x030000 0x10de 0x1f08
+pci "$R" 0000:01:00.0 0x030000 0x10de 0x1f08 1
 pci "$R" 0000:01:00.1 0x040300 0x10de 0x10f9
 pci "$R" 0000:02:00.0 0x0c0330 0x1022 0x43ee
 kernel "$R" 7.2.7-arch1-1 linux; kernel "$R" 6.18.54-1-lts linux-lts
 mkdir -p "$R/usr/lib/modules/7.1.9-arch1-1"   # left by an upgrade, no pkgbase
-echo nvidia-open-dkms > "$T/installed"         # what provisioning used to install
+echo "nvidia-open-dkms nvidia-open" > "$T/installed"   # what provisioning used to install, and what it provides
 reset_logs; apply nv
 check "Turing: a prebuilt module for each installed kernel, and the VA-API driver" \
   hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open nvidia-open-lts libva-nvidia-driver"
-check "  after removing the dkms package, which conflicts and built nothing" \
-  test "$(head -1 "$T/log/pacman")" = "-Rdd --noconfirm nvidia-open-dkms"
+check "  after removing the dkms package, which conflicts and built nothing -- once its replacement is downloaded" \
+  test "$(head -2 "$T/log/pacman" | tr '\n' '|')" = "-Sw --needed --noconfirm -- nvidia-open nvidia-open-lts|-Rdd --noconfirm -- nvidia-open-dkms|"
 check "  Hyprland env: LIBVA_DRIVER_NAME" hasx "$NV" 'hl.env("LIBVA_DRIVER_NAME", "nvidia")'
 check "  __GLX_VENDOR_LIBRARY_NAME" hasx "$NV" 'hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")'
 check "  NVD_BACKEND" hasx "$NV" 'hl.env("NVD_BACKEND", "direct")'
 check "  the marker on line 1, the only line Lua skips" has <(head -1 "$NV") "# Written by ergon-hardware"
 check "  at the path hypr/common/env.lua loads" has "$REPO/hypr/common/env.lua" 'pcall(require, "/etc/ergon/hypr/nvidia")'
+touch "$T/pacman-fails"; reset_logs; apply nv
+check "downloads failing: the dkms package stays" not has "$T/log/pacman" "-Rdd"
+check "  the env goes, with no module for it to point at" test ! -e "$NV"
+check "  and it says so rather than ok" has "$T/out" "NVIDIA packages failed"
+rm "$T/pacman-fails"
 kernel "$R" 7.2.7-zen1-1-zen linux-zen
 reset_logs; apply nv
 check "a kernel with no prebuilt module: dkms for every kernel, with their headers" \
   hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open-dkms linux-headers linux-lts-headers linux-zen-headers libva-nvidia-driver"
 check "  and the dkms package is kept" not has "$T/log/pacman" "-Rdd"
+printf 'nvidia-open\nnvidia-open-lts\n' > "$T/installed"
+reset_logs; apply nv
+check "  over prebuilt ones, they go once dkms is downloaded" \
+  test "$(head -2 "$T/log/pacman" | tr '\n' '|')" = "-Sw --needed --noconfirm -- nvidia-open-dkms linux-headers linux-lts-headers linux-zen-headers|-Rdd --noconfirm -- nvidia-open nvidia-open-lts|"
+rm -rf "$R/usr/lib/modules"
+reset_logs; apply nv
+check "no kernel with a pkgbase: nothing installed or removed" test ! -e "$T/log/pacman"
+check "  and no env" test ! -e "$NV"
 rm -f "$T/installed"; rm -rf "$R/sys/bus/pci/devices/0000:01:00.0"
+put "$NV" "# Written by ergon-hardware from what this machine has; removed when that stops being true."
 reset_logs; apply nv
 check "card gone: the env file goes too" test ! -e "$NV"
 
 R=$T/pascal/root
-pci "$R" 0000:01:00.0 0x030000 0x10de 0x1b80
+pci "$R" 0000:01:00.0 0x030000 0x10de 0x1b80 1
 kernel "$R" 7.2.7-arch1-1 linux
 reset_logs; apply pascal
 check "pre-Turing: nothing installed, so nouveau is not blacklisted" not has "$T/log/pacman" "nvidia"
 check "  refused, naming the legacy driver" has "$T/out" "nvidia-580xx-dkms + nvidia-580xx-utils (AUR)"
 check "  no Hyprland env" test ! -e "$T/pascal/dest/etc/ergon/hypr/nvidia.lua"
+check "  and no blacklist claimed where there is none" not has "$T/out" "blacklists nouveau"
+echo nvidia-utils > "$T/installed"; reset_logs; apply pascal; rm "$T/installed"
+check "  where nvidia-utils is left over, it says the card has no driver" has "$T/out" "blacklists nouveau, so the card has no driver"
+
+# A desktop whose monitors are on the NVIDIA card (boot_vga), with the CPU's
+# iGPU left on and a BMC's VGA beside it: more display controllers, not hybrid.
+R=$T/am5/root
+pci "$R" 0000:01:00.0 0x030000 0x10de 0x2684 1
+pci "$R" 0000:10:00.0 0x030000 0x1002 0x164e 0
+pci "$R" 0000:05:00.0 0x030000 0x1a03 0x2000 0
+kernel "$R" 7.2.7-arch1-1 linux
+reset_logs; apply am5
+check "NVIDIA drives the display beside an iGPU and a BMC: the global env, no prime-run" \
+  hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open libva-nvidia-driver"
+check "  and the env file" test -e "$T/am5/dest/etc/ergon/hypr/nvidia.lua"
 
 # A laptop: Intel drives the panel, the NVIDIA card is a 3D controller.
 R=$T/hyb/root
-pci "$R" 0000:00:02.0 0x030000 0x8086 0x7d55
+pci "$R" 0000:00:02.0 0x030000 0x8086 0x7d55 1
 pci "$R" 0000:01:00.0 0x030200 0x10de 0x2820
 kernel "$R" 7.2.7-arch1-1 linux
 put "$T/hyb/dest/etc/ergon/hypr/nvidia.lua" "# Written by ergon-hardware from what this machine has; removed when that stops being true."

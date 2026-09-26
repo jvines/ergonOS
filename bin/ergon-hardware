@@ -106,29 +106,38 @@ _backlight() {
 
 _has_unit() { [ -e "$ROOT/usr/lib/systemd/system/$1" ]; }
 
-# PCI display controllers (class 0x03xxxx), one "vendor device" per line. The
-# class matters: an NVIDIA card's HDMI audio and USB-C functions carry vendor
-# 0x10de too, and a chipset's USB controller is "another vendor" on every PC.
+# PCI display controllers (class 0x03xxxx), one "vendor device boot_vga" per
+# line. The class matters: an NVIDIA card's HDMI audio and USB-C functions carry
+# vendor 0x10de too, and a chipset's USB controller is "another vendor" on
+# every PC. A 3D controller (0x0302) has no boot_vga file: 0.
 _gpus() {
   local d
   for d in "$ROOT"/sys/bus/pci/devices/*; do
     case $(cat "$d/class" 2>/dev/null) in 0x03*) ;; *) continue ;; esac
-    printf '%s %s\n' "$(cat "$d/vendor")" "$(cat "$d/device")"
+    printf '%s %s %s\n' "$(cat "$d/vendor")" "$(cat "$d/device")" "$(cat "$d/boot_vga" 2>/dev/null || echo 0)"
   done
 }
 
 # The highest NVIDIA display device id, which is the newest generation.
 _nvidia() {
-  local v id best=0
-  while read -r v id; do
+  local v id b best=0
+  while read -r v id b; do
     [ "$v" = 0x10de ] && (( id > best )) && best=$id
   done < <(_gpus)
   (( best )) && printf '0x%04x\n' "$best"
 }
 
-# NVIDIA plus another GPU: on a laptop, the iGPU the panel is wired to. Not
-# grep -q: under pipefail its early exit can SIGPIPE _gpus and read as "no".
-_hybrid() { _nvidia >/dev/null && _gpus | grep -v '^0x10de ' >/dev/null; }
+# NVIDIA, with the display on another vendor's GPU: on a laptop, the iGPU the
+# panel is wired to. By boot_vga, not by counting GPUs -- a desktop's live iGPU
+# or a workstation's BMC VGA is a second display controller while the monitors
+# hang off the NVIDIA card. boot_vga=1 is also the GPU Hyprland renders on:
+# aquamarine 0.15.1's scanGPUs puts it first. Not grep -q: under pipefail its
+# early exit can SIGPIPE _gpus and read as "no".
+_hybrid() { _nvidia >/dev/null && _gpus | grep -v '^0x10de ' | grep ' 1$' >/dev/null; }
+
+# Installed under exactly this name: pacman -Q also answers for a package that
+# only provides it, and nvidia-open-dkms provides nvidia-open (measured).
+_installed() { [ "$(pacman -Qq "$1" 2>/dev/null)" = "$1" ]; }
 
 # The NVIDIA module packages for the kernels this machine HAS, read from the
 # pkgbase each kernel package puts in its module directory -- not the two
@@ -154,7 +163,7 @@ _nvidia_modules() {
 # --- what to do about it ---------------------------------------------------------
 
 _capabilities() {
-  local als bl nv P=()
+  local als bl nv q env=0 P=() old=() R=()
 
   # Power key. logind's own default is poweroff on a bare press, and on the
   # Framework 13 that key IS the fingerprint reader (bin/ergon-fingerprint) --
@@ -281,41 +290,56 @@ EOF
   # and its .install disables those units on upgrade as "no longer needed with
   # open kernel modules".
   nv=$(_nvidia) || nv=""
-  if [ -n "$nv" ] && (( nv >= 0x1e00 )); then
-    mapfile -t P < <(_nvidia_modules)
-    [ "${#P[@]}" -gt 0 ] || warn "NVIDIA $nv, but no kernel with a pkgbase under /usr/lib/modules"
-    # Every NVIDIA machine provisioned before this has nvidia-open-dkms, and
-    # over it pacman --noconfirm answers the conflict "N" and installs nothing
-    # (measured). -dd, because what is installed next provides NVIDIA-MODULE.
-    if [ "${P[0]:-}" != nvidia-open-dkms ] && pacman -Qq nvidia-open-dkms >/dev/null 2>&1; then
-      sudo pacman -Rdd --noconfirm nvidia-open-dkms >/dev/null || warn "could not remove nvidia-open-dkms"
+  [ -n "$nv" ] && (( nv >= 0x1e00 )) && mapfile -t P < <(_nvidia_modules)
+  if [ "${#P[@]}" -gt 0 ]; then
+    # The prebuilt modules and dkms conflict (NVIDIA-MODULE), and pacman
+    # --noconfirm answers that "N" and installs nothing (measured, both ways).
+    # Every NVIDIA machine provisioned before this has dkms; a kernel with no
+    # prebuilt module, added later, turns it the other way. So the other kind
+    # goes first -- once -Sw has its replacement in the cache (-Sw skips the
+    # conflict check, measured), so a failed download never leaves no module.
+    # -dd, because what goes in next provides NVIDIA-MODULE.
+    if [ "${P[0]}" = nvidia-open-dkms ]; then old=(nvidia-open nvidia-open-lts); else old=(nvidia-open-dkms); fi
+    for q in "${old[@]}"; do _installed "$q" && R+=("$q"); done
+    if [ "${#R[@]}" -gt 0 ]; then
+      { sudo pacman -Sw --needed --noconfirm -- "${P[@]}" >/dev/null \
+          && sudo pacman -Rdd --noconfirm -- "${R[@]}" >/dev/null; } || warn "could not replace ${R[*]}"
     fi
     if _hybrid; then
       # prime-run is the offload: __NV_PRIME_RENDER_OFFLOAD and
       # __GLX_VENDOR_LIBRARY_NAME=nvidia for ONE program. The env file below
       # would do that for every GL client and keep the dGPU awake. No supergfxd.
       P+=(nvidia-prime)
-      _unput /etc/ergon/hypr/nvidia.lua
     else
-      # Loaded by hypr/common/env.lua. $MARK has to stay the FIRST line: Lua
-      # skips a first line starting with #, and only that one (0.56.2).
-      P+=(libva-nvidia-driver)
-      _put /etc/ergon/hypr/nvidia.lua <<EOF
+      P+=(libva-nvidia-driver); env=1
+    fi
+    # The env points GLX and VA-API at NVIDIA's libraries, so it follows the
+    # install: without a module it would only break every GL client.
+    if sudo pacman -S --needed --noconfirm -- "${P[@]}" >/dev/null; then
+      ok "nvidia $nv: ${P[*]}"
+    else
+      warn "NVIDIA packages failed: ${P[*]}"; env=0
+    fi
+  elif [ -n "$nv" ] && (( nv >= 0x1e00 )); then
+    warn "NVIDIA $nv, but no kernel with a pkgbase under /usr/lib/modules: nothing installed"
+  elif [ -n "$nv" ]; then
+    warn "NVIDIA $nv is older than Turing: nvidia-open cannot drive it, so nothing was installed for it."
+    _installed nvidia-utils \
+      && warn "  But nvidia-utils is installed and blacklists nouveau, so the card has no driver: sudo pacman -Rsc nvidia-utils"
+    warn "  NVIDIA's driver for Maxwell to Volta: nvidia-580xx-dkms + nvidia-580xx-utils (AUR), with each kernel's headers."
+  fi
+  if [ "$env" = 1 ]; then
+    # Loaded by hypr/common/env.lua. $MARK has to stay the FIRST line: Lua
+    # skips a first line starting with #, and only that one (0.56.2).
+    _put /etc/ergon/hypr/nvidia.lua <<EOF
 $MARK
 -- NVIDIA $nv drives the display: VA-API, GLX and the VA-API driver's backend.
 hl.env("LIBVA_DRIVER_NAME", "nvidia")
 hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
 hl.env("NVD_BACKEND", "direct")
 EOF
-    fi
-    sudo pacman -S --needed --noconfirm -- "${P[@]}" >/dev/null \
-      && ok "nvidia $nv: ${P[*]}" || warn "NVIDIA packages failed: ${P[*]}"
   else
     _unput /etc/ergon/hypr/nvidia.lua
-    if [ -n "$nv" ]; then
-      warn "NVIDIA $nv is older than Turing: nvidia-open cannot drive it, so nothing was installed and nouveau keeps it."
-      warn "  NVIDIA's driver for Maxwell to Volta: nvidia-580xx-dkms + nvidia-580xx-utils (AUR), with each kernel's headers."
-    fi
   fi
 
   # Auto-brightness wherever there is a sensor and a backlight to drive. It moves

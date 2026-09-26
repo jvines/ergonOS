@@ -16,8 +16,8 @@ ThinkPad, a desktop or a VM:
 | a built-in panel on amdgpu | `card*-eDP-*` whose driver is amdgpu | power-profiles-daemon may not desaturate it (ABM) |
 | fprintd | its unit exists | fprintd restarted after resume |
 | an ambient light sensor and a backlight | `in_illuminance_*` under iio; `/sys/class/backlight/*` (the `raw` one preferred) | illuminanced on, with a generated config |
-| an NVIDIA card, Turing or newer | a PCI display controller, vendor `0x10de`, device `>= 0x1e00` | the open module, prebuilt for each kernel in `/usr/lib/modules/*/pkgbase` (dkms and headers if any kernel has none); Hyprland's env in `/etc/ergon/hypr/nvidia.lua`. Older cards: nothing installed, the legacy driver named |
-| NVIDIA beside another GPU | a display controller of another vendor too | `prime-run` (nvidia-prime) instead of the global env |
+| an NVIDIA card, Turing or newer | a PCI display controller, vendor `0x10de`, device `>= 0x1e00` | the open module, prebuilt for each kernel in `/usr/lib/modules/*/pkgbase` (dkms and headers if any kernel has none); Hyprland's env in `/etc/ergon/hypr/nvidia.lua` once the install succeeds. Older cards: nothing installed, the legacy driver named. Not yet run on real NVIDIA hardware (ERGON-36) |
+| NVIDIA, with the display on another GPU | another vendor's display controller has `boot_vga` 1 (a live iGPU or BMC beside the card that drives the monitors is not this) | `prime-run` (nvidia-prime) instead of the global env |
 
 Every file written for a capability carries a marker line, and is removed when
 the capability goes away. A file without the marker is never removed.
