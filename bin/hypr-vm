@@ -36,6 +36,8 @@ USERPASS="${USER_PASSWORD:-testuser123}"
 USERNAME="${USERNAME:-jayvains}"
 VMHOST="${HOSTNAME_NEW:-testarch}"
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+. "$ERGON/lib/docker-cmd.sh"
+ergon_resolve_docker || exit 1
 
 # Published on the LAN and on the tailnet both.
 #
@@ -211,9 +213,9 @@ EXPECT
 # this terminal. The serial console is still there (`docker attach hyprvm`), and
 # `docker rm -f hyprvm` stops it.
 if [ "${HYPR_VM_DETACH:-0}" = 1 ]; then
-  docker rm -f hyprvm >/dev/null 2>&1 || true
+  "${DOCKER[@]}" rm -f hyprvm >/dev/null 2>&1 || true
   # shellcheck disable=SC2086  # PUBLISH is a deliberate list of -p flags
-  docker run -d -it --name hyprvm --device /dev/kvm $GPU_DOCKER $PUBLISH \
+  "${DOCKER[@]}" run -d -it --name hyprvm --device /dev/kvm $GPU_DOCKER $PUBLISH \
     -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
     "$IMAGE" expect -f /w/vnc.exp >/dev/null
   echo "  running in the background as container 'hyprvm'"
@@ -231,8 +233,8 @@ fi
 #
 # Naming it means a leftover is found and removed here instead of accumulating,
 # and that `docker rm -f hyprvm` works whether it was started detached or not.
-docker rm -f hyprvm >/dev/null 2>&1 || true
+"${DOCKER[@]}" rm -f hyprvm >/dev/null 2>&1 || true
 # shellcheck disable=SC2086  # PUBLISH is a deliberate list of -p flags
-exec docker run --rm -it --name hyprvm --device /dev/kvm $GPU_DOCKER $PUBLISH \
+exec "${DOCKER[@]}" run --rm -it --name hyprvm --device /dev/kvm $GPU_DOCKER $PUBLISH \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/vnc.exp

@@ -29,6 +29,8 @@ USERNAME="${USERNAME:-jayvains}"
 # is exercised: the suite must not need the NAS to pass.
 BACKUP_NAS="${ERGON_TEST_NAS:-}"
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+. "$ERGON/lib/docker-cmd.sh"
+ergon_resolve_docker || exit 1
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
@@ -142,7 +144,7 @@ EXPECT
 # nothing at all between "$HOME/.local owned by jayvains" and a line five to
 # twenty-four minutes later, which is exactly the stretch nobody could account
 # for when this went red.
-docker run --rm --device /dev/kvm $GPU_DOCKER \
+"${DOCKER[@]}" run --rm --device /dev/kvm $GPU_DOCKER \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/session.exp 2>&1 | tee "$WORK/session.log" \
   | grep -E '^(   ok|   FAIL|   --   |   \.\.   |--- |!! )' || true
