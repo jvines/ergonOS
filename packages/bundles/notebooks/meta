@@ -2,4 +2,4 @@
 # with uv into a python 3.13 venv, 2026-09-26.
 DESCRIPTION="Jupyter, if you want it: marimo is the built-in notebook"
 SIZE_MB=130
-NOTE="marimo is already installed and is the notebook to reach for: its files are .py, so they diff, and execution is reactive, so there is no stale cell. This is JupyterLab for notebooks that arrive as .ipynb and for anyone who prefers it; jupytext converts between the two."
+NOTE="marimo is already installed and is the notebook to reach for: its files are .py, so they diff, and execution is reactive, so there is no stale cell. This is JupyterLab for notebooks that arrive as .ipynb and for anyone who prefers it; jupytext converts between the two. Nothing puts jupyter on PATH: start it as ~/.local/share/pyfleet/bin/jupyter lab"

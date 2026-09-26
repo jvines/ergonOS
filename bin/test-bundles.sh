@@ -12,7 +12,9 @@
 # consent, the copy and its .source, sync without the source, the ledger of
 # what each bundle installed and remove taking only that, the keep-set
 # (base system and other bundles), update, built-in add/remove, and that every
-# git line names a ref and every built-in one a full commit.
+# git line names a ref and every built-in one a full commit. Beside the bundles:
+# the installer's notice at the bundle prompt, and `pyfleet ensure` (real, with
+# a stub uv) bringing what the base list gained to a venv that already exists.
 #
 # DOES NOT COVER: whether any of it resolves. The stubs install anything, so a
 # name that is not a package and a pin to a commit that does not exist pass
@@ -266,6 +268,27 @@ check "  and its record moves to that bundle" hasx "$L" "other2 pacman figlet"
 run remove other2
 check "so removing that bundle later takes it" hasx "$T/log/pacman" "-Rns --noconfirm -- figlet"
 rm -rf "$E/packages/bundles/other2"
+
+lst() { sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^[[:space:]]*$/d' "$1"; }
+echo "== the installer's notice (ERGON-54), where bundles are chosen"
+# provision-arch.sh's bundle stage with its tty test forced true: no CI path
+# reaches that branch, and the VM answers with ERGON_BUNDLES.
+sed -n '/^say "bundles"$/,/^say "editor tooling"$/p' "$REPO/bin/provision-arch.sh" \
+  | sed '$d; s/^elif \[ -t 0 \]; then$/elif true; then/' > "$T/stage"
+( say() { :; }; skip() { :; }; warn() { :; }; unset ERGON_BUNDLES; . "$T/stage" ) < /dev/null > "$T/out" 2>&1
+nb=$(sed -n 's/.*ergon bundle add \([a-z0-9-]*\).*/\1/p' "$T/out" | head -1)
+check "it names a bundle, before the prompt" awk '/ergon bundle add/ {n=1} /Which bundles/ {f=n} END {exit !f}' "$T/out"
+check "  one that carries jupyterlab" grep -qx jupyterlab <(lst "$REPO/packages/bundles/${nb:-none}/python" 2>/dev/null)
+check "  and marimo, 'built in', is in packages/python" grep -qx marimo <(lst "$REPO/packages/python")
+
+echo "== pyfleet ensure on a venv that already exists"
+# It used to return the moment one existed, so marimo never reached one.
+mkdir -p "$T/home/.local/bin" "$T/pyv/bin"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TEST_ROOT/log/uv"\n' > "$T/home/.local/bin/uv"
+printf '#!/bin/sh\n' > "$T/pyv/bin/python"; chmod +x "$T/home/.local/bin/uv" "$T/pyv/bin/python"
+reset_logs; PYFLEET_VENV=$T/pyv "$REPO/bin/pyfleet" ensure > "$T/out" 2>&1
+check "installs the whole base list, and never with --upgrade" hasx "$T/log/uv" \
+  "pip install --python $T/pyv/bin/python --quiet $(lst "$E/packages/python" | paste -sd' ')"
 
 echo
 check "no stub saw a name without --" test ! -e "$T/violations"

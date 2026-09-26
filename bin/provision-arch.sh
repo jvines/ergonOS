@@ -864,10 +864,11 @@ elif [ -t 0 ]; then
   echo
   "$ERGON/bin/ergon-bundle" list
   echo
-  # ERGON-54 made marimo the base notebook and Jupyter a bundle. Someone who
-  # expects Jupyter learns that here, while choosing, and not later from
-  # `jupyter: command not found`. No package names: `ergon-bundle info
-  # notebooks` holds those, and a copy here would drift from it.
+  # ERGON-54 made marimo the base notebook and Jupyter a bundle, so someone who
+  # expects Jupyter is told while choosing. No package names: `ergon-bundle info
+  # notebooks` holds those, and a copy here would drift from it. marimo itself
+  # arrives with the base venv, from install.sh's `pyfleet ensure` -- which also
+  # adds it to a venv that predates this.
   echo "   marimo is built in, and replaces Jupyter here. For Jupyter too, choose"
   echo "   notebooks below, or later: ergon bundle add notebooks"
   echo

@@ -25,7 +25,9 @@ pillow               # ergon fig reads PNG metadata through it. matplotlib
 # (uv, python 3.13, 2026-09-26). Not in the Arch repos; PyPI is the only route.
 #
 # Nothing else here needs ipykernel: ergon kernel installs it into the PROJECT
-# env. A venv built before this keeps its jupyterlab, because sync never removes.
+# env. A venv built before this gets marimo from install.sh's `pyfleet ensure`
+# and keeps its jupyterlab, since nothing here removes a package. A clean base
+# is `pyfleet destroy`, `pyfleet sync`, then `ergon bundle sync` for bundles.
 marimo
 
 # A command you type, and no longer something jupyterlab brings along.

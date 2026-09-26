@@ -86,8 +86,11 @@ chmod 440 /etc/sudoers.d/99-harness
 # jupyterlab is in the venv from the previous run (before ERGON-54, from the
 # base), so it would rightly never be recorded and the ledger assertion below
 # would prove nothing. Every run starts with the notebooks packages absent and
-# no ledger. On a fresh disk pyfleet has no uv yet and this does nothing.
-su - "$U" -c "$H/ergonOS/bin/pyfleet drop -- jupyterlab ipykernel ipywidgets jupytext" >/dev/null 2>&1 || true
+# no ledger. On a fresh disk pyfleet has no uv yet and this does nothing. The
+# names come from the bundle's own list: a hand copy here had to be rewritten
+# when the bundle changed, and one that lagged would leave a package unrecorded.
+nb=$(sed 's/#.*//' "$H/ergonOS/packages/bundles/notebooks/python" | tr -s '[:space:]' ' ')
+su - "$U" -c "$H/ergonOS/bin/pyfleet drop -- $nb" >/dev/null 2>&1 || true
 rm -f "$H/.local/state/ergon/bundle-ledger"
 # Configs the Framework profile used to write, from runs before they became
 # capabilities. They carry no marker, so ergon-hardware rightly never removes

@@ -329,7 +329,7 @@ if [ "$CHECK" != 1 ]; then
 fi
 
 if [ "$CHECK" != 1 ]; then
-  "$ERGON/bin/pyfleet" ensure || warn "the base python did not build"
+  "$ERGON/bin/pyfleet" ensure || warn "the base python did not build, or lacks something packages/python lists"
   # The themed configs used to be checked here and warned about. They are
   # rendered outright now, up in the graphical branch and before anything is
   # linked -- which is the only ordering that works, since what they are stale
