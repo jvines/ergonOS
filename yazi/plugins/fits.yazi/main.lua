@@ -39,7 +39,10 @@ function M:seek() end
 
 function M:preload(job)
 	local cache = ya.file_cache(job)
-	if not cache or fs.stat(cache) then
+	-- fs.cha, not fs.stat -- yazi has no fs.stat (ERGON-62 review: calling it
+	-- raised "attempt to call a nil value (field 'stat')" on every hover,
+	-- reproduced in a real yazi 26.9.1 pty). magick.lua uses fs.cha too.
+	if not cache or fs.cha(cache) then
 		return true
 	end
 

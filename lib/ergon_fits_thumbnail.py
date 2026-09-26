@@ -17,9 +17,15 @@ quick-look astronomical frame, ds9's own default is grey for the same
 reason -- a diverging map invents a warm/cool reading a pixel value does
 not have, and washes out the faint end a thumbnail is for judging.
 
-Opened with memmap=True (as ergon_peek.py does), and downsampled toward the
-output size BEFORE nanpercentile touches it, so a multi-gigapixel mosaic
-pages in only what a thumbnail needs rather than loading fully into RAM.
+Opened without pinning memmap (unlike ergon_peek.py): astropy only enforces
+its strict "refuse a memory-mapped scaled image" rule when memmap is passed
+explicitly, and BZERO/BSCALE is the ordinary layout for a raw-CCD uint16
+frame, not an edge case -- ERGON-62 review measured `memmap=True` refusing
+one with "Set memmap=False" (main.lua then turns that non-zero exit into the
+misleading "No image HDU to preview"). Leaving it unset still avoids loading
+a plain unscaled mosaic fully into RAM (measured: ~530 MB peak RSS for a 1 GB
+unscaled frame, the same order as with memmap=True pinned), because the
+downsample below still happens before nanpercentile touches it.
 """
 from __future__ import annotations
 
@@ -55,7 +61,7 @@ def _downsample(data: np.ndarray, target: int) -> np.ndarray:
 def render(fits_path: str, out_path: str, size: int = 512) -> None:
     from astropy.io import fits
 
-    with fits.open(fits_path, memmap=True) as hdul:
+    with fits.open(fits_path) as hdul:
         hdu = _first_image_hdu(hdul)
         if hdu is None:
             die(f"{fits_path}: no image HDU (table-only FITS, nothing to thumbnail)")
@@ -82,7 +88,11 @@ def render(fits_path: str, out_path: str, size: int = 512) -> None:
     ax.axis("off")
     # origin="lower": FITS pixel (1,1) is the bottom-left corner, same as ds9.
     ax.imshow(data, cmap="gray", vmin=lo, vmax=hi, origin="lower", interpolation="nearest")
-    fig.savefig(out_path, dpi=dpi)
+    # format="png" pins the encoding AND stops matplotlib appending ".png" to
+    # a bare filename (it only does that when format is left None) -- yazi's
+    # cache key has no extension, and ERGON-62 review measured the plugin
+    # silently writing "<cache>.png" next to the path yazi actually reads.
+    fig.savefig(out_path, dpi=dpi, format="png")
     plt.close(fig)
 
 
