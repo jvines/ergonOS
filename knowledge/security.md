@@ -43,6 +43,36 @@ login, not a live `/etc/group` lookup -- coreutils says so in its own
 would otherwise have doctor echo its own stale answer back at it: "not in the
 group," on a machine where a fresh process already has it.
 
+## sudo is full and password-gated; faillock is what happens when you fail it
+
+`%wheel ALL=(ALL:ALL) ALL` -- wheel, which on a single-user laptop is you, can
+run anything as root. There is no NOPASSWD anywhere on a real install; the
+only place that string appears in this repo is `test/arch-vm/*`, writing it
+inside a disposable VM harness so a scripted test run needs no one to type a
+password into a pipe. Shipping that line to a real machine would be the exact
+mistake this paragraph exists to make someone notice.
+
+Provisioning does not touch `timestamp_timeout`, so it is not asked every
+single time either: Arch's own sudo default caches a success for five minutes
+per tty (`sudo -V` on a fresh install reports it), not a password on every
+invocation. That is the same trade the docker group above makes, just
+narrower and time-boxed -- for five minutes after you type the password,
+anything running on that terminal, a coding agent or a build script included,
+has root through sudo the same way it would through the docker socket.
+
+Arch's own default for the gate behind that password -- `pam_faillock`,
+`deny = 3`, `unlock_time = 600` -- is tuned for a login shared by people who
+might be guessing, and on a single-user laptop it mostly locks out the one
+person who is allowed to be there: three mistyped characters during a
+debugging session, or cold hands at an observatory at 3am, cost ten minutes on
+a machine that already demanded a LUKS passphrase once to get this far.
+Provisioning writes `/etc/security/faillock.conf` with `deny = 10`,
+`unlock_time = 120`, `fail_interval = 900` -- still bounded against someone
+sitting at an unlocked, logged-out session, which is the only threat this
+control actually addresses here, without being the thing that locks you out
+of your own laptop. `faillock --user <name> --reset` clears a lockout that
+still happens; see `ergon explain troubleshooting`.
+
 ## Inbound is dropped, and Docker publishes to localhost
 
 This laptop joins conference and observatory Wi-Fi, where every other host on
@@ -149,6 +179,30 @@ stop there: the unit is still *active* after someone types
 `nft flush ruleset` while debugging -- and a `firewall` row that read a failed
 `nft list` as "I am not root" reported ok, to root, on a machine with an empty
 ruleset. An active unit with no `inet ergon` table is now a hard failure.
+
+## What LUKS actually protects, and the keyfile that doesn't weaken it
+
+Full-disk encryption answers a stolen or lost laptop, not a process already
+running on it: `cryptsetup open` at boot is the last question this machine
+asks about the disk, so a compromised session or a malicious extension already
+have everything the passphrase would otherwise hide. What stays protected is
+exactly the powered-off case -- the bag left on a train, the laptop lifted at
+an observatory.
+
+The passphrase is typed once, at GRUB, not twice. `/boot` lives *inside* the
+LUKS2 volume rather than on the unencrypted ESP, which is what lets GRUB boot a
+rollback snapshot's own kernel instead of whatever the live system currently
+has -- `ergon rollback`'s entire reason to exist -- and it means GRUB itself
+must decrypt the volume to read a kernel at all. The initramfs GRUB then hands
+off to would need to decrypt that same volume again, prompting a second long
+passphrase on every boot and every hibernate resume. `arch-bootstrap.sh` adds a second key
+instead: a random keyfile (`/etc/cryptsetup-keys.d/cryptroot.key`) embedded in
+the initramfs image, which `systemd-cryptsetup` finds automatically. That is
+not a weaker unlock left somewhere less protected -- the initramfs is itself
+inside the encrypted volume, so the keyfile is encrypted at rest along with
+the kernel and everything else. An attacker holding the powered-off disk still
+has neither key; the shortcut only removes a SECOND prompt for a volume that
+was already unlocked once, this boot, by the real passphrase.
 
 ## TRIM passes through the disk encryption
 
