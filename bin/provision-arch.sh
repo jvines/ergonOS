@@ -130,20 +130,20 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   ergon_txn_wrap ergon-provision provisioning "package install"
   # ERGON-35: from the Arch `ergon update` holds the machine at, and pacman.conf
   # is pointed there only here, beside the -Syu that syncs against it -- a run
-  # with nothing to install leaves both alone (lib/archive-pin.sh). -Syyu when
-  # the list moved, for the reason ergon-update gives.
+  # with nothing to install leaves both alone (lib/archive-pin.sh). -Syyu until
+  # a sync against the list has gone through, for the reason ergon-update
+  # gives; recorded only once this whole command has, so a failed one is forced
+  # again by whichever of the two syncs next.
   if PIN=$(ergon_tested_date); then
     ok "installing from Arch as of $PIN, the day the VM suite last passed"
   else
     PIN=""; warn "no usable packages/tested-date — installing from live mirrors, which no VM run has tested"
   fi
-  _sync=-Syu; _rc=0; ergon_pin_apply "$PIN" || _rc=$?
-  case "$_rc" in
-    0) _sync=-Syyu ;;
-    1) ;;
-    *) warn "could not point pacman at $ERGON_PIN_LIST"; exit 1 ;;
-  esac
+  _rc=0; ergon_pin_apply "$PIN" || _rc=$?
+  [ "$_rc" -lt 2 ] || { warn "could not point pacman at $ERGON_PIN_LIST"; exit 1; }
+  _sync=-Syu; ! ergon_pin_owed || _sync=-Syyu
   sudo "${ERGON_TXN[@]}" pacman "$_sync" --needed --noconfirm "${PKGS[@]}"
+  [ "$_sync" = -Syu ] || sudo bash -c "$(ergon_pin_synced_cmd)"
   ok "${#PKGS[@]} packages"
 else
   ok "${#PKGS[@]} packages already installed; nothing to upgrade here (use: ergon update)"

@@ -28,9 +28,10 @@
 # nor a Ctrl-C there leaving a fetch running behind the run. And ERGON-35: the
 # list written from packages/tested-date before the sync, pacman.conf pointed
 # at it once and then left alone, a moved list forcing -Syy even with nothing
-# pending, --check moving nothing, --latest and back, a missing or unreadable
-# day falling back to live mirrors rather than refusing, and doctor's arch-date
-# row over the files those runs left.
+# pending, and again on the run after that sync failed, --check moving
+# nothing, --latest and back, a missing or unreadable day falling back to live
+# mirrors rather than refusing, and doctor's arch-date row over the files those
+# runs left, and over installed packages newer than the day.
 #
 # DOES NOT COVER: a real pacman transaction, real logind, real firmware, or the
 # real AUR (bin/test-aur.sh covers what ergon-aur --outdated makes of a reply).
@@ -138,6 +139,7 @@ case "$1" in
   -S)  exit "${STUB_KEYRING_FAIL:-0}" ;;
   -Su) exit "${STUB_PACMAN_FAIL:-0}" ;;
   -Rns) cat >> "$TEST_ROOT/log/removed" ;;
+  -Sl) [ -z "${STUB_SL:-}" ] || printf '%s\n' "$STUB_SL" ;;
   *) echo "unexpected pacman $*" >> "$TEST_ROOT/log/violations"; exit 1 ;;
 esac
 EOF
@@ -199,6 +201,13 @@ EOF
 cat > "$T/stub/findmnt" <<'EOF'
 #!/usr/bin/env bash
 echo "${STUB_FSTYPE:-ext4}"
+EOF
+# For doctor's count of packages newer than the day. sort -V orders the
+# fixture's versions the way vercmp does; it is not vercmp.
+cat > "$T/stub/vercmp" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" != "$2" ] || { echo 0; exit; }
+[ "$(printf '%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ] && echo -1 || echo 1
 EOF
 for s in paccache fwupdmgr; do
   cat > "$T/stub/$s" <<EOF
@@ -490,11 +499,20 @@ check "--check with a newer tested day writes nothing" hasx "$LIST" "$(server "$
 check "  and says a real run moves pacman first" has "$T/out" "a real run moves it first"
 check "doctor counts the days the machine is behind the tested day" \
   hasre <(doctor) '"state":"warn".*2 day\(s\) behind the tested'
-update -- --yes
+update STUB_SYNC_FAIL=1 -- --yes
 check "a plain update moves the list to it" hasx "$LIST" "$(server "$NEWER")"
 check "  forcing the sync" hasx "$L/pacman" "-Syy --noconfirm"
-check "  and doctor calls the machine held there, and says how old the day is" \
+check "  which failed: doctor says the databases may be another day's" \
+  hasre <(doctor) '"state":"warn".*no sync against it has gone through'
+update -- --yes
+check "  and the re-run forces it again, though the list no longer moves" hasx "$L/pacman" "-Syy --noconfirm"
+check "  after which doctor calls the machine held there, and says how old the day is" \
   hasre <(doctor) '"state":"ok".*Arch '"$NEWER"'.*1 day\(s\) of Arch since'
+check "  unless something installed is newer than that day's, which doctor counts" \
+  hasre <(STUB_SL="core bash 5.3.15-1 [installed: 5.3.20-1]
+core zsh 5.9-5 [installed]
+extra vim 9.1.2-1 [installed: 9.1.0-1]
+extra git 2.51.1-1 [installed: 2.51.0-1]" doctor) '"state":"warn".*but 1 installed package\(s\) are newer'
 update -- --yes --latest
 check "--latest reads live mirrors" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
 check "  forcing the sync" hasx "$L/pacman" "-Syy --noconfirm"
@@ -517,9 +535,13 @@ date -u -d '20 days ago' +%F > "$T/ergon/packages/tested-date"
 update -- --yes
 check "a tested day three weeks old: doctor says security fixes are that far behind" \
   hasre <(doctor) '"state":"warn".*in 20 days: security fixes'
+check "  unless the bound is lifted, as the VM guest does for a disk kept with --keep" \
+  hasre <(ERGON_PIN_STALE_DAYS=100000 doctor) '"state":"ok".*Arch .*20 day\(s\) of Arch since'
 cp "$T/stock.conf" "$S/etc/pacman.conf"
 check "a pacman.conf that does not read the list pins nothing, and doctor says so" \
   hasre <(doctor) '"state":"warn".*pacman.conf does not read'
+update -- --yes
+check "  pointing it back at the list forces a sync too, though the list itself stayed" hasx "$L/pacman" "-Syy --noconfirm"
 
 echo
 check "no stub saw a command it did not expect" test ! -e "$L/violations"

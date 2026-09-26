@@ -280,7 +280,10 @@ else
     bad "  but these are not $ERGON_ARCHIVE_DATE's, so part of the system came from another day:"
     printf '%s\n' "$_newer" | head -5 | sed 's/^/     /'
   fi
-  _pin_row=$(doctor_row arch-date su - "$U" -c "ERGON_ARCHIVE_DATE=$ERGON_ARCHIVE_DATE $G/bin/ergon-doctor --json")
+  # ok also says provisioning recorded its -Syyu as gone through. The staleness
+  # warning is switched off: a disk kept with --keep is provisioned from the
+  # day it was installed, however long ago that was.
+  _pin_row=$(doctor_row arch-date su - "$U" -c "ERGON_PIN_STALE_DAYS=100000 ERGON_ARCHIVE_DATE=$ERGON_ARCHIVE_DATE $G/bin/ergon-doctor --json")
   case "$_pin_row" in
     *'"state":"ok"'*"Arch $ERGON_ARCHIVE_DATE"*) ok "  and ergon doctor reads the same day off this pacman.conf" ;;
     *) bad "  ergon doctor does not report the day pacman is held at: ${_pin_row:-no arch-date row}" ;;

@@ -11,16 +11,25 @@
 # exists to prevent.
 #
 # The list and the sync databases move TOGETHER, only ever right before a sync,
-# and a sync after the list moved is -Syy: pacman keeps a database newer than
-# its server's (measured, see ergon-update). A list pointed at another day than
-# the databases asks for files that day never had: synced at 2026-09-25,
-# core/linux was 7.2.6, and a live mirror 404'd on it the next morning.
+# and every sync is -Syy until one against the list has gone through: pacman
+# keeps a database newer than its server's (measured, see ergon-update). A list
+# pointed at another day than the databases asks for files that day never had:
+# synced at 2026-09-25, core/linux was 7.2.6, and a live mirror 404'd on it the
+# next morning.
 #
 # archive.archlinux.org is the only server; the *.archive.pkgbuild.com names do
 # not resolve (2026-09-26). It served 3-5 MB/s here, as fast as the geo mirror.
 # Down, the sync fails, and ergon update says nothing was upgraded.
 ERGON_ARCHIVE_URL=https://archive.archlinux.org/repos
 ERGON_PIN_LIST=/etc/pacman.d/ergon-mirrorlist
+# A copy of the list, made only once a sync against it went through. The list
+# alone cannot say that: it is written BEFORE the sync, and one that fails or is
+# interrupted leaves it moved and the databases where they were. On a first pin
+# those are newer, a later -Sy keeps them, and -Su installed from them under a
+# list reading 2026-09-10 (bash 5.3.15 -> 5.3.20, systemd 261.3 -> 262,
+# measured): the archive serves a newer file under an older day's path, so not
+# even a download fails. Apply removes it before it moves anything.
+ERGON_PIN_SYNCED=/var/lib/ergon/pin-synced
 
 # YYYY-MM-DD from ERGON_ARCHIVE_DATE (the VM harness, which picks its own
 # date), else packages/tested-date. Fails on anything that is not a real day up
@@ -80,19 +89,34 @@ ergon_pin_held() {
 }
 
 # Write the list, then point pacman.conf at it, so pacman.conf never names a
-# list that is not there. 0 when either changed -- a sync is owed then, even
-# with nothing to upgrade; 1 when both already said so; 2 when a write failed.
-# A pacman.conf that could not be read writes nothing at all.
+# list that is not there. 0 when either changed; 1 when both already said so;
+# 2 when a write failed. A pacman.conf that could not be read writes nothing at
+# all. Whether a sync is owed is ergon_pin_owed's, not this: a run that moved
+# nothing can still owe the one an earlier run failed to finish.
 ergon_pin_apply() {  # [date]
   local r=${ERGON_SYSROOT:-} t rc=1
   t=$(mktemp -d) || return 2
   ergon_pin_list "${1:-}" > "$t/list"
   ergon_pin_conf < "$r/etc/pacman.conf" > "$t/conf" 2>/dev/null
   [ -s "$t/conf" ] || rc=2
+  [ "$rc" = 2 ] || { cmp -s "$t/list" "$r$ERGON_PIN_LIST" && cmp -s "$t/conf" "$r/etc/pacman.conf"; } \
+    || sudo rm -f "$r$ERGON_PIN_SYNCED" || rc=2
   [ "$rc" = 2 ] || cmp -s "$t/list" "$r$ERGON_PIN_LIST" \
     || { sudo install -Dm644 "$t/list" "$r$ERGON_PIN_LIST" && rc=0 || rc=2; }
   [ "$rc" = 2 ] || cmp -s "$t/conf" "$r/etc/pacman.conf" \
     || { sudo install -Dm644 "$t/conf" "$r/etc/pacman.conf" && rc=0 || rc=2; }
   rm -rf "$t"
   return "$rc"
+}
+
+# 0 while the databases are not known to be the list's: the next sync is -Syy,
+# and it is owed even with nothing to upgrade.
+ergon_pin_owed() {
+  ! cmp -s "${ERGON_SYSROOT:-}$ERGON_PIN_LIST" "${ERGON_SYSROOT:-}$ERGON_PIN_SYNCED"
+}
+
+# What root runs straight after a sync against the list went through, and never
+# otherwise.
+ergon_pin_synced_cmd() {
+  printf 'install -Dm644 %q %q' "${ERGON_SYSROOT:-}$ERGON_PIN_LIST" "${ERGON_SYSROOT:-}$ERGON_PIN_SYNCED"
 }

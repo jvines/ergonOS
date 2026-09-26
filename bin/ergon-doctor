@@ -307,10 +307,10 @@ fi
 # --- the Arch day pacman is held at ---------------------------------------------
 # ERGON-35. A report on the pin, never a substitute for it: how far behind the
 # tested day this machine is, and how old that day is -- which is the security
-# lag, since fixes after it wait for the next passing VM run. Offline, three
-# files. pacman.conf is read for whether it uses the list at all, because a
-# list nothing reads pins nothing. The lib is guarded only because test
-# fixtures elsewhere carry a partial lib/.
+# lag, since fixes after it wait for the next passing VM run. Offline: four
+# files and the local databases. pacman.conf is read for whether it uses the
+# list at all, because a list nothing reads pins nothing. The lib is guarded
+# only because test fixtures elsewhere carry a partial lib/.
 if [ -f "${ERGON_SYSROOT:-}/etc/pacman.conf" ] && [ -f "$ERGON/lib/archive-pin.sh" ]; then
   # shellcheck source=../lib/archive-pin.sh
   . "$ERGON/lib/archive-pin.sh"
@@ -327,8 +327,16 @@ if [ -f "${ERGON_SYSROOT:-}/etc/pacman.conf" ] && [ -f "$ERGON/lib/archive-pin.s
     gap=$(days "$held" "$tested")
     if [ "$gap" -gt 0 ]; then gap="$gap day(s) behind"; else gap="$(( -gap )) day(s) ahead of"; fi
     rec warn "arch-date" "pacman at Arch $held, $gap the tested $tested — ergon update moves it there"
+  elif ergon_pin_owed; then
+    rec warn "arch-date" "pacman.conf reads Arch $held, but no sync against it has gone through since it moved, so the databases may be another day's — ergon update forces one"
+  # The list is not the machine: nothing downgrades, so what --latest or a hand
+  # -Syu installed stays newer than the day, untested, under a list that names
+  # it. -Sl reads the local databases, which the check above says are the day's.
+  elif newer=$(pacman -Sl core extra 2>/dev/null | awk '$4 == "[installed:" { sub(/]$/, "", $5); print $3, $5 }' \
+         | while read -r s i; do [ "$(vercmp "$i" "$s")" -le 0 ] || echo; done | wc -l); [ "$newer" -gt 0 ]; then
+    rec warn "arch-date" "pacman at Arch $held, the tested day, but $newer installed package(s) are newer than that day's and untested; they stay until a tested day passes them"
   elif lag=$(days "$tested" "$(date -u +%F)"); [ "$lag" -gt "${ERGON_PIN_STALE_DAYS:-14}" ]; then
-    rec warn "arch-date" "pacman at Arch $held, and no newer day has passed the VM suite in $lag days: security fixes are that far behind. Is vm.yml red?"
+    rec warn "arch-date" "pacman at Arch $held, and no newer day has passed the VM suite in $lag days: security fixes are that far behind. Has 'ergon sync' brought the latest? If so, is vm.yml red?"
   else
     rec ok "arch-date" "pacman at Arch $held, the tested day; $lag day(s) of Arch since, security fixes too, wait for the next passing VM run"
   fi

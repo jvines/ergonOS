@@ -182,13 +182,16 @@ session has come up with it and its binds registered.
 
 **What it costs:** security fixes wait as well. The suite runs weekly, and on
 any push that touches the installer, so a fix is normally at most about a week
-behind; `ergon update` says how old its day is, and doctor's `arch-date` row
-warns past two weeks, when the suite has stopped passing. `ergon update
---latest` takes live mirrors now, untested, and pacman stays on them until the
-next plain `ergon update`. **What stays true:** nothing is ever downgraded --
-behind a newer machine, pacman says "local is newer" and leaves it -- and AUR
-packages keep following their own pins in `packages/aur`, built against the
-held day's libraries.
+behind -- on a machine whose checkout `ergon sync` keeps current, since the day
+arrives in it like any other file. `ergon update` says how old its day is, and
+doctor's `arch-date` row warns past two weeks, when the checkout is stale or
+the suite has stopped passing. `ergon update --latest` takes live mirrors now,
+untested, and pacman stays on them until the next plain `ergon update`, or
+provisioning that installs a package. **What stays true:** nothing is ever
+downgraded -- behind a newer machine, pacman says "local is newer" and leaves
+it, and doctor counts what is newer than the day -- and AUR packages keep
+following their own pins in `packages/aur`, built against the held day's
+libraries.
 
 ## VS Code extensions run as you, outside pacman
 
