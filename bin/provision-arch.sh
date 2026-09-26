@@ -864,6 +864,13 @@ elif [ -t 0 ]; then
   echo
   "$ERGON/bin/ergon-bundle" list
   echo
+  # ERGON-54 made marimo the base notebook and Jupyter a bundle. Someone who
+  # expects Jupyter learns that here, while choosing, and not later from
+  # `jupyter: command not found`. No package names: `ergon-bundle info
+  # notebooks` holds those, and a copy here would drift from it.
+  echo "   marimo is built in, and replaces Jupyter here. For Jupyter too, choose"
+  echo "   notebooks below, or later: ergon bundle add notebooks"
+  echo
   echo "   Which bundles? (space separated, empty for none — ergon-bundle add <name> later)"
   printf '   > '
   read -r _bundles

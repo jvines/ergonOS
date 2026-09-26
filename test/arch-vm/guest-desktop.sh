@@ -68,10 +68,13 @@ chmod 440 /etc/sudoers.d/99-harness
 # mark manual-intervention notices as read on your behalf. That guard is doing
 # its job here; this is the override it exists to provide. A HUMAN provisioning a
 # real machine should read the news instead.
-# ERGON_BUNDLES: exercise the bundle machinery for real. notebooks is the
-# cheapest one (marimo + jupytext, ~150 MB) and it goes through the whole
-# path -- meta, the python list, pyfleet add, and recording BUNDLES in
-# host.env. An untested installer feature is a feature that does not work.
+# ERGON_BUNDLES: exercise the bundle machinery for real. notebooks goes through
+# the whole path -- meta, the python list, pyfleet add, the ledger's dist-info
+# names, and recording BUNDLES in host.env. An untested installer feature is a
+# feature that does not work. Since ERGON-54 it is Jupyter rather than marimo,
+# and still the cheapest bundle with a python list: 129 MiB over the base,
+# against 443 for inference and 870 for ml (uv, 2026-09-26). r and julia are
+# pacman-only, so they would leave the python half of the ledger unexercised.
 #
 # ERGON_HARDWARE: a VM's DMI says QEMU, so no hardware profile can ever match
 # and the profile mechanism would go permanently unexercised. Forcing it is the
@@ -80,11 +83,11 @@ chmod 440 /etc/sudoers.d/99-harness
 # items, and are asserted from what this VM actually has.
 #
 # The bundle ledger records only what an install ADDED, and this disk is reused:
-# marimo is in the venv from the previous run, so it would rightly never be
-# recorded and the ledger assertion below would prove nothing. Every run starts
-# with the notebooks packages absent and no ledger. On a fresh disk pyfleet has
-# no uv yet and this does nothing.
-su - "$U" -c "$H/ergonOS/bin/pyfleet drop -- marimo jupytext" >/dev/null 2>&1 || true
+# jupyterlab is in the venv from the previous run (before ERGON-54, from the
+# base), so it would rightly never be recorded and the ledger assertion below
+# would prove nothing. Every run starts with the notebooks packages absent and
+# no ledger. On a fresh disk pyfleet has no uv yet and this does nothing.
+su - "$U" -c "$H/ergonOS/bin/pyfleet drop -- jupyterlab ipykernel ipywidgets jupytext" >/dev/null 2>&1 || true
 rm -f "$H/.local/state/ergon/bundle-ledger"
 # Configs the Framework profile used to write, from runs before they became
 # capabilities. They carry no marker, so ergon-hardware rightly never removes
@@ -149,18 +152,27 @@ else
   bad "host.env did not record the bundle — a reprovision would forget it"
   grep -n BUNDLES "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null | sed 's/^/     /'
 fi
-if su - "$U" -c "\$HOME/.local/share/pyfleet/bin/python -c 'import marimo'" >/dev/null 2>&1; then
+if su - "$U" -c "\$HOME/.local/share/pyfleet/bin/python -c 'import jupyterlab'" >/dev/null 2>&1; then
   ok "the bundle's python packages are importable in pyfleet"
 else
-  bad "marimo is not importable — the bundle installed nothing"
+  bad "jupyterlab is not importable — the bundle installed nothing"
 fi
-# The ledger reads real dist-info names (marimo-0.x.dist-info) and a real
+# The ledger reads real dist-info names (jupyterlab-4.x.dist-info) and a real
 # `pacman -Qq`. A stub cannot prove uv names them the way the ledger parses them.
-if grep -qx 'notebooks python marimo' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null; then
+if grep -qx 'notebooks python jupyterlab' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null; then
   ok "the ledger records what the notebooks bundle installed"
 else
-  bad "the ledger has no 'notebooks python marimo' — remove would uninstall nothing"
+  bad "the ledger has no 'notebooks python jupyterlab' — remove would uninstall nothing"
   sed 's/^/     /' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null | head -10
+fi
+# ERGON-54: marimo is the base notebook, so it runs with no bundle naming it --
+# the notebooks bundle above no longer lists it. services/marimo/up.sh starts
+# exactly this executable. Only a fresh disk proves the base put it there: a
+# reused one keeps marimo from runs when the bundle did.
+if su - "$U" -c "\$HOME/.local/share/pyfleet/bin/marimo --version" >/dev/null 2>&1; then
+  ok "marimo runs from the base pyfleet, with no bundle"
+else
+  bad "pyfleet has no working marimo — packages/python did not install it"
 fi
 
 # --- ERGON-21: the docker group is opt-in, not a provisioning default ------
