@@ -1320,6 +1320,24 @@ grep -qE '^bind\("SUPER \+ SHIFT \+ E".*ergon-session' "$H/.config/hypr/common/b
 grep -qE '^bind\("XF86PowerOff".*ergon-session' "$H/.config/hypr/common/binds.lua" \
   && ok "XF86PowerOff runs ergon-session" || bad "XF86PowerOff is not wired to ergon-session"
 
+# ERGON-38: the satty annotate binds and the region-record bind, by the same
+# live evidence as the session menu above. This is the one thing
+# --verify-config never checked: it parses a bind on a bad key name (a typo,
+# or a keysym Hyprland does not resolve) exactly as happily as one that
+# actually registers -- see ergon explain desktop-config.
+_annot_print=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Screenshot region, annotate" and ((.key // "") | ascii_downcase) == "print")] | .[0] // empty' 2>/dev/null)
+_annot_chord=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Screenshot region, annotate" and ((.key // "") | ascii_downcase) == "s")] | .[0] // empty' 2>/dev/null)
+_rec_region=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Record region (toggle)" and ((.key // "") | ascii_downcase) == "r")] | .[0] // empty' 2>/dev/null)
+[ -n "$_annot_print" ] \
+  && ok "hyprctl reports a live 'Screenshot region, annotate' bind on Print" \
+  || bad "no live bind on Print describes itself 'Screenshot region, annotate' -- Print may not be a keysym Hyprland resolves"
+[ -n "$_annot_chord" ] \
+  && ok "hyprctl reports a live 'Screenshot region, annotate' bind on key S (SUPER+SHIFT+ALT+S registered)" \
+  || bad "no live bind on key S describes itself 'Screenshot region, annotate' -- SUPER+SHIFT+ALT+S may not have registered"
+[ -n "$_rec_region" ] \
+  && ok "hyprctl reports a live 'Record region (toggle)' bind on key R (SUPER+SHIFT+ALT+R registered)" \
+  || bad "no live bind on key R describes itself 'Record region (toggle)' -- SUPER+SHIFT+ALT+R may not have registered"
+
 # Hibernate must appear in `ergon session --list` exactly when ergon-hardware
 # -- the one place that decision is made -- says hibernation is ready. This VM
 # is s2idle-only with working hibernation (see the lid assertions above), so

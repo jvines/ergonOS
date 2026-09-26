@@ -90,6 +90,12 @@ jobs:
       - name: CLI --help never runs a command, and ergon new writes JSON
         run: cd "$CI_DIR" && ./bin/test-cli.sh
 
+      # ERGON-38: --audio desktop/mic reach wf-recorder as the right PulseAudio
+      # special name, and --audio both refuses instead of silently recording
+      # only one side. Stubs wf-recorder, notify-send and slurp.
+      - name: Record's --audio argument handling
+        run: cd "$CI_DIR" && ./bin/test-record.sh
+
       # ERGON-15: the first-login welcome is the real commands' output, opens
       # once, never burns its one shot on a window that did not appear, and
       # cannot hold up the login. Stubs the terminal, glow and hyprctl.

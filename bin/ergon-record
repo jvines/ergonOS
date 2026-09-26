@@ -1,33 +1,140 @@
 #!/usr/bin/env bash
 # ergon:summary=Start or stop a screen recording
 # ergon:group=capture
-# ergon:args=[region]
+# ergon:args=[region] [--audio desktop|mic|both]
 #
 # Toggle. Running it with a recording in flight stops that recording.
 #
 # pkill -x, never pkill -f: -f matches the whole command line, which includes
 # THIS script's own invocation, so `pkill -f wf-recorder` kills the toggle
 # before it can signal the recorder. -x matches the executable name only.
+#
+# --audio desktop/mic pass wf-recorder the PulseAudio SPECIAL names
+# @DEFAULT_MONITOR@ (the default sink's monitor) and @DEFAULT_SOURCE@ (the
+# mic) -- `pactl --help` documents both -- rather than a name resolved here.
+# wf-recorder hands the string straight to libpulse, which re-resolves it at
+# connect time, so this needs no pactl call of its own and cannot go stale
+# between the moment "ergon record" is pressed and the moment it is stopped.
+#
+# --audio both: wf-recorder still takes exactly one -a/--audio DEVICE (checked
+# `wf-recorder --help` and its man page again -- there is no way to give it a
+# second), so it is handed a source that already mixes both. That source is a
+# PipeWire null sink built for this recording alone: module-null-sink for the
+# sink itself, then module-loopback twice to feed the desktop monitor and the
+# mic into it. Both are pactl-emulated by pipewire-pulse
+# (docs.pipewire.org/page_pulse_module_{null_sink,loopback}.html), so this
+# needs no pw-loopback process and no module-combine-sink. The three module
+# ids land in $STATE/audio-modules so the STOP half of this toggle can unload
+# exactly what START created.
 set -euo pipefail
 
 OUT="${ERGON_RECORD_DIR:-$HOME/recordings}"
+# Where the in-flight recording's own filename lives, so the STOP half of
+# this toggle -- a separate invocation of this same script -- knows what to
+# offer opening. Runtime state, not a setting: lib/user-config.sh and
+# ergon-lint's ~/.config/ergon rule are about the user's own preferences, not
+# a pointer to a file this process is still writing.
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"
 
 if pgrep -x wf-recorder >/dev/null; then
   # SIGINT, not SIGTERM: wf-recorder finalises the container on INT and leaves
   # an unplayable file on TERM.
   pkill -INT -x wf-recorder
-  notify-send "ergon-record" "stopped — $OUT"
+  file=$(cat "$STATE/recording" 2>/dev/null || true)
+  rm -f "$STATE/recording"
+  # Tear down whatever --audio both built. Same ids START printed to this
+  # file, unloaded one at a time -- `pactl unload-module` takes exactly one
+  # NAME|#N per call, no list. `|| true` on each: under -e, a module already
+  # gone (or pactl unreachable) would otherwise abort this script before it
+  # ever reaches the notification below.
+  if [ -f "$STATE/audio-modules" ]; then
+    while read -r mod; do
+      [ -n "$mod" ] && { pactl unload-module "$mod" 2>/dev/null || true; }
+    done < "$STATE/audio-modules"
+    rm -f "$STATE/audio-modules"
+  fi
+  if [ -n "$file" ]; then
+    # -A implies --wait, so this is backgrounded: the keybind, and a person
+    # who ran `ergon record` by hand, gets control back at once instead of
+    # blocking until the notification is clicked or expires.
+    #
+    # The action key is "default", not a name of this script's choosing:
+    # mako's own left-click binding invokes only the action keyed "default"
+    # (config.c's init_default_style / DEFAULT_ACTION_KEY, and
+    # notification.c's try_invoke_action matches that key exactly, no menu
+    # or fallback) -- mako/config.in sets no on-button-left override, and
+    # draws no buttons of its own, so "default" is the only key a click can
+    # ever reach.
+    #
+    # The chosen action reaches mpv as its OWN argv element, never through a
+    # shell string built by concatenation -- $file is a path this script
+    # built from a timestamp it also chose, but nothing downstream of here
+    # should have to re-derive that to stay safe.
+    ( action=$(notify-send -t 15000 -A "default=Open" "ergon-record" \
+                 "stopped — $(basename "$file")")
+      [ "$action" = default ] && exec mpv "$file" ) </dev/null >/dev/null 2>&1 &
+    disown
+  else
+    notify-send "ergon-record" "stopped — $OUT"
+  fi
   exit 0
 fi
 
-mkdir -p "$OUT"
+region=0
+audio=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    region) region=1 ;;
+    --audio) audio="${2:?--audio needs a value: desktop, mic or both}"; shift ;;
+    --audio=*) audio="${1#--audio=}" ;;
+    *) echo "ergon-record: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+audio_opt=()
+case "$audio" in
+  '') ;;
+  desktop) audio_opt=(--audio=@DEFAULT_MONITOR@) ;;
+  mic)     audio_opt=(--audio=@DEFAULT_SOURCE@) ;;
+  both)
+    mix=ergon-rec
+    mod_sink=$(pactl load-module module-null-sink sink_name="$mix") || {
+      echo "ergon-record: --audio both needs a PipeWire mix sink and pactl could not create one" >&2
+      exit 1
+    }
+    mod_desktop=$(pactl load-module module-loopback source=@DEFAULT_MONITOR@ sink="$mix") || {
+      pactl unload-module "$mod_sink" 2>/dev/null || true
+      echo "ergon-record: --audio both could not loop the desktop monitor into the mix sink" >&2
+      exit 1
+    }
+    mod_mic=$(pactl load-module module-loopback source=@DEFAULT_SOURCE@ sink="$mix") || {
+      pactl unload-module "$mod_desktop" 2>/dev/null || true
+      pactl unload-module "$mod_sink" 2>/dev/null || true
+      echo "ergon-record: --audio both could not loop the mic into the mix sink" >&2
+      exit 1
+    }
+    mkdir -p "$STATE"
+    # Loopbacks first, sink last: unloading the sink out from under a
+    # loopback still pointed at it is the one order worth avoiding.
+    printf '%s\n%s\n%s\n' "$mod_desktop" "$mod_mic" "$mod_sink" > "$STATE/audio-modules"
+    audio_opt=(--audio="$mix.monitor") ;;
+  *)
+    echo "ergon-record: --audio must be desktop, mic or both, not '$audio'" >&2
+    exit 2 ;;
+esac
+
+mkdir -p "$OUT" "$STATE"
 file="$OUT/$(date +%Y%m%d-%H%M%S).mp4"
+printf '%s' "$file" > "$STATE/recording"
 
 args=(-f "$file")
-if [ "${1:-}" = "region" ]; then
-  geom=$(slurp) || exit 0
+if [ "$region" = 1 ]; then
+  # Escape (slurp exits non-zero) means nothing to record, not an error.
+  geom=$(slurp) || { rm -f "$STATE/recording"; exit 0; }
   args+=(-g "$geom")
 fi
+args+=("${audio_opt[@]}")
 
 # VAAPI on the iGPU. Software encoding a 2880x1920 panel pins several cores,
 # which on this machine means competing with whatever is actually running.
@@ -35,5 +142,7 @@ if [ -e /dev/dri/renderD128 ]; then
   args+=(-c h264_vaapi -d /dev/dri/renderD128)
 fi
 
-notify-send "ergon-record" "recording → $(basename "$file")"
+msg="recording"
+[ -n "$audio" ] && msg="$msg, $audio audio"
+notify-send "ergon-record" "$msg → $(basename "$file")"
 exec wf-recorder "${args[@]}"
