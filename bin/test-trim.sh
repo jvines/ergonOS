@@ -4,13 +4,13 @@
 #   ./bin/test-trim.sh
 #
 # Seconds, no root, no VM and no device-mapper: lsblk is a stub on PATH that
-# answers for a mapper and the partition and disk under it, and
-# /dev/mapper/cryptroot exists only under ERGON_SYSROOT.
+# answers for /dev/mapper/cryptroot and for nothing else, and that path exists
+# only under ERGON_SYSROOT.
 #
-# COVERS: every state of the trim row -- a mapper passing discards, one dropping
-# them over a disk that takes them (the bug), a disk that takes none (not
-# dm-crypt's doing, so not a failure), lsblk answering nothing, and a machine
-# with no LUKS root, which gets no row at all rather than a failure.
+# COVERS: every state of the trim row -- a mapper passing discards, one showing
+# DISC-MAX 0 (the bug), lsblk answering nothing, doctor asking about any device
+# but cryptroot, and a machine with no LUKS root, which gets no row at all
+# rather than a failure.
 #
 # DOES NOT COVER: rd.luks.options=discard reaching the initramfs, provisioning's
 # refresh of a live root, or btrfs then choosing discard=async. Those need a
@@ -29,14 +29,13 @@ has()  { grep -qE -e "$2" "$1"; }
 mkdir -p "$T/stub" "$T/ergon/lib" "$T/sysroot/dev/mapper" "$T/home"
 # ergon-doctor sources this unconditionally, so the fixture has to carry it.
 cp "$REPO/lib/provision-inputs.sh" "$T/ergon/lib/"
-# The two questions doctor asks, in bytes: the mapper alone, and the mapper with
-# what is under it, in the order lsblk -r prints them (measured).
+# The one question doctor asks, in bytes. Any other device gets what real lsblk
+# says about a path that is no block device (util-linux 2.41, measured), so a
+# doctor asking about the wrong one turns every verdict below into a warning.
 cat > "$T/stub/lsblk" <<'EOF'
 #!/usr/bin/env bash
-case " $* " in
-  *" -bdnD "*)  printf '%s\n' "${STUB_MAPPER-0}" ;;
-  *" -bnrsD "*) printf 'cryptroot %s\nnvme0n1p2 %s\nnvme0n1 %s\n' "${STUB_MAPPER-0}" "${STUB_DISK-2199023255040}" "${STUB_DISK-2199023255040}" ;;
-esac
+[ "${!#}" = /dev/mapper/cryptroot ] || { echo "lsblk: ${!#}: not a block device" >&2; exit 32; }
+case " $* " in *" -bdnD "*) printf '%s\n' "${STUB_MAPPER-0}" ;; esac
 EOF
 # Nothing else doctor asks may touch this machine: no root, and every unit
 # question answered yes so no unrelated row can fail this suite.
@@ -53,12 +52,10 @@ doctor() {  # doctor <check> -> that check's JSON object
 
 check "a mapper that passes discards is ok" \
   has <(STUB_MAPPER=4294966784 doctor trim) '"state":"ok".*passes discards'
-check "a mapper dropping them over a disk that takes them is a failure" \
+check "a mapper showing DISC-MAX 0 is a failure" \
   has <(STUB_MAPPER=0 doctor trim) '"state":"fail"'
-check "  naming what is never trimmed, and the fix" \
-  has <(STUB_MAPPER=0 doctor trim) 'nvme0n1p2 is never trimmed.*provision-arch'
-check "a disk that takes no discards itself is not dm-crypt's failure" \
-  has <(STUB_MAPPER=0 STUB_DISK=0 doctor trim) '"state":"ok".*takes no discards'
+check "  naming the fix" \
+  has <(STUB_MAPPER=0 doctor trim) 'never trimmed.*provision-arch'
 check "lsblk answering nothing is a warning, not a verdict either way" \
   has <(STUB_MAPPER='' doctor trim) '"state":"warn"'
 rm -f "$T/sysroot/dev/mapper/cryptroot"

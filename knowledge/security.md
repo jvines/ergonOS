@@ -160,8 +160,8 @@ New installs boot with `rd.luks.options=discard`. Provisioning also writes
 unlocked with the boot keyfile, so it never prompts), which reaches machines
 installed before that and every later opener, the rescue ISO included.
 `fstrim.timer` runs weekly on top. There is no knob: provisioning puts the flag
-back if it is removed. `ergon doctor`'s `trim` row fails when the mapper drops
-discards over a disk that takes them.
+back if it is removed. `ergon doctor`'s `trim` row fails when the mapper shows
+DISC-MAX 0 -- over a disk that takes no discards at all, too.
 
 ## VS Code extensions run as you, outside pacman
 

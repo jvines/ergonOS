@@ -122,9 +122,10 @@ ok "disk ${DISK_GIB}G, OVMF vars writable, iso label $ISOLABEL"
 # inside it would be unmountable at the worst moment.
 #
 # discard=unmap (ERGON-34): the guest asserts TRIM gets through dm-crypt, and
-# this makes it land. virtio-blk advertises discard either way (discard=on is
-# its default in QEMU 10.0); without unmap qemu silently drops what arrives.
-# test-hypr-session.sh and test-hibernate.sh attach this same disk the same way.
+# this makes it land in the image. The virtio-blk DEVICE advertises discard
+# whatever the drive says (its own discard property defaults on, QEMU 10.0),
+# while the drive's default, discard=ignore, drops what arrives -- so no in-guest
+# assertion can tell the two apart. bin/hypr-vm keeps that default; harmless.
 # shellcheck disable=SC2329  # invoked via $(qemu_args) inside a heredoc
 qemu_args() {
   cat <<ARGS
