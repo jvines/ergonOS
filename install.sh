@@ -144,33 +144,53 @@ else
   # ds9's own .desktop (its AUR package) registers only image/x-fits, an
   # ALIAS -- and on Hyprland `xdg-open` runs DE-less (no XDG_CURRENT_DESKTOP
   # xdg-utils recognises), so `xdg-mime query default` reads mimeapps.list
-  # literally and never resolves an alias to it. Proved end to end in a
-  # container: a real FITS file reports image/fits or application/fits
-  # depending on whether the image is the primary HDU or an extension, and
-  # neither found ds9 without this. topcat already lists application/fits
-  # directly; its jar was inspected too and bundles a real Parquet reader
-  # (uk.ac.starlink.parquet) but no HDF5 or NumPy one, so those get no
-  # default because nothing installed by any bundle opens them.
+  # literally and never resolves an alias to it. image/fits is what file(1)
+  # reports for a plain primary-HDU image (measured), so that is the only key
+  # set for ds9.
+  #
+  # application/fits is deliberately NOT keyed to ds9: file(1) reports it for
+  # both a table-only FITS (a light curve, a catalogue) and an image sitting
+  # in an extension with an empty primary HDU -- one mime, two right answers
+  # -- so a blanket default here sent a table-only file to ds9 instead of
+  # topcat (ERGON-62 review, reproduced in a container). topcat's own
+  # .desktop already lists application/fits directly, so it resolves there
+  # without an override; an extension-image FITS needs a content-aware
+  # opener, which is beyond this card. Its jar was inspected too and bundles
+  # a real Parquet reader (uk.ac.starlink.parquet) but no HDF5 or NumPy one,
+  # so those get no default because nothing installed by any bundle opens
+  # them.
   #
   # An idempotent key-set, not a symlink: mimeapps.list is user-editable the
-  # same way btop.conf is. A stale entry naming a since-removed app degrades
-  # on its own -- confirmed the same way, that xdg-open skips a Default
-  # Applications line whose .desktop or Exec cannot be found.
+  # same way btop.conf is -- but unlike btop.conf, the key here can be the
+  # USER's own choice, and Added/Removed Associations are separate sections a
+  # naive `sed "s|^$1=|"` also matched (ERGON-62 review, reproduced: it
+  # rewrote a stale Added Associations line and injected our key into Removed
+  # Associations too). _mimedefault below is scoped to [Default Applications]
+  # by awk and only writes a key that section does not already have, so a
+  # user's pick -- or last run's -- survives the next provisioning run. A
+  # stale entry naming a since-removed app still degrades on its own --
+  # confirmed the same way, that xdg-open skips a Default Applications line
+  # whose .desktop or Exec cannot be found.
   if [ "$CHECK" != 1 ]; then
     MIMEAPPS="$HOME/.config/mimeapps.list"
     mkdir -p "$(dirname "$MIMEAPPS")"
-    grep -q '^\[Default Applications\]' "$MIMEAPPS" 2>/dev/null \
-      || printf '[Default Applications]\n' >> "$MIMEAPPS"
+    [ -f "$MIMEAPPS" ] || : > "$MIMEAPPS"
     _mimedefault() {  # _mimedefault <mimetype> <desktop-file>
-      grep -q "^$1=" "$MIMEAPPS" \
-        && sed -i "s|^$1=.*|$1=$2;|" "$MIMEAPPS" \
-        || sed -i "/^\[Default Applications\]/a $1=$2;" "$MIMEAPPS"
+      awk -v key="$1" -v val="$2" '
+        BEGIN { insec = 0; has = 0; done = 0 }
+        /^\[Default Applications\]/ { insec = 1; has = 1; print; next }
+        /^\[/ { if (insec && !done) { print key "=" val ";"; done = 1 }; insec = 0; print; next }
+        { if (insec && $0 ~ "^" key "=") done = 1; print }
+        END {
+          if (insec && !done) print key "=" val ";"
+          else if (!has) { print "[Default Applications]"; print key "=" val ";" }
+        }
+      ' "$MIMEAPPS" > "$MIMEAPPS.new" && mv "$MIMEAPPS.new" "$MIMEAPPS"
     }
     _mimedefault image/fits ds9.desktop
-    _mimedefault application/fits ds9.desktop
     _mimedefault application/vnd.apache.parquet topcat.desktop
     unset -f _mimedefault
-    ok "mimeapps.list: fits -> ds9, parquet -> topcat (ignored where not installed)"
+    ok "mimeapps.list: image/fits -> ds9, parquet -> topcat (ignored where not installed)"
   fi
 
   # bat's theme has to be COMPILED into its cache before it is selectable, so
