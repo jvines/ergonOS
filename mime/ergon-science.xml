@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ERGON-62: shared-mime-info (2.5.1, base closure) already fully defines
+     application/fits, application/vnd.apache.parquet and application/x-hdf
+     (*.hdf/*.hdf4/*.hdf5), confirmed by grepping its freedesktop.org.xml.
+     Redefining any under a second name would give `xdg-mime query filetype`
+     two answers for one file, worse than the blob this fixes. The one real
+     gap, found the same way, is NumPy's formats.
+
+     application/x-numpy-data matches the name `file`(1)'s libmagic ALREADY
+     reports for a real .npy; shared-mime-info just had no glob for it.
+     .npz is a genuine zip (numpy.savez) needing no magic of its own, only a
+     glob, the same sub-class-of pattern shared-mime-info uses for .docx,
+     .epub and every other zip-container format. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-numpy-data">
+    <comment>NumPy array</comment>
+    <magic priority="50">
+      <match type="string" value="\x93NUMPY" offset="0"/>
+    </magic>
+    <glob pattern="*.npy"/>
+  </mime-type>
+  <mime-type type="application/x-numpy-npz">
+    <comment>NumPy archive</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.npz"/>
+  </mime-type>
+</mime-info>

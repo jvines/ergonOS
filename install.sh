@@ -129,6 +129,50 @@ else
   link lazygit    .config/lazygit
   link lazydocker .config/lazydocker
 
+  # ERGON-62: shared-mime-info already fully defines application/fits,
+  # application/vnd.apache.parquet and application/x-hdf (*.hdf5), checked by
+  # grepping it in ergon64-closure -- redefining any under a second name
+  # would give `xdg-mime query filetype` two answers, worse than the blob
+  # this fixes. The one real gap is NumPy's formats, user-level, no root.
+  link mime/ergon-science.xml .local/share/mime/packages/ergon-science.xml
+  if [ "$CHECK" != 1 ] && command -v update-mime-database >/dev/null 2>&1; then
+    update-mime-database "$HOME/.local/share/mime" >/dev/null \
+      && ok "mime database updated (npy/npz)" \
+      || warn "update-mime-database failed -- npy/npz stay unknown blobs"
+  fi
+
+  # ds9's own .desktop (its AUR package) registers only image/x-fits, an
+  # ALIAS -- and on Hyprland `xdg-open` runs DE-less (no XDG_CURRENT_DESKTOP
+  # xdg-utils recognises), so `xdg-mime query default` reads mimeapps.list
+  # literally and never resolves an alias to it. Proved end to end in a
+  # container: a real FITS file reports image/fits or application/fits
+  # depending on whether the image is the primary HDU or an extension, and
+  # neither found ds9 without this. topcat already lists application/fits
+  # directly; its jar was inspected too and bundles a real Parquet reader
+  # (uk.ac.starlink.parquet) but no HDF5 or NumPy one, so those get no
+  # default because nothing installed by any bundle opens them.
+  #
+  # An idempotent key-set, not a symlink: mimeapps.list is user-editable the
+  # same way btop.conf is. A stale entry naming a since-removed app degrades
+  # on its own -- confirmed the same way, that xdg-open skips a Default
+  # Applications line whose .desktop or Exec cannot be found.
+  if [ "$CHECK" != 1 ]; then
+    MIMEAPPS="$HOME/.config/mimeapps.list"
+    mkdir -p "$(dirname "$MIMEAPPS")"
+    grep -q '^\[Default Applications\]' "$MIMEAPPS" 2>/dev/null \
+      || printf '[Default Applications]\n' >> "$MIMEAPPS"
+    _mimedefault() {  # _mimedefault <mimetype> <desktop-file>
+      grep -q "^$1=" "$MIMEAPPS" \
+        && sed -i "s|^$1=.*|$1=$2;|" "$MIMEAPPS" \
+        || sed -i "/^\[Default Applications\]/a $1=$2;" "$MIMEAPPS"
+    }
+    _mimedefault image/fits ds9.desktop
+    _mimedefault application/fits ds9.desktop
+    _mimedefault application/vnd.apache.parquet topcat.desktop
+    unset -f _mimedefault
+    ok "mimeapps.list: fits -> ds9, parquet -> topcat (ignored where not installed)"
+  fi
+
   # bat's theme has to be COMPILED into its cache before it is selectable, so
   # the directory is linked and the cache rebuilt below. delta reads the same
   # theme, which is why every git diff and every lazygit hunk follows from this

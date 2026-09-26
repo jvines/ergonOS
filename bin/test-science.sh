@@ -58,8 +58,10 @@ trap 'rm -rf "$T"' EXIT
 export MPLCONFIGDIR="$T/mpl"
 
 echo "== lib/, under uv"
+# ERGON-62: astropy joins the gate's own venv -- it is already in
+# packages/python (base pyfleet) for astropy.units, not a new dependency.
 run=$(cd "$REPO" && "$UV" run --quiet --no-project \
-        --with matplotlib --with pytest \
+        --with matplotlib --with pytest --with astropy \
         python -m pytest test/science -q --no-header -p no:cacheprovider 2>&1)
 rc=$?
 
