@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Exercise ergon-hardware, ergon-battery and ergon-sleep against fake machines.
+# Exercise ergon-hardware, ergon-battery, ergon-sleep and ergon-display against
+# fake machines.
 #
 #   ./bin/test-hardware.sh
 #
@@ -18,11 +19,11 @@
 # /sys/class/power_supply/*/type rather than by name (excluding scope=Device
 # peripherals), energy-weighted capacity across differently sized packs, and
 # ergon-battery's low/critical notification thresholds (once per crossing,
-# only while discharging).
+# only while discharging), and what ergon-display lets into hyprctl eval.
 #
 # DOES NOT COVER: real sysfs, logind, fprintd, illuminanced or upowerd itself,
 # or an actual suspend. test-hypr-session.sh covers the lid on a VM made
-# s2idle-only.
+# s2idle-only; test/arch-vm/guest-desktop.sh mirrors onto a real output.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -328,6 +329,66 @@ check "-h exits 0" test "$rc" -eq 0
 check "  and prints its own usage" has "$T/out" "ergon:group=power"
 "$EB" bogus > "$T/out" 2>&1; rc=$?
 check "an unknown subcommand is refused, not silently ignored" test "$rc" -ne 0
+
+echo "== ergon-display: what reaches hyprctl eval, which runs it as Lua"
+# hyprctl answers from $T/mons (enabled outputs) and $T/all (mirrors too). With
+# $T/refuse, eval answers the way Hyprland answers bad Lua: "error: ...", exit 7.
+cp "$REPO/bin/ergon-display" "$E/bin/"
+cat > "$T/stub/hyprctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/hyprctl"
+case "$1 $2" in
+  "monitors -j")  cat "$TEST_ROOT/mons" ;;
+  "monitors all") cat "$TEST_ROOT/all" ;;
+  eval*) [ ! -e "$TEST_ROOT/refuse" ] || { echo "error: refused"; exit 7; }; echo ok ;;
+esac
+EOF
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TEST_ROOT/log/makoctl"\n' > "$T/stub/makoctl"
+chmod +x "$T/stub/hyprctl" "$T/stub/makoctl"
+SAVED=$T/run/ergon/display.lua
+disp() { reset_logs; HYPRLAND_INSTANCE_SIGNATURE=t XDG_RUNTIME_DIR="$T/run" "$E/bin/ergon-display" "$@" > "$T/out" 2>&1; }
+mons() { printf '%s\n' "$1" > "$T/mons"; printf '%s\n' "${2:-$1}" > "$T/all"; }
+
+# A name is Lua source once it is inside the eval, so one that closes the
+# string must never get there -- as the source or as the output mirroring it.
+for m in '[{"name":"eDP-1\"})os.execute(\"id","focused":true},{"name":"HDMI-A-1"}]' \
+         '[{"name":"eDP-1","focused":true},{"name":"HDMI-A-1\"})os.execute(\"id"}]'; do
+  mons "$m"; disp mirror; rc=$?
+  check "an output name that closes the Lua string fails the mirror (rc $rc)" test "$rc" -ne 0
+  check "  and never reaches eval" not has "$T/log/hyprctl" "os.execute"
+done
+
+mons '[{"name":"DP-2","focused":true},{"name":"eDP-1"},{"name":"HDMI-A-1"}]'
+disp mirror
+check "mirror: the laptop panel is the source even unfocused" \
+  hasx "$SAVED" 'hl.monitor({ output = "HDMI-A-1", mirror = "eDP-1" })'
+check "  and every other output mirrors it, saved for the next reload" \
+  hasx "$SAVED" 'hl.monitor({ output = "DP-2", mirror = "eDP-1" })'
+
+mons '[{"name":"eDP-1","focused":true}]' '[{"name":"eDP-1","mirrorOf":"none"},{"name":"HDMI-A-1","mirrorOf":"0"}]'
+touch "$T/refuse"; disp extend; rc=$?; rm -f "$T/refuse"
+check "extend: a refused unmirror fails (rc $rc)" test "$rc" -ne 0
+check "  and keeps the saved mirror, which is still live" has "$SAVED" '"HDMI-A-1", mirror'
+check "  and do-not-disturb" not has "$T/log/makoctl" "do-not-disturb"
+disp extend
+check "extend: every saved mirror goes, unplugged outputs' too" not has "$SAVED" "mirror ="
+check "  and do-not-disturb ends" hasx "$T/log/makoctl" "mode -r do-not-disturb"
+
+mons '[{"name":"eDP-1","focused":true},{"name":"HDMI-A-1"}]'
+touch "$T/refuse"; disp present; rc=$?; rm -f "$T/refuse"
+check "present: a refused mirror fails (rc $rc)" test "$rc" -ne 0
+check "  saves no rule and leaves notifications on" \
+  bash -c '! [ -s "$1" ] && ! [ -e "$2" ]' _ "$SAVED" "$T/log/makoctl"
+
+# The steps a mode does not divide by are skipped: Hyprland would round them.
+mons '[{"name":"DP-1","focused":true,"width":2560,"height":1440,"scale":2}]'
+disp scale +
+check "scale + on 2560x1440 goes 2 -> 4: 3 leaves a fractional pixel" \
+  hasx "$SAVED" 'hl.monitor({ output = "DP-1", scale = "4" })'
+mons '[{"name":"LVDS-1","focused":true,"width":1366,"height":768,"scale":1}]'
+disp scale +
+check "  and 1366x768 goes 1 -> 2, past 1.25 and 1.6" \
+  hasx "$SAVED" 'hl.monitor({ output = "LVDS-1", scale = "2" })'
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
