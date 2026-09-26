@@ -34,10 +34,10 @@
 # reading it.
 #
 # --check writes nothing and reports everything, gates included: it names each
-# gate a real run would stop at and carries on to the orphan, rebuild, .pacnew
-# and restart lines. It exits 1 when any gate would have stopped a real run, so
-# `ergon update --check` answers "would an update go through" by status too; 0
-# means one would, not that nothing is pending.
+# gate a real run would stop at, and prints its reports anyway. It exits 1 when
+# any gate would have stopped a real run, so `ergon update --check` answers
+# "would an update go through" by status too; 0 means one would, not that
+# nothing is pending.
 #
 # The transaction runs under `systemd-run --scope` while a
 # sleep:shutdown:handle-lid-switch inhibitor is held. There are three ways a
@@ -241,6 +241,33 @@ report_rebuild() {
   done
 }
 
+# checkrebuild answers whether a foreign package still RUNS, never whether a
+# newer one exists -- so claude-code and openai-codex-bin sat at the release of
+# the day they were built while both of doctor's AUR rows stayed green. This is
+# the one place that asks the AUR: doctor must stay offline, and an update has
+# just been on the network anyway.
+#
+# Reported, never built, --yes or not. A pin is a reviewed commit, and moving
+# it is a person reading a PKGBUILD log; an unpinned package would build
+# whatever its packager last pushed. ergon-aur prints the command for each.
+#
+# A hard bound on the WHOLE call, not only the RPC's own --max-time: a pinned
+# package also fetches its clone, and an upgrade that has already finished must
+# not sit behind an AUR that accepts the connection and then says nothing.
+# timeout signals the process group, so curl and git go with it. A timeout is
+# reported as one, never as everything being current.
+AUR_TIMEOUT="${ERGON_UPDATE_AUR_TIMEOUT:-30}"
+report_outdated() {
+  say "AUR releases"
+  local rc=0
+  timeout -k 5 "$AUR_TIMEOUT" "$ERGON/bin/ergon-aur" --outdated < /dev/null || rc=$?
+  case "$rc" in
+    0) ;;
+    124|137) warn "the AUR did not answer within ${AUR_TIMEOUT}s — nothing here says what is current. Ask again: ergon aur --outdated" ;;
+    *) warn "ask again once the AUR answers: ergon aur --outdated" ;;
+  esac
+}
+
 # .pacnew files are the quiet half of an Arch upgrade: pacman never merges a
 # config you edited, it writes the new one beside yours and moves on, so a file
 # you changed once keeps running against defaults that have moved on without it.
@@ -329,6 +356,7 @@ upgrade() {
 if [ "$CHECK_ONLY" = 1 ]; then
   report_orphans
   report_rebuild
+  report_outdated
   report_pacnew
   report_restart
   printf '\n   --check: nothing applied\n'
@@ -351,6 +379,7 @@ fi
 
 report_orphans
 report_rebuild
+report_outdated
 
 say "firmware"
 # Reported, never applied automatically. A firmware update is the one thing here

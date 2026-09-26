@@ -222,7 +222,7 @@ fi
 # works offline. Deliberately NOT a query to the AUR: doctor runs every time
 # someone is already annoyed, and a check that waits on a network is a check
 # people stop running. `ergon aur --outdated` is where the network question
-# lives.
+# lives, and `ergon update` asks it after every upgrade.
 if command -v pacman >/dev/null 2>&1; then
   mapfile -t fgn < <(pacman -Qm 2>/dev/null | awk '{print $1}')
   if [ "${#fgn[@]}" -eq 0 ]; then
