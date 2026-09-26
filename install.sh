@@ -247,16 +247,40 @@ else
   link uwsm/env-hyprland.d/ergon-keyring .config/uwsm/env-hyprland.d/ergon-keyring
 
   if [ "$CHECK" != 1 ]; then
+    # ERGON-72: `su -`/`sudo -u` (provisioning, the VM harness) open no
+    # logind session, so a bare `systemctl --user` below reached no manager
+    # and still printed ok for the reap and battery timers -- the same
+    # silent no-op ERGON-50 found and fixed for ergon-oom-notify alone. One
+    # helper for all three, on lib/user-manager.sh's own reload: it is the
+    # only thing that tells "no manager yet" (fine -- the wants symlink
+    # starts the unit at the next login) apart from a reload that reached a
+    # manager but a unit that then failed to start.
+    # shellcheck source=lib/user-manager.sh
+    . "$ERGON/lib/user-manager.sh"
+    enable_user_unit() {  # <unit> <verb: start|restart> <label>
+      local rc=0
+      ergon_user_reload || rc=$?
+      if [ "$rc" != 0 ]; then
+        ok "$3 enabled; no user manager is running, it starts at the next login"
+        return
+      fi
+      if XDG_RUNTIME_DIR="$(_ergon_user_runtime_dir)" systemctl --user "$2" "$1" >/dev/null 2>&1; then
+        ok "$3 enabled and running"
+      else
+        warn "$3 did not start -- journalctl --user -u $1"
+      fi
+    }
+  fi
+
+  if [ "$CHECK" != 1 ]; then
     mkdir -p "$HOME/.config/systemd/user"
     cp "$ERGON/systemd/ergon-reap.service" "$ERGON/systemd/ergon-reap.timer" \
        "$HOME/.config/systemd/user/" 2>/dev/null || true
-    systemctl --user daemon-reload 2>/dev/null || true
     # Enabling is a symlink; doing it directly needs no session bus, which a
     # machine being set up from a TTY does not have.
     mkdir -p "$HOME/.config/systemd/user/timers.target.wants"
     ln -sfn ../ergon-reap.timer "$HOME/.config/systemd/user/timers.target.wants/ergon-reap.timer"
-    systemctl --user start ergon-reap.timer >/dev/null 2>&1 || true
-    ok "ergon-reap.timer enabled"
+    enable_user_unit ergon-reap.timer start ergon-reap.timer
   fi
 
   # Same pattern as ergon-reap.timer above: a user timer, not a session
@@ -267,32 +291,21 @@ else
     mkdir -p "$HOME/.config/systemd/user"
     cp "$ERGON/systemd/ergon-battery.service" "$ERGON/systemd/ergon-battery.timer" \
        "$HOME/.config/systemd/user/" 2>/dev/null || true
-    systemctl --user daemon-reload 2>/dev/null || true
     mkdir -p "$HOME/.config/systemd/user/timers.target.wants"
     ln -sfn ../ergon-battery.timer "$HOME/.config/systemd/user/timers.target.wants/ergon-battery.timer"
-    systemctl --user start ergon-battery.timer >/dev/null 2>&1 || true
-    ok "ergon-battery.timer enabled"
+    enable_user_unit ergon-battery.timer start ergon-battery.timer
   fi
 
   # ERGON-50: the notification naming what oomd killed, for everything `ergon
   # watch` did not start. default.target, not graphical-session.target: only a
   # uwsm login reaches that one, and a session started any other way -- the VM
   # harness's -- would never run it. restart, not start: a follower already
-  # running keeps the old script until it is. The runtime dir as
-  # lib/user-manager.sh finds it: `su -` and `sudo -u` set none, and there a bare
-  # `systemctl --user` reached no manager and still said ok (measured).
+  # running keeps the old script until it is.
   if [ "$CHECK" != 1 ]; then
     mkdir -p "$HOME/.config/systemd/user/default.target.wants"
     cp "$ERGON/systemd/ergon-oom-notify.service" "$HOME/.config/systemd/user/" 2>/dev/null || true
     ln -sfn ../ergon-oom-notify.service "$HOME/.config/systemd/user/default.target.wants/ergon-oom-notify.service"
-    _rt=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
-    if ! XDG_RUNTIME_DIR=$_rt systemctl --user daemon-reload 2>/dev/null; then
-      ok "ergon-oom-notify.service enabled; no user manager is running, and it starts with the next"
-    elif XDG_RUNTIME_DIR=$_rt systemctl --user restart ergon-oom-notify.service >/dev/null 2>&1; then
-      ok "ergon-oom-notify.service enabled and running"
-    else
-      warn "ergon-oom-notify.service did not start -- journalctl --user -u ergon-oom-notify"
-    fi
+    enable_user_unit ergon-oom-notify.service restart ergon-oom-notify.service
   fi
 fi
 

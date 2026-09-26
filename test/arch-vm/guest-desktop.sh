@@ -2024,12 +2024,14 @@ OOMUNIT=ergon-vm-oom-probe
 usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
 # The unit is started BY the user manager, so it inherits the manager's
 # environment and not usr()'s -- and the manager has no DBUS_SESSION_BUS_ADDRESS
-# unless the session imported one. libnotify talks over GDBus, which has no
-# $XDG_RUNTIME_DIR/bus fallback, so notify-send failed to reach mako and
-# ergon-watch's `|| true` swallowed it: the kill happened, hist recorded it, and
-# the one thing the card promises -- the machine SAYING what it killed -- was
-# missing for a reason that only exists in this harness. A terminal in the real
-# session carries both.
+# unless the session imported one. libnotify talks over GDBus, which DOES fall
+# back to $XDG_RUNTIME_DIR/bus once that variable names a real directory (glib
+# 2.88, measured; this comment used to claim there was no fallback at all) --
+# notify-send still failed to reach mako here, so the gap was elsewhere in
+# what this unit inherits, and ergon-watch's `|| true` swallowed it: the kill
+# happened, hist recorded it, and the one thing the card promises -- the
+# machine SAYING what it killed -- was missing for a reason that only exists
+# in this harness. A terminal in the real session carries both.
 usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app.slice \
      --setenv=PATH='$SESSION_PATH' \
      --setenv=XDG_RUNTIME_DIR=/run/user/1000 \
