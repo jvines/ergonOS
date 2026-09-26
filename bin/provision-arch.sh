@@ -584,29 +584,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-say "graphics"
-# The Vulkan ICD is chosen from what is on the PCI bus, not assumed.
-#
-# packages/pacman carries mesa and the loader, which every machine needs; the
-# per-vendor driver is decided here so an AMD laptop does not drag in Intel and
-# Nouveau for nothing. Hyprland without an ICD still starts and renders through
-# llvmpipe, which feels broken in a way that reads as a compositor bug rather
-# than a missing package -- so this is not optional polish.
-GPUS=$(/sbin/lspci -nn 2>/dev/null | grep -iE 'vga|3d controller|display controller' || true)
-GFX=""
-printf '%s' "$GPUS" | grep -qiE 'amd|ati|radeon' && GFX="$GFX vulkan-radeon"
-printf '%s' "$GPUS" | grep -qi 'intel'            && GFX="$GFX vulkan-intel intel-media-driver"
-# NVIDIA is chosen under "hardware" below, by bin/ergon-hardware: the module
-# package depends on the card's generation and on which kernels are installed,
-# and a wrong choice is worse than none -- nvidia-utils blacklists nouveau
-# whether or not a module was built. ERGON-36.
-if [ -n "$GFX" ]; then
-  # shellcheck disable=SC2086
-  sudo pacman -S --needed --noconfirm $GFX >/dev/null && ok "graphics:$GFX" \
-    || warn "some graphics packages failed:$GFX"
-else
-  skip "no GPU recognised on the PCI bus — mesa software rendering only"
-fi
+# The Vulkan ICD (and NVIDIA's module, per ERGON-36) is chosen from what is on
+# the PCI bus, not assumed -- packages/pacman carries mesa and the loader,
+# which every machine needs regardless. That choice now lives entirely under
+# "hardware" below, in bin/ergon-hardware: it used to grep lspci's product
+# string here, and "ati" is a substring of "Corporation", so that also matched
+# "NVIDIA Corporation" and "Intel Corporation" and put vulkan-radeon on both.
+# ergon-hardware reads the PCI vendor id instead, the way it already did for
+# NVIDIA. ERGON-71.
 
 # ---------------------------------------------------------------------------
 say "hardware"

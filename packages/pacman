@@ -147,9 +147,9 @@ nfs-utils               # the NAS is an NFS share, and a restic repository is a
 
 # --- graphics ------------------------------------------------------------
 # mesa and the loader are vendor-neutral and always needed; the ICD that
-# actually drives your GPU is chosen at provision time from what is on the PCI
-# bus (see the "graphics" stage in provision-arch.sh). Listing every vendor's
-# driver here would pull Intel and Nouveau onto an AMD laptop for nothing.
+# actually drives your GPU is chosen at provision time from the PCI vendor id
+# (see bin/ergon-hardware). Listing every vendor's driver here would pull
+# Intel and Nouveau onto an AMD laptop for nothing.
 #
 # Hyprland needs a working Vulkan or GLES path. Without an ICD it starts,
 # renders through llvmpipe, and feels broken in a way that reads as a compositor
