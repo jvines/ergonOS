@@ -135,6 +135,7 @@ read_type() {  # read_type FILE -> the size on stdout, or a refusal on stderr
 type_src() { if [ -f "$TYPE_FILE" ]; then echo "$TYPE_FILE"; else echo "$ERGON/theme/type.env"; fi; }
 if [ "${1:-}" = "--text" ]; then
   [ -n "${2:-}" ] || { read_type "$(type_src)"; exit; }
+  [ "$CHECK" = 0 ] || { echo "--check only reads; it cannot set --text" >&2; exit 2; }
   # Validated as the file it would become, before it becomes it: a refused
   # size must leave the one in use alone, or every later render fails too.
   mkdir -p "$STATE"

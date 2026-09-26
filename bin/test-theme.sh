@@ -259,6 +259,8 @@ done
 check "  and none of them replaced the size in use" hasx "$T/state/ergon/type.env" "TEXT_SIZE=16"
 check "  or reached a rendered file" has "$E/foot/foot.ini" "size=16"
 check "bare --text prints the size in use" test "$(run --text 2>/dev/null)" = 16
+run --check --text 20 >/dev/null 2>&1
+check "--check --text writes no size: --check only reads" hasx "$T/state/ergon/type.env" "TEXT_SIZE=16"
 # A hand-edited file is held to the same rules.
 printf "TEXT_SIZE=16\nFONT_SIZE=12\n" > "$T/state/ergon/type.env"
 run >/dev/null 2>&1
