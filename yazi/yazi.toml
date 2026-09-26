@@ -1,0 +1,15 @@
+# Not templated like theme.toml.in: nothing here is a colour.
+#
+# ERGON-62: `file`(1) (what yazi's mime.local previewer shells out to) calls
+# a real FITS image/fits or application/fits depending on whether the image
+# is the primary HDU or an extension -- and yazi's built-in "image"
+# previewer would take image/fits anyway, but its decoder cannot read FITS
+# pixel data regardless of the mime tag. A url glob sidesteps both and
+# catches the gzipped files ESO/MAST hand out too.
+#
+# prepend_previewers merges onto yazi's built-in table; append_previewers
+# would land BEHIND the generic "file" fallback, which already matches.
+[plugin]
+prepend_previewers = [
+	{ url = "*.{fits,fit,fts,fits.gz}", run = "fits" },
+]
