@@ -32,10 +32,12 @@ GZIP_MAGIC = b"\x1f\x8b"
 EXT = {
     ".parquet": "parquet", ".pq": "parquet",
     ".csv": "csv", ".tsv": "csv", ".txt": "csv", ".dat": "csv",
-    # .fz is CFITSIO tile-compression: the compressed pixels live in a normal
-    # BINTABLE extension and the primary header is a plain SIMPLE card, so
-    # astropy reads one exactly like any other FITS file -- no decompression
-    # step, unlike .gz below.
+    # .fz (CFITSIO tile-compression) is a normal FITS file by magic -- its
+    # primary header starts with a plain SIMPLE card, so sniff() already
+    # returns "fits" from the MAGIC table above before this extension entry is
+    # ever consulted. It only fires on a misnamed or truncated file whose first
+    # 4KB doesn't contain SIMPLE (review, ERGON-58) -- it is not, itself, what
+    # lets astropy read tile-compressed data.
     ".fits": "fits", ".fit": "fits", ".fts": "fits", ".fz": "fits",
     ".h5": "hdf5", ".hdf5": "hdf5", ".he5": "hdf5",
     ".npy": "npy", ".npz": "npz",
@@ -96,9 +98,14 @@ def sniff(path: str, head: bytes) -> str:
         # now buried inside the compressed stream.
         if _gunzip_prefix(head, 6) == b"SIMPLE":
             return "fits"
-        # A first HDU bigger than one DEFLATE block can push SIMPLE past this
-        # prefix; fall back to the name ESO/MAST actually use rather than
-        # call a real FITS file "unknown".
+        # `_gunzip_prefix` returns b"" only when it cannot decompress at all --
+        # a corrupt gzip stream, not merely a truncated one: zlib's incremental
+        # decompressor still yields SIMPLE from a truncated stream, since the
+        # header cards are the first bytes out (measured against 64MB streams
+        # of zeros and of random data at gzip levels 0/1/9 -- all six sniffed
+        # correctly; review, ERGON-58). Fall back to the name ESO/MAST actually
+        # use rather than call a real FITS file "unknown" over a decompressor
+        # edge case too narrow to enumerate here.
         stem = path[:-len(".gz")] if path.lower().endswith(".gz") else path
         if os.path.splitext(stem)[1].lower() in (".fits", ".fit", ".fts"):
             return "fits"
@@ -185,7 +192,11 @@ def describe_vector_columns(arr, cols) -> None:
     over every element rather than materialising them by hand."""
     np = need("numpy")
     print("  vector columns (one array per row -- not shown in the table above)")
-    width = min(max((len(c.name) for c in cols), default=6), 28)
+    # `default=` only feeds max() when `cols` is empty -- describe_vector_columns
+    # is never called with an empty list, so it was doing nothing, and every
+    # name under 6 chars (FLUX, WAVE, IVAR) narrowed the column below the
+    # header's own width and misaligned every row under it (review, ERGON-58).
+    width = min(max(max((len(c.name) for c in cols), default=0), 6), 28)
     print(f"  {'column'.ljust(width)}  {'per-row shape'.ljust(14)}  {'dtype'.ljust(9)}  summary")
     print(f"  {'-' * width}  {'-' * 14}  {'-' * 9}  {'-' * 34}")
     for c in cols:
@@ -247,6 +258,25 @@ def describe_hdu(h, path: str) -> None:
         describe_vector_columns(arr, vector)
 
 
+def _hdu_dims(h) -> str:
+    """The layout table's dims column, from the header alone. Touching
+    `.data` here (the original code checked `h.data is not None` and read
+    `.data.shape`/`len(h.data)` for every HDU) is free on a memmapped plain
+    FITS file, but on .gz/.fz it is a real decompression of pixels nobody
+    asked to see yet -- measured on 16x2048^2 float32 image HDUs: 48MB RSS
+    through a plain .fits, 337MB through the same file gzipped, entirely from
+    this loop (review, ERGON-58). NAXIS2 and NAXIS/BITPIX are mandatory FITS
+    table/image header keywords, so this needs nothing `.data` would add."""
+    if getattr(h, "is_image", False):
+        if h.header.get("NAXIS", 0) == 0:
+            return "—"
+        bitpix = h.header.get("ZBITPIX", h.header.get("BITPIX"))
+        return f"{h.shape} bitpix {bitpix}"
+    if hasattr(h, "columns") and h.columns is not None:
+        return f"{h.header.get('NAXIS2', 0):,} rows × {len(h.columns)} cols"
+    return "—"
+
+
 def peek_fits(path: str, hdu_spec: str | None) -> None:
     fits = need("astropy.io.fits")
     size = os.path.getsize(path)
@@ -262,14 +292,25 @@ def peek_fits(path: str, hdu_spec: str | None) -> None:
             print(f"  {'-' * 2}  {'-' * 12}  {'-' * 12}  {'-' * 24}")
             for i, h in enumerate(hdul):
                 kind = type(h).__name__.replace("HDU", "")
-                if getattr(h, "is_image", False) and h.data is not None:
-                    dims = f"{h.data.shape} {h.data.dtype}"
-                elif hasattr(h, "columns") and h.columns is not None:
-                    dims = f"{len(h.data):,} rows × {len(h.columns)} cols"
-                else:
-                    dims = "—"
-                print(f"  {i:>2}  {str(h.name)[:12].ljust(12)}  {kind[:12].ljust(12)}  {dims}")
+                print(f"  {i:>2}  {str(h.name)[:12].ljust(12)}  {kind[:12].ljust(12)}  {_hdu_dims(h)}")
             print()
+
+            if gz:
+                # A GzipFile treats a truncated stream (an interrupted
+                # MAST/ESO download, say) as a clean EOF unless it is actually
+                # drained -- and the layout loop above no longer touches
+                # `.data` (previous fix), so by this point nothing has forced
+                # that read. Without this, a catalog cut off mid-transfer
+                # looked like a complete, boring, header-only file at exit 0:
+                # the card's own "silent data loss is worse than refusing",
+                # reproduced (review, ERGON-58). Reading is cheap either way
+                # once you're past the header, and this is the only way to
+                # know the pixels and rows behind it are actually all there.
+                try:
+                    while source.read(1 << 20):
+                        pass
+                except EOFError:
+                    die(f"{path}: gzip stream is truncated -- the file is incomplete")
 
             if hdu_spec is not None:
                 describe_hdu(resolve_hdu(hdul, hdu_spec), path)

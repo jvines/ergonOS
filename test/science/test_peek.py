@@ -6,13 +6,19 @@ The HDF5/netCDF branches that claimed to read them were fiction (removed under
 ERGON-59): pd.read_hdf needs PyTables and reads only pandas' own HDFStore,
 xarray was in no package list, and a netCDF-4 file never reached its branch
 because netCDF-4 IS HDF5. What replaced them has to say so without pandas --
-the refusal tests below have none, which is exactly the machine where "pandas
-is not installed" would send someone to fix the wrong thing.
+the refusal tests below block it via monkeypatch (astropy too), rather than
+rely on the surrounding suite's own env happening to lack it, which is exactly
+the machine where "pandas is not installed" would send someone to fix the
+wrong thing. bin/test-science.sh's env grew pandas and astropy for the FITS
+tests further down this file (ERGON-58); without the monkeypatch, adding them
+there would have silently disarmed this exact guard -- a review caught it
+passing against a mutant that imports pandas ahead of the refusal.
 
 COVERS: HDF5/netCDF refusal; vector FITS columns (must be described, never
-silently dropped); .fits.gz, misnamed or not; --hdu by index and by EXTNAME;
-FITS string columns (must be decoded, not printed as numpy.bytes_); image-only
-FITS (must point at fitsheader/fitsinfo rather than grow a second one).
+silently dropped); .fits.gz, misnamed, truncated, or none of those; --hdu by
+index and by EXTNAME, on a table or an image extension; FITS string columns
+(must be decoded, not printed as numpy.bytes_); image-only FITS (must point at
+fitsheader/fitsinfo rather than grow a second one).
 DOES NOT COVER: parquet/CSV/JSON/npy, which have no astronomy-specific traps.
 """
 from __future__ import annotations
@@ -34,7 +40,12 @@ import ergon_peek  # noqa: E402
     ("era5.nc", b"\x89HDF\r\n\x1a\n", "is HDF5"),    # netCDF-4
     ("old.nc", b"CDF\x01", "is netCDF"),             # classic netCDF
 ], ids=["hdf5", "netcdf4", "netcdf-classic"])
-def test_refused_by_name(tmp_path, capsys, name, magic, says):
+def test_refused_by_name(tmp_path, capsys, monkeypatch, name, magic, says):
+    # Block both regardless of what this env actually has installed -- this
+    # must prove the refusal happens before either import, not merely that it
+    # happens to on today's env (see module docstring).
+    monkeypatch.setitem(sys.modules, "pandas", None)
+    monkeypatch.setitem(sys.modules, "astropy", None)
     p = tmp_path / name
     p.write_bytes(magic + b"\0" * 64)
     with pytest.raises(SystemExit) as e:
@@ -116,6 +127,24 @@ def test_gzip_fits_is_read(tmp_path, capsys, name):
     assert "ID" in out and "RA" in out, out
 
 
+def test_truncated_gzip_fits_is_refused(tmp_path, capsys):
+    # An interrupted MAST/ESO download, modelled directly: cut a valid gzip
+    # stream in half. Before the truncation check, this read as a complete,
+    # boring, header-only file at exit 0 -- the catalog rows were gone with no
+    # word about it (review, ERGON-58; the card's own "silent data loss is
+    # worse than refusing").
+    plain = tmp_path / "plain.fits"
+    _write_fits(plain, [fits.PrimaryHDU(), _catalog_hdu(n=50)])
+    full = gzip.compress(plain.read_bytes())
+    p = tmp_path / "cut.fits.gz"
+    p.write_bytes(full[: len(full) // 2])
+    with pytest.raises(SystemExit) as e:
+        ergon_peek.main([str(p)])
+    assert e.value.code == 1
+    err = capsys.readouterr().err
+    assert "truncated" in err, err
+
+
 def test_hdu_layout_default_shows_first_table_and_names_the_rest(tmp_path, capsys):
     p = tmp_path / "multi.fits"
     _write_fits(p, [fits.PrimaryHDU(), _catalog_hdu("CAT"), _catalog_hdu("META", n=2)])
@@ -131,8 +160,27 @@ def test_hdu_flag_selects_by_name_or_index(tmp_path, capsys, spec):
     _write_fits(p, [fits.PrimaryHDU(), _catalog_hdu("CAT"), _catalog_hdu("META", n=2)])
     ergon_peek.main([str(p), "--hdu", spec])
     out = capsys.readouterr().out
-    # Both HDUs share a schema here; the row count is what tells them apart.
-    assert "2 rows" in out, out
+    # Both HDUs share a schema, so the layout table always names both and
+    # always shows "2 rows" for META regardless of what --hdu did -- that
+    # string alone passes whether or not --hdu is even parsed (review,
+    # ERGON-58: it was still true with --hdu resolved and then discarded).
+    # The description header is the only thing that says which one was
+    # actually described.
+    assert "(HDU 'META')" in out, out
+    assert "(HDU 'CAT')" not in out, out
+
+
+def test_hdu_flag_selects_image_extension(tmp_path, capsys):
+    # Left untested by the first pass (its own report said so): --hdu on an
+    # image extension that isn't the primary, e.g. a thumbnail cutout next to
+    # a catalog.
+    p = tmp_path / "mixed.fits"
+    img = fits.ImageHDU(data=np.zeros((3, 3), dtype=np.float32), name="THUMB")
+    _write_fits(p, [fits.PrimaryHDU(), _catalog_hdu("CAT"), img])
+    ergon_peek.main([str(p), "--hdu", "THUMB"])
+    out = capsys.readouterr().out
+    assert "THUMB" in out and "(3, 3)" in out, out
+    assert "fitsheader" in out and "fitsinfo" in out, out
 
 
 def test_hdu_flag_bad_name_dies(tmp_path, capsys):
