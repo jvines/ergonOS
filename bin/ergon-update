@@ -33,8 +33,9 @@
 # point is now its own deliberate --no-snapshot; unread news is cleared by
 # reading it.
 #
-# --check writes nothing and reports everything, gates included: it names each
-# gate a real run would stop at, and prints its reports anyway. It exits 1 when
+# --check changes nothing on the system (the AUR report may refresh its clones
+# under ~/.cache/aur) and gets past the gates: it names each one a real run
+# would stop at, and prints its reports anyway, all but firmware. It exits 1 when
 # any gate would have stopped a real run, so `ergon update --check` answers
 # "would an update go through" by status too; 0 means one would, not that
 # nothing is pending.
@@ -253,14 +254,28 @@ report_rebuild() {
 #
 # A hard bound on the WHOLE call, not only the RPC's own --max-time: a pinned
 # package also fetches its clone, and an upgrade that has already finished must
-# not sit behind an AUR that accepts the connection and then says nothing.
-# timeout signals the process group, so curl and git go with it. A timeout is
-# reported as one, never as everything being current.
+# not sit behind an AUR that accepts the connection and then says nothing. A
+# timeout is reported as one, never as everything being current.
+#
+# The bound is a SESSION, waited on in the background, because timeout's own
+# process-group kill was measured to miss two things. ergon-aur's `timeout 20
+# git fetch` makes a group of its own, so the fetch outlived the bound, still
+# writing into the clone the warning below says to ask about again. And a
+# timeout in its own group never sees the terminal's Ctrl-C, and bash waiting
+# on it in the foreground sat out the whole bound, then carried on to firmware
+# and exited 0. A `wait` is interrupted at once; `pkill -s` reaches every group
+# ergon-aur made, after the bound and, from the trap, after a Ctrl-C.
 AUR_TIMEOUT="${ERGON_UPDATE_AUR_TIMEOUT:-30}"
 report_outdated() {
   say "AUR releases"
-  local rc=0
-  timeout -k 5 "$AUR_TIMEOUT" "$ERGON/bin/ergon-aur" --outdated < /dev/null || rc=$?
+  local rc=0 sid
+  setsid timeout -k 5 "$AUR_TIMEOUT" "$ERGON/bin/ergon-aur" --outdated < /dev/null &
+  sid=$!
+  # stderr goes first: bash reports the job it sees killed, and ^C said enough.
+  trap 'exec 2>/dev/null; pkill -KILL -s "$sid" || true; exit 130' INT TERM
+  wait "$sid" || rc=$?
+  trap - INT TERM
+  pkill -KILL -s "$sid" 2>/dev/null || true
   case "$rc" in
     0) ;;
     124|137) warn "the AUR did not answer within ${AUR_TIMEOUT}s — nothing here says what is current. Ask again: ergon aur --outdated" ;;
