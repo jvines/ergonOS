@@ -118,7 +118,7 @@ $(printf '%s\n' $BINDS | sed "s|^|      vnc://|; s|\$|:$PORT|")
 $GPU_NOTE
 
   Boot takes ~30s. Ctrl-C detaches this terminal; the VM keeps running and is
-  replaced by the next run. To stop it now:  docker rm -f hyprvm
+  replaced by the next run. To stop it now:  ${DOCKER[*]} rm -f hyprvm
 
 BANNER
 
@@ -219,7 +219,7 @@ if [ "${HYPR_VM_DETACH:-0}" = 1 ]; then
     -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
     "$IMAGE" expect -f /w/vnc.exp >/dev/null
   echo "  running in the background as container 'hyprvm'"
-  echo "  stop it with: docker rm -f hyprvm"
+  echo "  stop it with: ${DOCKER[*]} rm -f hyprvm"
   exit 0
 fi
 

@@ -119,6 +119,13 @@ jobs:
       - name: AUR builds the reviewed commit, and says so honestly
         run: cd "$CI_DIR" && ./bin/test-aur.sh
 
+      # ERGON-51: this runner reaches the socket directly (DOCKER_GROUP=1,
+      # same as every existing machine), so nothing else in this file ever
+      # exercises the sudo or refusal branches lib/docker-cmd.sh added for a
+      # fresh install. Stubs both docker and sudo to force each branch.
+      - name: The harness resolves docker without a group it may not have
+        run: cd "$CI_DIR" && ./bin/test-docker-cmd.sh
+
       - name: The firewall drops inbound, and docker publishes to localhost
         run: cd "$CI_DIR" && ./bin/test-firewall.sh
 
