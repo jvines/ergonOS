@@ -258,13 +258,27 @@ else
     # shellcheck source=lib/user-manager.sh
     . "$ERGON/lib/user-manager.sh"
     enable_user_unit() {  # <unit> <verb: start|restart> <label>
-      local rc=0
+      # Shadowed empty, not left ambient: install.sh only ever configures ITS
+      # OWN caller's manager, so its runtime dir is always /run/user/$(id -u)
+      # -- never whatever $XDG_RUNTIME_DIR the invoking shell happened to
+      # carry. Measured in ergon64-closure: a plain `su u -c` (no dash) from a
+      # root shell with its OWN $XDG_RUNTIME_DIR set inherits that value, and
+      # _ergon_user_runtime_dir's "prefer the caller's own" then asks the
+      # WRONG uid's bus and reports a lingering, reachable manager as absent.
+      local rc=0 XDG_RUNTIME_DIR=
       ergon_user_reload || rc=$?
       if [ "$rc" != 0 ]; then
         ok "$3 enabled; no user manager is running, it starts at the next login"
         return
       fi
-      if XDG_RUNTIME_DIR="$(_ergon_user_runtime_dir)" systemctl --user "$2" "$1" >/dev/null 2>&1; then
+      XDG_RUNTIME_DIR="$(_ergon_user_runtime_dir)" systemctl --user "$2" "$1" >/dev/null 2>&1
+      # $2 returning 0 only means the manager accepted the job: a Type=simple
+      # unit is "active" the instant it forks, before its exec is known to have
+      # worked, so ergon-oom-notify crash-looping on a missing binary measured
+      # as an immediate 0 here too. Settle, then ask what the manager actually
+      # holds, the same question ergon_user_ensure_prop asks after a reload.
+      sleep 0.2
+      if XDG_RUNTIME_DIR="$(_ergon_user_runtime_dir)" systemctl --user is-active --quiet "$1"; then
         ok "$3 enabled and running"
       else
         warn "$3 did not start -- journalctl --user -u $1"

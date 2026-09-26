@@ -987,6 +987,24 @@ if [ -S /run/user/1000/bus ]; then
 else
   note "no user manager here: the containment checks below can only be asked of one"
 fi
+
+# ERGON-72: the run above happened before this lingering manager existed, so it
+# only ever exercised enable_user_unit's "no manager yet" branch. Re-run
+# install.sh now that one is up -- idempotent, the same re-run guest-sync.sh
+# already relies on -- to reach the branch that reloads a LIVE manager and
+# starts a unit in it, and ask the manager rather than trust install.sh's own
+# "ok".
+if [ -S /run/user/1000/bus ]; then
+  su - "$U" -c "cd ~/ergonOS && ERGON=\$HOME/ergonOS ./install.sh" >/tmp/install-relink.log 2>&1
+  _reap=$(su - "$U" -c 'XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active ergon-reap.timer' 2>/dev/null)
+  _batt=$(su - "$U" -c 'XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active ergon-battery.timer' 2>/dev/null)
+  if [ "$_reap" = active ] && [ "$_batt" = active ]; then
+    ok "install.sh with a live manager brings both timers active"
+  else
+    bad "install.sh with a live manager left a timer inactive (reap: ${_reap:-?}, battery: ${_batt:-?})"
+    tail -20 /tmp/install-relink.log | sed 's/^/     /'
+  fi
+fi
 install -d -o "$U" -g "$U" -m 700 /run/user/1000
 cat > /tmp/start-hypr.sh <<'EOF'
 export XDG_RUNTIME_DIR=/run/user/1000
@@ -2027,11 +2045,12 @@ usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
 # unless the session imported one. libnotify talks over GDBus, which DOES fall
 # back to $XDG_RUNTIME_DIR/bus once that variable names a real directory (glib
 # 2.88, measured; this comment used to claim there was no fallback at all) --
-# notify-send still failed to reach mako here, so the gap was elsewhere in
-# what this unit inherits, and ergon-watch's `|| true` swallowed it: the kill
-# happened, hist recorded it, and the one thing the card promises -- the
-# machine SAYING what it killed -- was missing for a reason that only exists
-# in this harness. A terminal in the real session carries both.
+# notify-send still failed to reach mako here, for a reason this harness never
+# pinned down, and ergon-watch's `|| true` swallowed it: the kill happened,
+# hist recorded it, and the one thing the card promises -- the machine SAYING
+# what it killed -- was missing. The explicit setenvs above are kept as belt
+# and braces regardless (same reasoning as systemd/ergon-oom-notify.service's
+# own Environment= line), not because either is known to be the fix.
 usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app.slice \
      --setenv=PATH='$SESSION_PATH' \
      --setenv=XDG_RUNTIME_DIR=/run/user/1000 \
