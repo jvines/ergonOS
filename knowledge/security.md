@@ -77,7 +77,7 @@ past the local segment (RFC 5771; `ff02::` is link-local IPv6 scope by
 definition), so a packet reaching the input hook addressed to either one was
 necessarily sent on whichever network this machine is on right now. A
 unicast query straight at this host's own address on 5353 still hits the
-drop policy below.
+drop policy this section opened with.
 
 ### The ruleset must never flush the whole ruleset
 

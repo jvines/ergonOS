@@ -165,16 +165,33 @@ fi
 #
 # The queue count comes from `lpstat`, not from reading printers.conf: measured
 # in ergon64-closure, cupsd does not flush that file to disk on every lpadmin,
-# so a queue can exist for a while before the file agrees with it. `lpstat -p`
-# asks the scheduler directly over the local IPP socket -- no network, and it
-# is the same wake a real print job would cause.
+# so a queue can exist for a while before the file agrees with it.
+#
+# -h /run/cups/cups.sock: talk to the local scheduler directly rather than
+# whatever a client.conf or $CUPS_SERVER points at -- a redirected one blocked
+# for 60s before answering, and this row has to stay fast and be about THIS
+# machine. LC_ALL=C: `lpstat -p`'s printer lines are gettext-translated
+# (measured against a real cupsd: es_ES turns "printer q1 is idle" into "la
+# impresora q1 está inactiva"), and arch-bootstrap.sh's locale prompt offers
+# exactly that, so an unforced locale silently reports 0 queues on every
+# non-English install, forever. And zero queues is not the same failure as an
+# unreachable scheduler even though cupsd gives both exit 1: "No destinations
+# added." is what it says when there is genuinely nothing configured, so that
+# text, not the exit code, is what tells the two apart.
 if ! systemctl is-enabled --quiet cups.socket 2>/dev/null; then
   rec fail "printing" "cups.socket is not enabled — provisioning did not run, or something turned it off. lpadmin has no scheduler to talk to"
 elif ! systemctl is-active --quiet cups.socket 2>/dev/null; then
   rec fail "printing" "cups.socket is enabled but not active — printing is dead until it is"
 else
-  pq=$(lpstat -p 2>/dev/null | grep -c '^printer ')
-  rec ok "printing" "cups.socket active; $pq queue(s) configured"
+  lp_out=$(LC_ALL=C lpstat -h /run/cups/cups.sock -p 2>&1); lp_rc=$?
+  if [ $lp_rc -eq 0 ]; then
+    pq=$(printf '%s\n' "$lp_out" | grep -c '^printer ')
+    rec ok "printing" "cups.socket active; $pq queue(s) configured"
+  elif printf '%s' "$lp_out" | grep -q 'No destinations added'; then
+    rec ok "printing" "cups.socket active; 0 queue(s) configured"
+  else
+    rec fail "printing" "cups.socket is active but lpstat cannot reach it: $lp_out"
+  fi
 fi
 
 # --- provisioning ------------------------------------------------------------

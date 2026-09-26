@@ -500,6 +500,10 @@ for u in NetworkManager docker tailscaled bluetooth fwupd power-profiles-daemon 
     sudo systemctl enable --now "$u" >/dev/null 2>&1 && ok "$u" || skip "$u (not installed)"
   fi
 done
+# Group membership, NOT the daemon, is gated on DOCKER_GROUP (see "docker
+# group" below, after hosts/$HOST/host.env exists to read it from) -- the
+# daemon enables unconditionally because sudo docker needs it running either
+# way, and that is the documented path when the knob is off.
 
 # ---------------------------------------------------------------------------
 say "printing"
@@ -544,10 +548,6 @@ elif _ns_new=$(awk "$_ns_mdns" "$_ns") && [ -n "$_ns_new" ] && grep -q '^hosts:.
 else
   warn "$_ns has no hosts: line with a resolve token to anchor on -- .local names will not resolve"
 fi
-# Group membership, NOT the daemon, is gated on DOCKER_GROUP (see "docker
-# group" below, after hosts/$HOST/host.env exists to read it from) -- the
-# daemon enables unconditionally because sudo docker needs it running either
-# way, and that is the documented path when the knob is off.
 
 # ---------------------------------------------------------------------------
 say "graphics"
