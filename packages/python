@@ -19,12 +19,21 @@ pillow               # ergon fig reads PNG metadata through it. matplotlib
                      # pulls it in anyway; naming it is what lets
                      # ergon-lint see that something provides it.
 
-# Notebooks. ipython is listed explicitly rather than left to arrive as a
-# jupyterlab dependency, because `ipython` is a command you type.
-jupyterlab
+# Notebooks: marimo, and Jupyter only as the notebooks bundle (ERGON-54). A
+# marimo notebook is a .py file, so it diffs, and execution is reactive, so
+# there is no stale cell -- out-of-order execution is the largest single source
+# of notebook results nobody can reproduce. That is the reason, not size: over the
+# rest of this list marimo adds 171 MiB, jupyterlab + ipykernel + ipywidgets 132
+# (uv, python 3.13, 2026-09-26). Not in the Arch repos; PyPI is the only route.
+#
+# Nothing else here needs ipykernel: ergon kernel installs it into the PROJECT
+# env. A venv built before this gets marimo from install.sh's `pyfleet ensure`
+# and keeps its jupyterlab, since nothing here removes a package. A clean base
+# is `pyfleet destroy`, `pyfleet sync`, then `ergon bundle sync` for bundles.
+marimo
+
+# A command you type, and no longer something jupyterlab brings along.
 ipython
-ipykernel
-ipywidgets
 
 # Units and constants. Back-of-the-envelope is exactly what astropy.units is
 # for: dimensional arithmetic that catches a factor of 1000 before it reaches a

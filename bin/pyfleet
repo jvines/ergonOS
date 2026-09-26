@@ -97,14 +97,20 @@ case "${1:-sync}" in
     "$VENV/bin/python" -c 'import sys; print("   python", sys.version.split()[0])'
     ;;
   ensure)
-    # Create it only if it is missing. install.sh calls this, and install.sh is
-    # re-run daily by dotfiles-sync -- an --upgrade on that schedule would move
-    # numpy under a running analysis without anyone asking. Upgrading is
-    # `pyfleet sync`, explicitly, when you decide to.
-    if [ -x "$VENV/bin/python" ]; then
-      exit 0
-    fi
-    exec "$0" sync
+    # Create it if it is missing, and install what packages/python lists and it
+    # lacks -- or a line added to the base (marimo, ERGON-54) never reaches a
+    # machine that already has a venv. Never --upgrade: install.sh calls this,
+    # and install.sh is re-run daily by dotfiles-sync -- an --upgrade on that
+    # schedule would move numpy under a running analysis without anyone asking.
+    # Without it uv keeps every installed version that still satisfies, and once
+    # all are satisfied it needs no network. Measured on main's base with numpy
+    # held at 2.2.6: adding marimo left numpy there and moved only pygments,
+    # which marimo needs >=2.19; the next run, offline, exited 0 (2026-09-26).
+    # Upgrading is `pyfleet sync`, explicitly, when you decide to.
+    [ -x "$VENV/bin/python" ] || exec "$0" sync
+    _check_writable
+    mapfile -t PKGS < <(_pkglist)
+    VIRTUAL_ENV="$VENV" "$UV" pip install --python "$VENV/bin/python" --quiet "${PKGS[@]}"
     ;;
   add)
     _check_writable

@@ -1,2 +1,7 @@
-marimo
+# Jupyter, for anyone who wants it. marimo is the built-in notebook and needs no
+# bundle; packages/python says why it, and not this, is the default.
+jupyterlab
+ipykernel            # what runs pyfleet as a kernel. jupyterlab requires it;
+                     # named so the ledger records it and remove takes it
+ipywidgets
 jupytext             # .ipynb <-> .py, for notebooks that arrive as JSON

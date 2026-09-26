@@ -248,7 +248,7 @@ if command -v git >/dev/null && [ ! -d .git ]; then
   printf '   ok  git initialised\n'
 fi
 if [ "$LANG_" = python ]; then
-  printf '\n   next:  ergon kernel        register this env for notebooks\n'
+  printf '\n   next:  ergon kernel        register this env for Jupyter\n'
   printf '          ergon cite <doi>    into refs.bib\n'
 else
   printf "\n   next:  R -e 'renv::install()'   from DESCRIPTION. CRAN builds from\n"

@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# ergon:summary=Register this project's environment as a notebook kernel
+# ergon:summary=Register this project's environment as a Jupyter kernel
 # ergon:group=data
 # ergon:args=[register|list|remove] [--name NAME]
 # ergon:help=native
 #
 # uv environments are invisible to Jupyter. You make a project, install its
-# deps, open a notebook from the shared jupyterlab, and none of them are there --
-# because the notebook is running the pyfleet interpreter, not the project's.
-# Everyone hits this in week one and most people conclude uv and notebooks do
-# not mix.
+# deps, open a notebook in Jupyter (the notebooks bundle), and none of them are
+# there -- because the notebook is running the pyfleet interpreter, not the
+# project's. Everyone hits this in week one and most people conclude uv and
+# notebooks do not mix.
 #
-# They do: a kernel is a JSON file naming an interpreter. This writes it.
+# They do: a kernel is a JSON file naming an interpreter. This writes it, for
+# Jupyter and the editors that speak its protocol. marimo, the built-in
+# notebook, reads no kernelspecs (in 0.25.0 its python names one only in the
+# .ipynb converter).
 #
 #   cd myproject && ergon kernel        # register ./.venv as "myproject"
 #   ergon kernel list
@@ -61,7 +64,7 @@ case "$CMD" in
 }
 JSON
     printf '   ok  kernel "%s" -> %s\n' "$NAME" "$PY"
-    printf '       visible to the shared jupyterlab and to marimo\n'
+    printf '       for Jupyter (ergon bundle add notebooks); marimo uses no kernels\n'
     ;;
   list)
     [ -d "$KDIR" ] || { echo "   no kernels registered"; exit 0; }
@@ -83,6 +86,6 @@ JSON
     rm -rf "${KDIR:?}/$SLUG"
     printf '   ok  removed %s\n' "$SLUG"
     ;;
-  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ergon-kernel: unknown command '$CMD' (register|list|remove)" >&2; exit 2 ;;
 esac

@@ -19,7 +19,7 @@ private overlay — not two forks of the distro.
 | `ergon-cite --software` | correct BibTeX for numpy/scipy/astropy/emcee **at the installed versions** | journals increasingly require it and everyone fakes it |
 | `ergon-doctor` | is OMP_NUM_THREADS sane, what BLAS is numpy linked to, uv present, bundles consistent with host.env, disk, swap | also the bug-report format for a public distro: "paste ergon-doctor" beats twenty questions |
 | `ergon-new` | project scaffold: pyproject, lockfile, gitignored `data/`, `figures/`, a `.bib`, git init | the twenty minutes between an idea and running code |
-| `ergon-kernel` | register the current uv env as a named Jupyter/marimo kernel | uv envs are invisible to notebooks; everyone hits this in week one |
+| `ergon-kernel` | register the current uv env as a named Jupyter kernel (marimo uses none) | uv envs are invisible to Jupyter; everyone hits this in week one |
 | `ergon-watch` | supervise a long run, notify on finish or death | start a 6-hour chain, close the lid, find out what happened |
 | `ergon-archive` | find stale multi-GB outputs (old chains, intermediate FITS) and push them to NAS or S3 | computational scientists accumulate hundreds of GB they never open and notice when the disk fills mid-run |
 | `ergon-ship HOST` | reproduce this project's locked environment elsewhere, run, bring results back | what makes "cluster frontend" mean something |
