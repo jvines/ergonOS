@@ -469,7 +469,7 @@ if [ -n "${WAYLAND_DISPLAY:-}${TMUX:-}" ]; then
     */tmux-spawn-*.scope)
       case $(systemctl --user show -p Slice --value "${cg##*/}" 2>/dev/null) in
         app.slice) rec warn "shell-slice" "this tmux pane was opened before tmux's panes were put under app.slice, so a runaway job here is not contained — a new pane or window is" ;;
-        *)         rec warn "shell-slice" "tmux panes land outside app.slice, so oomd will not contain a runaway job in one — re-run provisioning (it installs tmux-spawn-.scope.d), then open a new pane" ;;
+        *)         rec warn "shell-slice" "tmux panes land outside app.slice, so oomd will not contain a runaway job in one — re-run provisioning (it installs tmux-spawn-.scope.d), then systemctl --user daemon-reload, then open a new pane" ;;
       esac ;;
     *)                 rec warn "shell-slice" "${cg:-no cgroup} — outside app.slice, so oomd will not contain a runaway job started here" ;;
   esac

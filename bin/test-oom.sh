@@ -225,6 +225,8 @@ case " $* " in
     # the file on disk never moves, what changes is which manager has read it.
     # No manager to ask about app.slice is no manager to reload either.
     [ -n "${STUB_OOM_APP:-}" ] || exit 1
+    # A manager that answers and still will not reload: busy, or timing out.
+    [ -z "${STUB_RELOAD_REFUSED:-}" ] || exit 1
     : > "$TEST_ROOT/log/daemon-reloaded" ;;
   *" reset-failed "*) ;;
   *"-p Result"*)
@@ -332,6 +334,21 @@ check "provisioning asks the manager on every run, not only when the file change
 # sitting right there holding auto is how this shipped.
 check "  and keeps 'next login' for the branch where there is no manager" \
   has "$REPO/bin/provision-arch.sh" '^  2\) warn .*the policy applies at the next login'
+
+# Provisioning's own reload-and-report block, run against the stub manager with
+# a drop-in that just changed. The tmux one has no witness of its own -- on any
+# machine provisioned since ERGON-19 app.slice already holds kill -- so a reload
+# refused on the one run that asks for it must not pass in silence (ERGON-47).
+{ echo 'ok() { echo "ok $*"; }; warn() { echo "warn $*"; }; _user_reload=1'
+  sed -n '/^\[ "\$_user_reload" = 0 \]/,/^unset _oom_rc/p' "$REPO/bin/provision-arch.sh"
+} > "$T/oom-block"
+reload_says() { umgr STUB_OOM_APP=kill "$@" -- . "$T/oom-block" 2>&1; }
+check "a reload the running manager refuses is said, with the command that fixes it" \
+  has <(reload_says STUB_RELOAD_REFUSED=1) "^warn .*'systemctl --user daemon-reload'"
+check "  and a reload that lands adds nothing to the ok" \
+  test "$(reload_says)" = "ok app.slice is monitored by oomd in the user manager running now"
+check "  nor is it said where there is no manager, which has its own answer" \
+  not has <(umgr -- . "$T/oom-block" 2>&1) 'daemon-reload'
 
 watch() {  # watch <args>... -- fresh logs, one run
   rm -f "$L"/* "$J"
@@ -552,6 +569,10 @@ check "a tmux pane under app.slice is ok, with no graphical session" has <(pane)
 printf '0::/user.slice/user-1000.slice/user@1000.service/%s\n' "$TS" > "$CG"
 check "a pane at the manager's root with no policy for tmux says to re-provision" \
   has <(pane -.slice) '"state":"warn".*re-run provisioning'
+# The drop-in can be on disk and still unread, and then re-provisioning changes
+# nothing: the file is unchanged, so nothing reloads the manager.
+check "  and then to reload the user manager, which re-provisioning may not do" \
+  has <(pane -.slice) 're-run provisioning.*systemctl --user daemon-reload.*new pane'
 check "a pane opened before the policy says a new one is contained" \
   has <(pane app.slice) '"state":"warn".*a new pane or window is'
 check "  and does not send that person to re-provision" \

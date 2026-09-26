@@ -1096,9 +1096,15 @@ fi
 # oomd in order to report this, and a report sent while oomd is down is dropped.
 #
 # When any user drop-in moved, reload first -- the compositor's OOMPolicy and the
-# tmux panes ride on the same reload, and app.slice below is the witness that it
-# landed.
-[ "$_user_reload" = 0 ] || ergon_user_reload || true
+# tmux panes ride on the same reload. app.slice below witnesses only itself: on
+# a machine provisioned since ERGON-19 it already holds kill, and a reload that
+# is refused here is never asked for again, because next run no file changes.
+# So once a manager has answered, a refused reload is retried, and a second
+# refusal is said out loud. Unread is not merely uncontained: a unit directory
+# changed under a manager that had already made a tmux pane left it spinning at
+# 90% CPU on the next pane (container, systemd 262, tmux 3.7c).
+_reload_rc=0
+[ "$_user_reload" = 0 ] || ergon_user_reload || _reload_rc=$?
 _oom_rc=0
 _oom_live=$(ergon_user_ensure_prop app.slice ManagedOOMMemoryPressure kill) || _oom_rc=$?
 case "$_oom_rc" in
@@ -1106,7 +1112,9 @@ case "$_oom_rc" in
   2) warn "no user manager running as $(id -un) here, so nothing is monitored yet — the policy applies at the next login" ;;
   *) warn "app.slice is ManagedOOMMemoryPressure=$_oom_live even after reloading the user manager; a run that exhausts memory is NOT contained until you log out and back in" ;;
 esac
-unset _oom_rc _oom_live
+[ "$_reload_rc" = 0 ] || [ "$_oom_rc" = 2 ] || ergon_user_reload \
+  || warn "the user manager refused a daemon-reload, so tmux panes stay outside app.slice — run 'systemctl --user daemon-reload' before opening a new one"
+unset _oom_rc _oom_live _reload_rc
 
 say "shell"
 # oh-my-zsh and zplug are git clones, not packages. Deliberately not from the
