@@ -163,6 +163,17 @@ bind("SUPER + CTRL + J", "Grow height",   hl.dsp.window.resize({ x =   0, y =  6
 bind("SUPER + mouse:272", "Drag window",   hl.dsp.window.drag(),   { mouse = true })
 bind("SUPER + mouse:273", "Resize window", hl.dsp.window.resize(), { mouse = true })
 
+-- Layout (ERGON-37). looknfeel sets preserve_split, which keeps a split the
+-- way it is -- so without this there was no way to turn one. Omarchy's chord
+-- is SUPER+J, which is focus-down here; S is for split, and free.
+bind("SUPER + S", "Toggle split", hl.dsp.layout("togglesplit"))
+-- Groups: several windows in one tile, tabbed on the groupbar looknfeel already
+-- styles. G is Omarchy's chord too. Next and previous are SHIFT and CTRL, the
+-- pair B already uses for backgrounds.
+bind("SUPER + G",         "Toggle group",             hl.dsp.group.toggle())
+bind("SUPER + SHIFT + G", "Next window in group",     hl.dsp.group.next())
+bind("SUPER + CTRL + G",  "Previous window in group", hl.dsp.group.prev())
+
 -- ---------------------------------------------------------------------------
 -- Workspaces
 --
@@ -181,6 +192,15 @@ end
 
 bind("SUPER + mouse_down", "Next workspace",     hl.dsp.focus({ workspace = "e+1" }))
 bind("SUPER + mouse_up",   "Previous workspace", hl.dsp.focus({ workspace = "e-1" }))
+-- The one you were just on, which "previous" above is not: TAB, the chord every
+-- window switcher has taught for going back.
+bind("SUPER + TAB",        "Last workspace",     hl.dsp.focus({ workspace = "previous" }))
+
+-- To the next output, which with a projector extended is the projector. O for
+-- output; SHIFT moves, as it does for hjkl and the digits, and CTRL widens it
+-- to the whole workspace, as it widens dismiss (D) and screenshot (S).
+bind("SUPER + SHIFT + O",        "Move window to next monitor",    hl.dsp.window.move({ monitor = "+1" }))
+bind("SUPER + SHIFT + CTRL + O", "Move workspace to next monitor", hl.dsp.workspace.move({ monitor = "+1" }))
 
 -- Scratchpad. One toggle for the thing you keep pulling up and dismissing —
 -- a shell on the cluster, usually.
