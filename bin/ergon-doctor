@@ -504,6 +504,29 @@ else
   rec ok "session" "not in a graphical session; session checks skipped"
 fi
 
+# --- TRIM --------------------------------------------------------------------
+# ERGON-34. dm-crypt drops every discard unless the mapping allows them, and no
+# install before that card allowed them: DISC-MAX 0 on the mapper, so btrfs never
+# turned on its async discard and the SSD was never trimmed. lsblk reads sysfs,
+# so no root. No LUKS root, no row; and a disk that takes no discards itself is
+# not dm-crypt's doing, so that is not a failure either.
+if [ -e "${ERGON_SYSROOT:-}/dev/mapper/cryptroot" ]; then
+  dmax=$(lsblk -bdnD -o DISC-MAX /dev/mapper/cryptroot 2>/dev/null | tr -d ' ')
+  # By NAME, not by line: with -s and no NAME column lsblk printed the partition
+  # before the mapper (util-linux 2.42.4, measured).
+  under=$(lsblk -bnrsD -o NAME,DISC-MAX /dev/mapper/cryptroot 2>/dev/null \
+          | awk '$1 != "cryptroot" && $2 > 0 { print $1; exit }')
+  if ! [ "$dmax" -ge 0 ] 2>/dev/null; then
+    rec warn "trim" "lsblk could not read cryptroot's discard limit"
+  elif [ "$dmax" -gt 0 ]; then
+    rec ok "trim" "cryptroot passes discards to the disk"
+  elif [ -n "$under" ]; then
+    rec fail "trim" "cryptroot drops every discard, so $under is never trimmed — re-run bin/provision-arch.sh"
+  else
+    rec ok "trim" "the disk under cryptroot takes no discards; nothing for dm-crypt to pass on"
+  fi
+fi
+
 # --- disk ------------------------------------------------------------------
 avail=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')
 if [ -n "$avail" ]; then

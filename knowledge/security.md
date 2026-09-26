@@ -142,6 +142,27 @@ stop there: the unit is still *active* after someone types
 `nft list` as "I am not root" reported ok, to root, on a machine with an empty
 ruleset. An active unit with no `inet ergon` table is now a hard failure.
 
+## TRIM passes through the disk encryption
+
+dm-crypt drops every discard unless the mapping allows them, and until ERGON-34
+nothing here allowed them: btrfs switches on its async discard by itself, at
+mount, only for a device that takes discards, so the SSD under
+`/dev/mapper/cryptroot` was never told which blocks were free -- write speed
+and wear, lost over months.
+
+**What it weakens:** which blocks are free becomes visible on the raw disk, so
+someone holding it powered off can tell roughly how full it is and guess the
+filesystem. **What stays true:** not one byte of what the used blocks hold, and
+nothing about the passphrase.
+
+New installs boot with `rd.luks.options=discard`. Provisioning also writes
+`allow-discards` into the LUKS2 header (`cryptsetup refresh --persistent`,
+unlocked with the boot keyfile, so it never prompts), which reaches machines
+installed before that and every later opener, the rescue ISO included.
+`fstrim.timer` runs weekly on top. There is no knob: provisioning puts the flag
+back if it is removed. `ergon doctor`'s `trim` row fails when the mapper drops
+discards over a disk that takes them.
+
 ## VS Code extensions run as you, outside pacman
 
 The vscode bundle installs `code` with pacman, and pacman's part ends there.

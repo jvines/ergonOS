@@ -119,6 +119,9 @@ jobs:
       - name: A run that exhausts memory is contained, not the session
         run: cd "$CI_DIR" && ./bin/test-oom.sh
 
+      - name: Doctor fails an encrypted root that drops TRIM
+        run: cd "$CI_DIR" && ./bin/test-trim.sh
+
       # The notifier that the two steps at the end of this file depend on. It
       # is checked here, on every push, precisely because it only ever runs
       # when something else has already gone wrong -- the one place a silent

@@ -174,6 +174,40 @@ ok "snapshot + cache timers"
 sudo "$ERGON/bin/ergon-backup" install || warn "backup timers not installed (see the message above)"
 
 # ---------------------------------------------------------------------------
+say "TRIM through the encryption"
+# ERGON-34. New installs carry rd.luks.options=discard (arch-bootstrap.sh); this
+# is the half for a machine installed before that. The flag goes into the LUKS2
+# header, so it holds for every opener -- the rescue ISO's plain open included.
+#
+# refresh needs the volume key exactly as open does. Measured on cryptsetup
+# 2.8.8: with none it reads stdin, and on a pipe nobody writes to it waits
+# forever. The boot keyfile arch-bootstrap.sh enrolled IS a key, so it is given
+# and stdin is closed: no keyfile means a warning, never a hidden prompt.
+_kf=/etc/cryptsetup-keys.d/cryptroot.key
+if [ ! -e /dev/mapper/cryptroot ]; then
+  skip "no /dev/mapper/cryptroot; nothing to pass TRIM through"
+else
+  _dev=$(sudo cryptsetup status cryptroot </dev/null | awk '$1 == "device:" { print $2 }') || true
+  # A here-string, not luksDump piped into grep -q: under pipefail that reads as
+  # "absent" whenever grep leaves before the writer is done (see test-firewall.sh).
+  _hdr=$(sudo cryptsetup luksDump "$_dev" </dev/null 2>/dev/null) || true
+  if grep -q '^Flags:.*allow-discards' <<<"$_hdr"; then
+    ok "cryptroot passes discards (allow-discards is in its LUKS2 header)"
+  elif sudo test -r "$_kf" && sudo cryptsetup refresh --batch-mode --allow-discards \
+         --persistent --key-file "$_kf" cryptroot </dev/null; then
+    ok "cryptroot refreshed: discards pass now, and on every boot"
+  else
+    warn "cryptroot still drops discards; with the passphrase: sudo cryptsetup refresh --allow-discards --persistent cryptroot"
+  fi
+fi
+# Arch ships fstrim.timer disabled (util-linux 2.42.4, measured). It is also the
+# only TRIM a root refreshed above gets until it is next mounted: btrfs picks
+# discard=async at mount time, while fstrim reaches the disk through the
+# refreshed mapping at once (both measured on a loop device, kernel 6.12).
+sudo systemctl enable --now fstrim.timer >/dev/null 2>&1 \
+  && ok "fstrim.timer (weekly)" || warn "fstrim.timer could not be enabled"
+
+# ---------------------------------------------------------------------------
 say "no floppy controller"
 # Nothing made since the 1990s has one, but the emulated i440fx machine presents
 # an empty drive, the kernel binds it, udiskie sees removable media and polkit

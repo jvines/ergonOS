@@ -47,6 +47,13 @@ check "resume_offset= on the cmdline" 'grep -q "resume_offset=" /proc/cmdline'
 check "hibernate is available"       'grep -qw disk /sys/power/state'
 check "swap is big enough for RAM"   '[ "$(awk "/SwapTotal/{print \$2}" /proc/meminfo)" -ge "$(awk "/MemTotal/{print \$2}" /proc/meminfo)" ]'
 
+# ERGON-34: TRIM through dm-crypt. Provisioning has not run yet, so the cmdline
+# is all a fresh install has -- and discard=async is the point: btrfs picks it by
+# itself at mount, and only when the mapper takes discards (measured).
+check "rd.luks.options=discard on the cmdline" 'grep -q "rd.luks.options=discard" /proc/cmdline'
+check "cryptroot passes discards (DISC-MAX)"   '[ "$(lsblk -bdnD -o DISC-MAX /dev/mapper/cryptroot | tr -d " ")" -gt 0 ]'
+check "btrfs root mounted discard=async"       'findmnt -no OPTIONS / | grep -q "discard=async"'
+
 # sd-encrypt, and NOT a duplicated resume hook.
 check "initramfs uses sd-encrypt"    'grep -q "sd-encrypt" /etc/mkinitcpio.conf'
 check "no legacy resume hook"        '[ -r /etc/mkinitcpio.conf ] && ! grep -E "^HOOKS=.*[( ]resume[ )]" /etc/mkinitcpio.conf'
