@@ -55,6 +55,14 @@ on:
       # surface, which is what a bad @import costs.
       - 'waybar/**'
       - 'packages/**'
+      # Except the one file this workflow commits itself, or a green run would
+      # start the next. Forgejo 12.0.4 matches paths with forgejo/act 1.28.0's
+      # workflowpattern.Skip, where the LAST pattern a file matches decides, so
+      # this line has to come after packages/**. Not "[skip ci]" in the commit
+      # instead: that stops checks.yml too, and checks.yml is what mirrors the
+      # new date to GitHub.
+      - '!packages/tested-date'
+      - 'lib/archive-pin.sh'
       - 'test/arch-vm/**'
       - '.forgejo/workflows/vm.yml'
 
@@ -129,12 +137,49 @@ jobs:
       - name: Install from the ISO and assert against the booted system
         id: install
         run: |
-          rm -f "$WORK"/phase[123].log "$WORK"/session.log
+          rm -f "$WORK"/phase[123].log "$WORK"/session.log "$WORK"/archive-date
           cd "$CI_DIR" && ./bin/test-arch-vm.sh --keep
 
       - name: Provision it and prove the desktop works
         id: session
         run: cd "$CI_DIR" && ./bin/test-hypr-session.sh
+
+      # ERGON-35. Both suites installed and provisioned from the one Arch day
+      # test-arch-vm.sh left in $WORK/archive-date, so that day is what passed,
+      # and `ergon update` holds every machine there. main only: a branch that
+      # passed says nothing about main. Committed on top of whatever main is
+      # NOW, since a push can land in the 35 minutes this took. It cannot loop:
+      # the push trigger above excludes this file, a day no later than the one
+      # recorded commits nothing, and the date only moves forward. The runner
+      # user's key is the one that cloned; it is the repo owner's (Forgejo's
+      # ssh greeting, 2026-09-26).
+      - name: Record the Arch day that passed
+        if: success() && github.ref == 'refs/heads/main'
+        env:
+          SHA: ${{ github.sha }}
+          RUN_N: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          day=$(cat "$WORK/archive-date")
+          cd "$CI_DIR"
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            git checkout --quiet --detach FETCH_HEAD
+            have=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' packages/tested-date 2>/dev/null | head -1 || true)
+            if [ -n "$have" ] && [[ ! "$day" > "$have" ]]; then
+              echo "packages/tested-date already says $have; $day moves nothing"; exit 0
+            fi
+            printf '%s\n' "# The Arch archive day the VM suite last passed: vm.yml writes this," \
+              "# ergon update holds machines at it. See lib/archive-pin.sh." "$day" > packages/tested-date
+            git add packages/tested-date
+            git -c user.name='ergon VM suite' -c user.email=vm@ergon.invalid commit --quiet \
+              -m "packages: Arch as of $day passed the VM suite" \
+              -m "vm run $RUN_N installed and provisioned $SHA from archive.archlinux.org/repos/${day//-//} and passed. ergon update now holds machines there (ERGON-35)."
+            if git push --quiet origin HEAD:refs/heads/main; then echo "recorded $day"; exit 0; fi
+            sleep 10
+          done
+          echo "could not record $day: main moved under three attempts" >&2
+          exit 1
 
       # The steps above show only the ok/FAIL lines. What a failing check prints
       # to explain itself goes to the console log under $WORK, and the next step

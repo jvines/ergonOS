@@ -319,7 +319,26 @@ case "$(awk -F': ' '/^vendor_id/ {print $2; exit}' /proc/cpuinfo)" in
 esac
 [ -n "$UCODE" ] && ok "microcode: $UCODE"
 
-pacstrap -K /mnt base base-devel $KERNELS linux-firmware $UCODE \
+# The install is a machine's first upgrade, so it comes from the same Arch
+# `ergon update` holds machines at (ERGON-35, lib/archive-pin.sh), and a new
+# machine starts neither ahead of that date nor untested. -C gives pacstrap a
+# pacman.conf of its own: what it copies into /mnt is still this ISO's live
+# mirrorlist, which the pin's --latest needs, and provisioning points the new
+# system at the pin. ERGON_ARCHIVE_DATE is how bin/test-arch-vm.sh installs the
+# day it is about to test.
+# shellcheck source=../lib/archive-pin.sh
+. "$ERGON/lib/archive-pin.sh"
+PACSTRAP_CONF=()
+if PIN=$(ergon_tested_date); then
+  ergon_pin_list "$PIN" > "$ERGON_PIN_LIST"
+  ergon_pin_conf < /etc/pacman.conf > /tmp/ergon-pacstrap.conf
+  PACSTRAP_CONF=(-C /tmp/ergon-pacstrap.conf)
+  ok "Arch as of $PIN, the day the VM suite last passed"
+else
+  warn "no usable packages/tested-date — installing today's Arch, which no VM run has tested"
+fi
+
+pacstrap -K "${PACSTRAP_CONF[@]}" /mnt base base-devel $KERNELS linux-firmware $UCODE \
   btrfs-progs mkinitcpio grub efibootmgr grub-btrfs snapper snap-pac \
   networkmanager sudo zsh git vim inetutils
 ok "base system installed"

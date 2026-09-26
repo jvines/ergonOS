@@ -171,6 +171,25 @@ installed before that and every later opener, the rescue ISO included.
 back if it is removed. `ergon doctor`'s `trim` row fails when the mapper shows
 DISC-MAX 0 -- over a disk that takes no discards at all, too.
 
+## Updates wait for the VM suite
+
+`ergon update` upgrades to the Arch the VM suite last installed and passed, not
+to today's: `packages/tested-date` names a day of archive.archlinux.org, and
+`/etc/pacman.d/ergon-mirrorlist` points core, extra and multilib at it. The
+whole system is held there, and new installs start from it too. What it buys:
+a Hyprland that renames a Lua field reaches this machine only after a desktop
+session has come up with it and its binds registered.
+
+**What it costs:** security fixes wait as well. The suite runs weekly, and on
+any push that touches the installer, so a fix is normally at most about a week
+behind; `ergon update` says how old its day is, and doctor's `arch-date` row
+warns past two weeks, when the suite has stopped passing. `ergon update
+--latest` takes live mirrors now, untested, and pacman stays on them until the
+next plain `ergon update`. **What stays true:** nothing is ever downgraded --
+behind a newer machine, pacman says "local is newer" and leaves it -- and AUR
+packages keep following their own pins in `packages/aur`, built against the
+held day's libraries.
+
 ## VS Code extensions run as you, outside pacman
 
 The vscode bundle installs `code` with pacman, and pacman's part ends there.

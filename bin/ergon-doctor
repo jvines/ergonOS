@@ -304,6 +304,36 @@ if command -v pacman >/dev/null 2>&1 && [ -f "$ERGON/packages/pacman" ]; then
   fi
 fi
 
+# --- the Arch day pacman is held at ---------------------------------------------
+# ERGON-35. A report on the pin, never a substitute for it: how far behind the
+# tested day this machine is, and how old that day is -- which is the security
+# lag, since fixes after it wait for the next passing VM run. Offline, three
+# files. pacman.conf is read for whether it uses the list at all, because a
+# list nothing reads pins nothing. The lib is guarded only because test
+# fixtures elsewhere carry a partial lib/.
+if [ -f "${ERGON_SYSROOT:-}/etc/pacman.conf" ] && [ -f "$ERGON/lib/archive-pin.sh" ]; then
+  # shellcheck source=../lib/archive-pin.sh
+  . "$ERGON/lib/archive-pin.sh"
+  days() { echo $(( ($(date -u -d "$2" +%s) - $(date -u -d "$1" +%s)) / 86400 )); }
+  tested=$(ergon_tested_date) || tested=""
+  held=$(ergon_pin_held) || held=""
+  if [ -z "$tested" ]; then
+    rec warn "arch-date" "no usable packages/tested-date: ergon update follows live mirrors, which no VM run has tested"
+  elif [ -z "$held" ]; then
+    rec warn "arch-date" "pacman.conf does not read $ERGON_PIN_LIST, so pacman follows live mirrors; ergon update holds it at $tested"
+  elif [ "$held" = live ]; then
+    rec warn "arch-date" "pacman follows live mirrors (ergon update --latest); a plain ergon update returns it to $tested"
+  elif [ "$held" != "$tested" ]; then
+    gap=$(days "$held" "$tested")
+    if [ "$gap" -gt 0 ]; then gap="$gap day(s) behind"; else gap="$(( -gap )) day(s) ahead of"; fi
+    rec warn "arch-date" "pacman at Arch $held, $gap the tested $tested — ergon update moves it there"
+  elif lag=$(days "$tested" "$(date -u +%F)"); [ "$lag" -gt "${ERGON_PIN_STALE_DAYS:-14}" ]; then
+    rec warn "arch-date" "pacman at Arch $held, and no newer day has passed the VM suite in $lag days: security fixes are that far behind. Is vm.yml red?"
+  else
+    rec ok "arch-date" "pacman at Arch $held, the tested day; $lag day(s) of Arch since, security fixes too, wait for the next passing VM run"
+  fi
+fi
+
 # --- foreign packages --------------------------------------------------------
 # Nothing on an Arch machine rebuilds an AUR package. One is linked against the
 # shared libraries of the day it was built, and after -Syu moves a soname the

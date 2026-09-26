@@ -34,6 +34,10 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 [ -f "$WORK/disk.qcow2" ] || {
   echo "no disk at $WORK/disk.qcow2 — run ./bin/test-arch-vm.sh --keep first" >&2; exit 1; }
+# ERGON-35: provision from the Arch day this disk was installed from, which
+# test-arch-vm.sh left beside it. Empty, the guest fails the run rather than
+# test whatever the mirrors have: that is no day vm.yml could record.
+ARCHIVE_DATE=$(cat "$WORK/archive-date" 2>/dev/null || true)
 # Same GPU auto-detection as bin/hypr-vm. With a render node the guest gets real
 # GL and a dmabuf path, which is what makes the wallpaper and grim assertions
 # mean anything; without one they are skips. Run this on a host with a GPU.
@@ -95,7 +99,7 @@ expect {
   "SHARE_OK" {}
 }
 
-send "echo '$USERPASS' | sudo -S env BACKUP_NAS=$BACKUP_NAS bash /mnt/test/arch-vm/guest-desktop.sh\r"
+send "echo '$USERPASS' | sudo -S env BACKUP_NAS=$BACKUP_NAS ERGON_ARCHIVE_DATE=$ARCHIVE_DATE bash /mnt/test/arch-vm/guest-desktop.sh\r"
 # SILENCE, not a budget.
 #
 # "set timeout 1800" above plus a single expect makes 1800s the allowance for

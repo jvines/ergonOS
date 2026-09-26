@@ -25,10 +25,16 @@
 # refuses to remove an orphan, and that --check rebuilds nothing; and ERGON-44:
 # the AUR asked once, after the transaction, its answer reported and never
 # built, an AUR that never answers bounded by a hard timeout, and neither that
-# nor a Ctrl-C there leaving a fetch running behind the run.
+# nor a Ctrl-C there leaving a fetch running behind the run. And ERGON-35: the
+# list written from packages/tested-date before the sync, pacman.conf pointed
+# at it once and then left alone, a moved list forcing -Syy even with nothing
+# pending, --check moving nothing, --latest and back, a missing or unreadable
+# day falling back to live mirrors rather than refusing, and doctor's arch-date
+# row over the files those runs left.
 #
 # DOES NOT COVER: a real pacman transaction, real logind, real firmware, or the
 # real AUR (bin/test-aur.sh covers what ergon-aur --outdated makes of a reply).
+# Real pacman against the real archive is test/arch-vm/guest-desktop.sh's.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd -P)"
@@ -40,6 +46,7 @@ bad() { FAIL=$((FAIL + 1)); printf '   FAIL %s\n' "$*"; }
 check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi; }
 has()  { grep -qF -- "$2" "$1" 2>/dev/null; }
 hasx() { grep -qxF -- "$2" "$1" 2>/dev/null; }
+hasre() { grep -qE -- "$2" "$1" 2>/dev/null; }
 not()  { ! "$@"; }
 # The gates refuse before pacman is reached at all, so the log may not exist --
 # which is a pass, not a missing file to complain about on stderr.
@@ -76,6 +83,29 @@ SNAPPER="$S/etc/snapper/configs/root"
 HYPREXE="$S/proc/1234/exe"
 mkdir -p "$(dirname "$VMLINUZ")" "$(dirname "$SNAPPER")" "$(dirname "$HYPREXE")"
 : > "$VMLINUZ"; : > "$SNAPPER"; ln -s /usr/bin/Hyprland "$HYPREXE"
+# ERGON-35: pacman.conf as the pacman package ships it, trimmed. Nothing below
+# writes the list or the pinned form by hand, so "pinned" is only ever what a
+# run made of this file.
+mkdir -p "$S/etc/pacman.d"
+cat > "$S/etc/pacman.conf" <<'EOF'
+[options]
+HoldPkg     = pacman glibc
+Architecture = auto
+
+[core]
+Include = /etc/pacman.d/mirrorlist
+
+[extra]
+Include = /etc/pacman.d/mirrorlist
+
+#[multilib]
+#Include = /etc/pacman.d/mirrorlist
+EOF
+cp "$S/etc/pacman.conf" "$T/stock.conf"
+LIST="$S/etc/pacman.d/ergon-mirrorlist"
+TESTED=$(date -u -d '3 days ago' +%F)
+# The line a day must produce, spelled out here rather than asked of the lib.
+server() { echo "Server = https://archive.archlinux.org/repos/${1//-//}/\$repo/os/\$arch"; }
 
 # --- stubs in front of everything that runs as root or reads a real Arch ------
 cat > "$T/stub/sudo" <<'EOF'
@@ -104,7 +134,7 @@ case "$1" in
   -Qo)
     [ -e "$2" ] || exit 1
     echo "$2 is owned by linux-lts 6.12.0-1" ;;
-  -Sy) exit "${STUB_SYNC_FAIL:-0}" ;;
+  -Sy|-Syy) exit "${STUB_SYNC_FAIL:-0}" ;;
   -S)  exit "${STUB_KEYRING_FAIL:-0}" ;;
   -Su) exit "${STUB_PACMAN_FAIL:-0}" ;;
   -Rns) cat >> "$TEST_ROOT/log/removed" ;;
@@ -185,6 +215,10 @@ mkdir -p "$T/ergon/bin" "$T/ergon/lib"
 # pin down are built in there, and a throwaway tree missing it would only
 # prove that a missing file makes the script exit.
 cp "$REPO/lib/transaction.sh" "$T/ergon/lib/transaction.sh"
+# The pin's lib, and provision-inputs.sh for the doctor row read at the end.
+cp "$REPO/lib/archive-pin.sh" "$REPO/lib/provision-inputs.sh" "$T/ergon/lib/"
+mkdir -p "$T/ergon/packages" "$T/home" "$T/dr/log"
+echo "$TESTED" > "$T/ergon/packages/tested-date"
 # --outdated notes whether -Su had already run when it was asked, which is the
 # ordering claim, and can stand in for an AUR that never answers -- hanging
 # where the real one does, in a fetch under a timeout of its own, which puts it
@@ -224,6 +258,32 @@ WRAPPED="--scope --quiet --collect --description=ergon-update -- \
 systemd-inhibit --what=sleep:shutdown:handle-lid-switch --who=ergon --why=system-upgrade -- \
 bash -c pacman -Sy --noconfirm || exit 10; \
 pacman -S --needed --noconfirm archlinux-keyring || true; pacman -Su --noconfirm"
+
+# The one doctor row ERGON-35 adds, off the same sysroot. Its own log dir: doctor
+# asks the pacman stub things an update never does, and those are not this
+# file's violations.
+doctor() {
+  env -u WAYLAND_DISPLAY HOME="$T/home" TEST_ROOT="$T/dr" "$REPO/bin/ergon-doctor" --json 2>/dev/null \
+    | grep -o '{"name":"arch-date"[^}]*}'
+}
+
+echo "== held at the Arch day the VM suite passed (ERGON-35)"
+update -- --yes
+check "a machine never pinned is pinned by its first update" test "$?" -eq 0
+check "  the list names the tested day on the archive" hasx "$LIST" "$(server "$TESTED")"
+check "  core and extra read it" test "$(grep -cx 'Include = /etc/pacman.d/ergon-mirrorlist' "$S/etc/pacman.conf")" -eq 2
+check "  and nothing still reads live mirrors" not grep -q '^Include = /etc/pacman.d/mirrorlist' "$S/etc/pacman.conf"
+check "  a multilib left off stays off" hasx "$S/etc/pacman.conf" "#Include = /etc/pacman.d/mirrorlist"
+check "  the rest of pacman.conf is kept" hasx "$S/etc/pacman.conf" "HoldPkg     = pacman glibc"
+check "  the databases follow at once, although nothing was pending" hasx "$L/pacman" "-Syy --noconfirm"
+check "  from a list written before that sync" \
+  test "$(grep -n 'ergon-mirrorlist' "$L/sudo" | head -1 | cut -d: -f1)" -lt "$(grep -n '^systemd-run' "$L/sudo" | head -1 | cut -d: -f1)"
+check "  it names the day" has "$T/out" "Arch as of $TESTED"
+check "  and what waiting for it costs" has "$T/out" "Security fixes released since then wait"
+cp "$S/etc/pacman.conf" "$T/pinned.conf"
+update -- --yes
+check "the same day again: no transaction" noxact
+check "  and pacman.conf is left byte for byte" cmp -s "$T/pinned.conf" "$S/etc/pacman.conf"
 
 echo "== the transaction"
 update STUB_PENDING=vim -- --yes
@@ -421,6 +481,45 @@ check "Ctrl-C while the AUR says nothing ends the run then (${took}s)" test "$to
 check "  as an interrupt, 130" test "$rc" -eq 130
 check "  without carrying on to the reports after it" test ! -e "$L/pacdiff"
 check "  and leaves nothing of the AUR call running" gone "$(cat "$L/aur-fetch" 2>/dev/null)"
+
+echo "== the tested day moves, --latest, and a day nobody can read"
+NEWER=$(date -u -d '1 day ago' +%F)
+echo "$NEWER" > "$T/ergon/packages/tested-date"
+update STUB_PENDING=vim -- --check
+check "--check with a newer tested day writes nothing" hasx "$LIST" "$(server "$TESTED")"
+check "  and says a real run moves pacman first" has "$T/out" "a real run moves it first"
+check "doctor counts the days the machine is behind the tested day" \
+  hasre <(doctor) '"state":"warn".*2 day\(s\) behind the tested'
+update -- --yes
+check "a plain update moves the list to it" hasx "$LIST" "$(server "$NEWER")"
+check "  forcing the sync" hasx "$L/pacman" "-Syy --noconfirm"
+check "  and doctor calls the machine held there, and says how old the day is" \
+  hasre <(doctor) '"state":"ok".*Arch '"$NEWER"'.*1 day\(s\) of Arch since'
+update -- --yes --latest
+check "--latest reads live mirrors" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
+check "  forcing the sync" hasx "$L/pacman" "-Syy --noconfirm"
+check "  and says no VM run has tested them" has "$T/out" "--latest: live mirrors, which no VM run has tested"
+check "  doctor says the machine is on live mirrors" hasre <(doctor) '"state":"warn".*--latest'
+update -- --yes
+check "the next plain update returns to the tested day" hasx "$LIST" "$(server "$NEWER")"
+check "  with -Syy: back to an older day, -Sy keeps the newer database" hasx "$L/pacman" "-Syy --noconfirm"
+echo "next tuesday" > "$T/ergon/packages/tested-date"
+update STUB_PENDING=vim -- --yes
+check "an unreadable tested day is no refusal" test "$?" -eq 0
+check "  the upgrade runs" hasx "$L/pacman" "-Su --noconfirm"
+check "  from live mirrors" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
+check "  and it says so" has "$T/out" "packages/tested-date is missing or unreadable"
+rm "$T/ergon/packages/tested-date"
+update STUB_PENDING=vim -- --yes
+check "no tested day at all: the same" hasx "$L/pacman" "-Su --noconfirm"
+check "  doctor warns" hasre <(doctor) '"state":"warn".*no usable packages/tested-date'
+date -u -d '20 days ago' +%F > "$T/ergon/packages/tested-date"
+update -- --yes
+check "a tested day three weeks old: doctor says security fixes are that far behind" \
+  hasre <(doctor) '"state":"warn".*in 20 days: security fixes'
+cp "$T/stock.conf" "$S/etc/pacman.conf"
+check "a pacman.conf that does not read the list pins nothing, and doctor says so" \
+  hasre <(doctor) '"state":"warn".*pacman.conf does not read'
 
 echo
 check "no stub saw a command it did not expect" test ! -e "$L/violations"

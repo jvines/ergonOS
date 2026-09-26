@@ -91,6 +91,26 @@ ok "$(du -h "$ISO" | cut -f1)  $(basename "$ISO")"
 mkdir -p "$WORK"
 
 # ---------------------------------------------------------------------------
+say "arch date"
+# ERGON-35. The install and the provisioning after it come from ONE Arch
+# archive snapshot, so what passes is a date, and vm.yml records it in
+# packages/tested-date for `ergon update` to hold machines at. Against live
+# mirrors a run tested roughly the day it ran, which nothing can pin.
+#
+# Yesterday UTC: a day's snapshot appears at about 12:40 UTC that day, so at
+# 06:25 on 2026-09-26 its directory was a 404 (measured), and the weekly run
+# starts at 07:00. Written beside the disk because the disk carries it:
+# test-hypr-session.sh provisions this disk, from this date.
+# shellcheck source=../lib/archive-pin.sh
+. "$ERGON/lib/archive-pin.sh"
+ARCHIVE_DATE=$(ERGON_ARCHIVE_DATE="${ERGON_ARCHIVE_DATE:-$(date -u -d yesterday +%F)}" ergon_tested_date) \
+  || { echo "ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} is not a day up to today" >&2; exit 1; }
+curl -fsI --max-time 30 "$(ergon_archive_url "$ARCHIVE_DATE")/core/os/x86_64/core.db" >/dev/null \
+  || { echo "no Arch snapshot for $ARCHIVE_DATE at $ERGON_ARCHIVE_URL" >&2; exit 1; }
+echo "$ARCHIVE_DATE" > "$WORK/archive-date"
+ok "Arch as of $ARCHIVE_DATE, for the install and the provisioning after it"
+
+# ---------------------------------------------------------------------------
 say "disk and firmware"
 rm -f "$WORK/disk.qcow2" "$WORK/OVMF_VARS.fd"
 docker run --rm -v "$WORK:/w" -v "$ISO:/iso:ro" "$IMAGE" bash -euo pipefail -c "
@@ -210,7 +230,7 @@ expect {
 # UNATTENDED only -- deliberately NOT ARCH_BOOTSTRAP_TEST. The live-ISO guard,
 # the UEFI guard and the real swapon all have to run here; that is the entire
 # reason for doing this in a VM instead of a container.
-send "ARCH_BOOTSTRAP_UNATTENDED=1 HOSTNAME_NEW=$VMHOST LUKS_PASSPHRASE=$PASSPHRASE USER_PASSWORD=$USERPASS SWAP_GIB=$SWAP_GIB bash /ergon/bin/arch-bootstrap.sh /dev/vda; echo BOOTSTRAP_RC=\\\$?\r"
+send "ARCH_BOOTSTRAP_UNATTENDED=1 HOSTNAME_NEW=$VMHOST LUKS_PASSPHRASE=$PASSPHRASE USER_PASSWORD=$USERPASS SWAP_GIB=$SWAP_GIB ERGON_ARCHIVE_DATE=$ARCHIVE_DATE bash /ergon/bin/arch-bootstrap.sh /dev/vda; echo BOOTSTRAP_RC=\\\$?\r"
 expect {
   timeout { puts "\n!! arch-bootstrap.sh did not finish in 50 minutes"; exit 1 }
   "BOOTSTRAP_RC=0" { puts "\n-- bootstrap exited 0" }

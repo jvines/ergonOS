@@ -110,7 +110,10 @@ rm -f /etc/systemd/logind.conf.d/10-lid.conf /etc/systemd/sleep.conf.d/10-hibern
 # scrolling nobody reads), but the console now carries a heartbeat with the last
 # line of real progress on it — which both keeps the watchdog fed and tells a
 # person reading the job log what it was doing when it stopped.
-su - "$U" -c "ERGON=$H/ergonOS ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_BUNDLES=notebooks ERGON_HARDWARE=framework-13-amd bash $H/ergonOS/bin/provision-arch.sh" >/tmp/prov.log 2>&1 &
+#
+# ERGON_ARCHIVE_DATE: the Arch day bin/test-arch-vm.sh installed this disk from.
+# su - starts a clean environment, so it goes on the command line.
+su - "$U" -c "ERGON=$H/ergonOS ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_BUNDLES=notebooks ERGON_HARDWARE=framework-13-amd ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} bash $H/ergonOS/bin/provision-arch.sh" >/tmp/prov.log 2>&1 &
 _prov=$!
 _t0=$(date +%s)
 while kill -0 "$_prov" 2>/dev/null; do
@@ -243,13 +246,45 @@ fi
 # hermetic test stubs provision-arch.sh out, and the stamp says a run happened,
 # not how. `pacman -r <root> -Sy` from pacstrap does not match either pattern,
 # and the later bare `-S --needed` fallbacks (waybar, graphics) are correct --
-# it is the refresh without the upgrade that must never appear.
-if grep -q "Running 'pacman -Syu" /var/log/pacman.log 2>/dev/null \
-   && ! grep -qE "Running 'pacman -Sy[^u]" /var/log/pacman.log 2>/dev/null; then
+# it is the refresh without the upgrade that must never appear. -Syyu is the
+# same transaction with the database forced, which a moved Arch date needs.
+if grep -qE "Running 'pacman -Syy?u" /var/log/pacman.log 2>/dev/null \
+   && ! grep -qE "Running 'pacman -Syy?[^yu]" /var/log/pacman.log 2>/dev/null; then
   ok "packages were installed in one -Syu transaction, with no bare -Sy refresh"
 else
   bad "provisioning did not install in a single -Syu transaction"
   grep -o "Running 'pacman -S[^']*" /var/log/pacman.log 2>/dev/null | sed 's/^/     /' | head -5
+fi
+
+# ERGON-35: the whole run on ONE Arch day, the one vm.yml records when this
+# passes. pacman-conf answers with the servers pacman itself resolves, Includes
+# followed; and nothing installed may differ from the databases provisioning
+# just -Syyu'd from that day, which holds only if pacstrap came from it too.
+# -Sl, not `-Sup | grep "is newer than"`: --print drops that warning, and the
+# grep passed a system two days ahead of its databases (measured, pacman 7).
+if [ -z "${ERGON_ARCHIVE_DATE:-}" ]; then
+  bad "the harness passed no ERGON_ARCHIVE_DATE: this run tested whatever the mirrors had, which is no day to record"
+else
+  _day="https://archive.archlinux.org/repos/${ERGON_ARCHIVE_DATE//-//}"
+  _srv=$(pacman-conf --repo core Server 2>&1; pacman-conf --repo extra Server 2>&1)
+  if [ "$_srv" = "$_day/core/os/x86_64"$'\n'"$_day/extra/os/x86_64" ]; then
+    ok "pacman reads core and extra from Arch as of $ERGON_ARCHIVE_DATE"
+  else
+    bad "pacman is not held at $ERGON_ARCHIVE_DATE; it resolves:"
+    printf '%s\n' "$_srv" | sed 's/^/     /'
+  fi
+  _newer=$(pacman -Sl core extra 2>&1 | grep '\[installed: ' || true)
+  if [ -z "$_newer" ]; then
+    ok "  and every installed package is that day's version, the install included"
+  else
+    bad "  but these are not $ERGON_ARCHIVE_DATE's, so part of the system came from another day:"
+    printf '%s\n' "$_newer" | head -5 | sed 's/^/     /'
+  fi
+  _pin_row=$(doctor_row arch-date su - "$U" -c "ERGON_ARCHIVE_DATE=$ERGON_ARCHIVE_DATE $G/bin/ergon-doctor --json")
+  case "$_pin_row" in
+    *'"state":"ok"'*"Arch $ERGON_ARCHIVE_DATE"*) ok "  and ergon doctor reads the same day off this pacman.conf" ;;
+    *) bad "  ergon doctor does not report the day pacman is held at: ${_pin_row:-no arch-date row}" ;;
+  esac
 fi
 
 echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-harness
@@ -279,7 +314,7 @@ if su - "$U" -c "set -e
     git -C /tmp/ergon-ahead -c user.email=vm@ergon.invalid -c user.name=vm commit -qam 'packages: a provisioning input changes'
     git -C /tmp/ergon-ahead push -q origin HEAD" > /tmp/sync-setup.log 2>&1
 then
-  su - "$U" -c "ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 $G/bin/ergon-sync --yes" > /tmp/sync.log 2>&1
+  su - "$U" -c "ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} $G/bin/ergon-sync --yes" > /tmp/sync.log 2>&1
   ahead=$(su - "$U" -c "git -C $G rev-parse HEAD")
   if grep -qx "commit=$ahead" "$STAMP" 2>/dev/null; then
     ok "ergon sync re-provisioned for an incoming change to packages/pacman"
