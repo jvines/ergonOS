@@ -158,6 +158,25 @@ else
   rec fail "docker-publish" "$DJ does not set \"ip\": \"127.0.0.1\" — docker run -p binds every interface"
 fi
 
+# --- printing (ERGON-40) -----------------------------------------------------
+# cups.socket is socket-activated, so "is cupsd running" is the wrong question
+# -- it is asleep on a machine nobody has printed from yet, which is the design
+# and not a failure. The socket is the one thing actually always enabled.
+#
+# The queue count comes from `lpstat`, not from reading printers.conf: measured
+# in ergon64-closure, cupsd does not flush that file to disk on every lpadmin,
+# so a queue can exist for a while before the file agrees with it. `lpstat -p`
+# asks the scheduler directly over the local IPP socket -- no network, and it
+# is the same wake a real print job would cause.
+if ! systemctl is-enabled --quiet cups.socket 2>/dev/null; then
+  rec fail "printing" "cups.socket is not enabled — provisioning did not run, or something turned it off. lpadmin has no scheduler to talk to"
+elif ! systemctl is-active --quiet cups.socket 2>/dev/null; then
+  rec fail "printing" "cups.socket is enabled but not active — printing is dead until it is"
+else
+  pq=$(lpstat -p 2>/dev/null | grep -c '^printer ')
+  rec ok "printing" "cups.socket active; $pq queue(s) configured"
+fi
+
 # --- provisioning ------------------------------------------------------------
 # The system-level layer -- packages, systemd drop-ins, polkit rules, GRUB --
 # reaches a machine only through bin/provision-arch.sh. `ergon sync` re-runs it

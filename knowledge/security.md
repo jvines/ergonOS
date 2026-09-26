@@ -68,8 +68,16 @@ What stays open, and why each one is not optional:
   sshd is not enabled on a fresh install, and the fleet reaches this machine
   over the tailnet.
 
-mDNS stays closed. It is what network printer discovery needs, and printing is
-card G22, which owns opening it to the LAN.
+mDNS (UDP 5353) is open, for driverless printer discovery and for this
+machine resolving a `*.local` name of its own (ERGON-40). Scoped by
+DESTINATION, not source or interface -- a laptop with no fixed name for "the
+LAN" the way `tailscale0` is a fixed name for the tailnet. 224.0.0.251 and
+`ff02::fb` are link-local multicast groups that no conforming router forwards
+past the local segment (RFC 5771; `ff02::` is link-local IPv6 scope by
+definition), so a packet reaching the input hook addressed to either one was
+necessarily sent on whichever network this machine is on right now. A
+unicast query straight at this host's own address on 5353 still hits the
+drop policy below.
 
 ### The ruleset must never flush the whole ruleset
 

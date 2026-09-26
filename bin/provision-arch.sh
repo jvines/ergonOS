@@ -303,12 +303,21 @@ table inet ergon {
 		# answer: sshd is not enabled on a fresh install, and the fleet reaches
 		# this machine over the tailnet, which the rule above already trusts.
 
-		# mDNS stays CLOSED. It is what network printer discovery needs, and
-		# printing is card G22, which owns opening it -- to the LAN only, and
-		# only when printing is enabled:
-		#   udp dport 5353 ip daddr 224.0.0.251 accept
-		#   udp dport 5353 ip6 daddr ff02::fb accept
-		#
+		# mDNS (ERGON-40): driverless printer discovery, and this machine
+		# resolving a *.local name of its own through nss-mdns below. Scoped by
+		# DESTINATION, not source or interface -- there is no interface name
+		# "the LAN" can mean on a laptop that roams to a different one every
+		# week, but 224.0.0.251 and ff02::fb are link-local multicast groups
+		# that no conforming router forwards past the local segment (RFC 5771;
+		# ff02:: is link-local IPv6 scope by definition). A packet reaching
+		# this input hook addressed to either one was necessarily sent on
+		# whatever network this laptop is on right now. A bare
+		# `udp dport 5353 accept` would not have that property -- a unicast
+		# query straight at this host's own address still hits the policy
+		# below and is dropped.
+		udp dport 5353 ip daddr 224.0.0.251 accept
+		udp dport 5353 ip6 daddr ff02::fb accept
+
 		# Traffic from the docker bridges is dropped with everything else, so a
 		# container reaching back to the host gateway (host.docker.internal,
 		# --add-host ...:host-gateway) hangs. That is deliberate and it is in
@@ -482,11 +491,59 @@ say "services"
 # packages/pacman and was never enabled, so waybar's power-profiles-daemon
 # module had no daemon to talk to and clicking it did nothing at all. TLP is
 # deliberately absent -- the two conflict.
-for u in NetworkManager docker tailscaled bluetooth fwupd power-profiles-daemon; do
+#
+# avahi-daemon (ERGON-40) is here and NOT socket-activated like cups below: it
+# has to be listening for the 5353 traffic the firewall now admits, whether or
+# not anyone has ever opened a print dialog.
+for u in NetworkManager docker tailscaled bluetooth fwupd power-profiles-daemon avahi-daemon; do
   if systemctl list-unit-files "$u.service" >/dev/null 2>&1; then
     sudo systemctl enable --now "$u" >/dev/null 2>&1 && ok "$u" || skip "$u (not installed)"
   fi
 done
+
+# ---------------------------------------------------------------------------
+say "printing"
+# ERGON-40. cups.socket, NOT cups.service -- this loop above enables daemons
+# that earn their keep all the time; cupsd does not. Socket activation means a
+# machine nobody has printed from never runs it at all, which is the
+# acceptance criterion ("costs nothing idle") rather than polish.
+if systemctl list-unit-files cups.socket >/dev/null 2>&1; then
+  sudo systemctl enable --now cups.socket >/dev/null 2>&1 \
+    && ok "cups.socket (printing is asleep until something asks)" \
+    || warn "cups.socket would not enable"
+else
+  skip "cups.socket (cups not installed yet)"
+fi
+
+# nss-mdns resolves nothing for a *.local name without this -- it is a NSS
+# module, not a daemon, and the resolver never tries it unless nsswitch.conf
+# says to. Stock Arch's hosts: line (measured in archlinux:latest) is
+#   hosts: mymachines resolve [!UNAVAIL=return] files myhostname dns
+# with no mdns token anywhere on it. [NOTFOUND=return] rather than the default
+# fall-through: a .local name mDNS could not find must stop there, not fall
+# through to a real DNS server that has never heard of .local and will sit on
+# the query for a timeout.
+#
+# An EDIT, not a file, and only when nobody has already answered this: any
+# `mdns`-anything token already on the hosts: line is someone's own choice,
+# left alone exactly like the docker-group knob leaves a hand-usermod alone.
+_ns=/etc/nsswitch.conf
+_ns_mdns=$(cat <<'MDNS'
+/^hosts:/ && !/mdns/ && /resolve/ { sub(/resolve/, "mdns_minimal [NOTFOUND=return] resolve") }
+{ print }
+MDNS
+)
+if [ ! -f "$_ns" ]; then
+  warn "no $_ns -- .local names will not resolve"
+elif _ns_new=$(awk "$_ns_mdns" "$_ns") && [ -n "$_ns_new" ] && grep -q '^hosts:.*mdns' <<<"$_ns_new"; then
+  if _changed "$_ns" <<<"$_ns_new"; then
+    ok "nsswitch.conf resolves .local names via mDNS"
+  else
+    skip "nsswitch.conf already resolves .local names"
+  fi
+else
+  warn "$_ns has no hosts: line with a resolve token to anchor on -- .local names will not resolve"
+fi
 # Group membership, NOT the daemon, is gated on DOCKER_GROUP (see "docker
 # group" below, after hosts/$HOST/host.env exists to read it from) -- the
 # daemon enables unconditionally because sudo docker needs it running either

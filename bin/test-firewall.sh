@@ -113,11 +113,18 @@ check "  by name, not by an index that does not exist at boot" \
 check "direct WireGuard is accepted, so tailscale need not relay" \
   has "$T/rules" 'udp dport 41641 accept'
 
-# mDNS is what network printer discovery needs and printing is card G22. Closed
-# until that card opens it, and the file has to say so -- a commented-out rule
-# with no owner is one somebody uncomments.
-check "mDNS is closed"          not has "$T/rules" '5353'
-check "and the card that owns opening it is named" has "$T/nftables.conf" 'G22'
+# mDNS: driverless printer discovery and this machine's own *.local name
+# (ERGON-40). Scoped by DESTINATION, not source or interface -- 224.0.0.251 and
+# ff02::fb are link-local multicast groups no conforming router forwards past
+# the local segment, so admitting them is not the same as opening the port: a
+# unicast query straight at this host's own address must still hit the policy.
+check "mDNS v4 is admitted, to the multicast group only" \
+  has "$T/rules" '^[[:space:]]*udp dport 5353 ip daddr 224\.0\.0\.251 accept$'
+check "mDNS v6 is admitted, to the multicast group only" \
+  has "$T/rules" '^[[:space:]]*udp dport 5353 ip6 daddr ff02::fb accept$'
+check "  and there is no bare accept a unicast query on 5353 could hit" \
+  not has "$T/rules" '^[[:space:]]*udp dport 5353 accept$'
+check "and the card that opened it is named" has "$T/nftables.conf" 'ERGON-40'
 
 # Docker's DNAT delivers a published port through FORWARD. A forward chain here
 # with a drop policy would break container networking outright; an output chain
@@ -221,12 +228,21 @@ mkdir -p "$T/stub" "$T/ergon/lib" "$T/sysroot/etc/docker" "$T/home"
 cp "$REPO/lib/provision-inputs.sh" "$T/ergon/lib/"
 cat > "$T/stub/systemctl" <<'EOF'
 #!/usr/bin/env bash
-# Only the question doctor asks. Anything else succeeds, so an unrelated check
-# further down cannot fail this suite.
+# Only the questions doctor asks, each keyed on the UNIT so the firewall row
+# and the printing row cannot answer for each other. Anything else succeeds,
+# so an unrelated check further down cannot fail this suite.
 case " $* " in
-  *" is-active "*) [ "${STUB_NFTABLES:-active}" = active ] ;;
+  *" is-active "*" cups.socket "*)   [ "${STUB_CUPS_ACTIVE:-active}"   = active  ] ;;
+  *" is-enabled "*" cups.socket "*)  [ "${STUB_CUPS_ENABLED:-enabled}" = enabled ] ;;
+  *" is-active "*)                   [ "${STUB_NFTABLES:-active}"     = active  ] ;;
   *) exit 0 ;;
 esac
+EOF
+cat > "$T/stub/lpstat" <<'EOF'
+#!/usr/bin/env bash
+# `lpstat -p`. STUB_QUEUES is how many `printer qN is idle.` lines to print --
+# doctor only counts the lines, so the exact text is a stand-in for cupsd's.
+for i in $(seq 1 "${STUB_QUEUES:-0}"); do printf 'printer q%d is idle.\n' "$i"; done
 EOF
 cat > "$T/stub/nft" <<'EOF'
 #!/usr/bin/env bash
@@ -304,6 +320,19 @@ check "no daemon.json at all is a failure, not a skip" \
 # has no sudo at all -- and it is the half the ruleset cannot cover.
 check "  even with no root anywhere" \
   has <(STUB_SUDO=deny doctor docker-publish) '"state":"fail"'
+
+# --- ERGON-40: what doctor says about printing -------------------------------
+# cups.socket is socket-activated, so "not active" is the ordinary state of a
+# machine nobody has printed from yet -- only "not ENABLED" (provisioning never
+# ran, or someone disabled it) is the row that must fail outright.
+check "cups.socket not enabled is a failure -- provisioning never turned it on" \
+  has <(STUB_CUPS_ENABLED=disabled doctor printing) '"state":"fail"'
+check "enabled but not active is a failure too -- it should be listening" \
+  has <(STUB_CUPS_ACTIVE=dead doctor printing) '"state":"fail"'
+check "enabled and active is ok, with the queue count" \
+  has <(STUB_QUEUES=2 doctor printing) '"state":"ok".*2 queue'
+check "  including zero queues -- that is not a failure" \
+  has <(STUB_QUEUES=0 doctor printing) '"state":"ok".*0 queue'
 
 # --- the check that reported an open machine about a filtered one -------------
 # `nft list chain inet ergon input | grep -q 'policy drop'` returns 141 under
