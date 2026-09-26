@@ -151,36 +151,64 @@ else
   ok "ergon --pick invokes fuzzel"
 fi
 
-# ERGON-31: `ergon menu --dump` must stay non-interactive (no fuzzel) and
-# cover every group `ergon --groups` reports, so a command whose header names
-# a group the menu does not already know about cannot go missing from it
-# silently -- the same guarantee `ergon --list` already gives per command.
+# ERGON-31: `ergon menu --dump` must stay non-interactive (no fuzzel) and its
+# Commands branch must cover every command `ergon --list` reports, so a
+# command whose header names a group the menu does not already know about
+# cannot go missing from it silently.
 #
-# A placeholder $OUT: bin/ergon-wallpaper's own --list refuses only when
-# BOTH magick is missing AND no background is already on disk (it is what
-# keeps a machine with neither from losing its wallpaper daemon entirely --
-# see bin/ergon-wallpaper's comment above that check), and this sandboxed
-# $HOME starts with neither.
+# Checked against `ergon --list`, not `ergon --groups`: dump()'s Commands
+# branch is built by WALKING --groups/--group (bin/ergon-menu's
+# groups()/in_group()), so comparing it back to those same two calls is
+# circular. Proven by mutation, then reverted: changing bin/ergon's
+# `--groups)` arm to `exit 0` empties dump()'s Commands section entirely, and
+# the original version of this check -- `grep` over a `while read` from
+# `ergon --groups`, itself now empty -- still printed "ok", because a loop
+# with nothing to iterate finds nothing missing either. --list walks
+# entries() on its own, sharing no code with --groups/--group, so it cannot
+# go quiet the same way, and the empty-Commands case is caught directly
+# below instead of by accident.
+dump_commands() {  # the command names under a dump's "Commands" heading
+  sed -n '/^Commands$/,/^Help$/{s/^    \([^ ]*\).*/\1/p}' <<< "$1"
+}
+
+check_dump() {  # $1: label for this run, so two runs read as two checks
+  local dump rc cmds missing name
+  dump=$(timeout 5 "$ERGON_BIN" menu --dump 2>&1); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    bad "ergon menu --dump ($1): exit $rc: $(printf '%s' "$dump" | tr '\n' ' ')"
+    return
+  fi
+  cmds=$(dump_commands "$dump")
+  if [ -z "$cmds" ]; then
+    bad "ergon menu --dump ($1): Commands section is empty"
+    return
+  fi
+  missing=""
+  while IFS= read -r name; do
+    grep -qxF "$name" <<< "$cmds" || missing="$missing $name"
+  done < <("$ERGON_BIN" --list)
+  if [ -n "$missing" ]; then
+    bad "ergon menu --dump ($1): missing from Commands though ergon --list reports:$missing"
+  else
+    ok "ergon menu --dump ($1) covers every command ergon --list reports"
+  fi
+}
+
 : > "$LOG"
 mkdir -p "$HOME/.local/share/ergon"
 echo placeholder > "$HOME/.local/share/ergon/wallpaper.png"
-dump=$(timeout 5 "$ERGON_BIN" menu --dump 2>&1)
-rc=$?
-if [ "$rc" -ne 0 ]; then
-  bad "ergon menu --dump: exit $rc: $(printf '%s' "$dump" | tr '\n' ' ')"
-elif [ -s "$LOG" ]; then
-  bad "ergon menu --dump: touched fuzzel: $(tr '\n' ';' < "$LOG")"
-else
-  missing=""
-  while IFS= read -r g; do
-    grep -qxF "  $g" <<< "$dump" || missing="$missing $g"
-  done < <("$ERGON_BIN" --groups)
-  if [ -n "$missing" ]; then
-    bad "ergon menu --dump: missing group heading(s) that ergon --groups reports:$missing"
-  else
-    ok "ergon menu --dump covers every command group ergon --groups reports"
-  fi
-fi
+check_dump "background present"
+[ -s "$LOG" ] && bad "ergon menu --dump: touched fuzzel: $(tr '\n' ';' < "$LOG")"
+
+# And with NO background and no imagemagick -- a fresh $HOME, or a machine
+# mid-provisioning -- because bin/ergon-wallpaper's own --list refuses in
+# exactly that case (see its comment above that check), and dump()'s
+# Commands/Help must not go down with it (ERGON-31 review: they used to,
+# under set -e, before dump()'s Background branch caught that failure).
+: > "$LOG"
+rm -f "$HOME/.local/share/ergon/wallpaper.png"
+check_dump "no background, no imagemagick"
+[ -s "$LOG" ] && bad "ergon menu --dump: touched fuzzel: $(tr '\n' ';' < "$LOG")"
 
 # ergon new's .vscode/extensions.json: well-formed, and naming every
 # recommendation. uv and R are stubs that succeed, which keeps this offline;
