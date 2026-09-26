@@ -28,3 +28,11 @@ hl.env("XDG_SESSION_DESKTOP", "Hyprland")
 -- Wayland client and must not be pushed through XWayland by the GDK setting
 -- above. Nothing to do here beyond not breaking it — noted because the obvious
 -- "fix" for a blurry Emacs is GDK_BACKEND=x11, which is exactly wrong.
+
+-- NVIDIA. bin/ergon-hardware writes this only where a Turing-or-newer NVIDIA
+-- card drives the display and its driver is installed, and removes it when
+-- that stops being true; elsewhere it is absent and pcall makes that a no-op.
+-- Measured on 0.56.2: require takes an absolute path, hl.env is in effect as
+-- soon as the file has run, and an error inside it still reaches the overlay
+-- and --verify-config (exit 1), as ~/.config/ergon/user.lua's does.
+pcall(require, "/etc/ergon/hypr/nvidia")

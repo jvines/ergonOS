@@ -160,6 +160,21 @@ PYEOF
     echo "generated file cannot take the binds down with it."
   }
 
+  # ERGON-36. On an NVIDIA machine bin/ergon-hardware writes
+  # /etc/ergon/hypr/nvidia.lua, its marker as line 1, and hypr/common/env.lua
+  # requires it; absent, the "@@hyprland" run above already shows it costs
+  # nothing. Present, reaching it is asked the same way as the binds above.
+  echo "@@hyprland-nvidia-env"
+  install -d /etc/ergon/hypr
+  { sed -n "s/^MARK=\"\(.*\)\"\$/\1/p" /tmp/repo/bin/ergon-hardware
+    printf "hl.config({ general = { ergon_nvidia_env_reached = 1 } })\n"; } > /etc/ergon/hypr/nvidia.lua
+  nout=$(run "Hyprland --verify-config -c /home/t/.config/hypr/hyprland.lua") || true
+  rm -f /etc/ergon/hypr/nvidia.lua
+  printf "%s\n" "$nout" | grep -q "ergon_nvidia_env_reached" || {
+    echo "hypr/common/env.lua did not load /etc/ergon/hypr/nvidia.lua, or Lua choked on"
+    echo "its marker line: an NVIDIA machine would get none of its session env."
+    printf "%s\n" "$nout" | tail -4; }
+
   echo "@@fuzzel"
   run "fuzzel --config /tmp/repo/fuzzel/fuzzel.ini --check-config" || true
 
@@ -282,7 +297,7 @@ rc=0
 grep -qx '@@end' <<<"$out" || {
   printf '   FAIL the container script stopped before the end; last lines:\n'
   printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
-for tool in hyprland hyprland-degraded fuzzel foot wezterm waybar-css swayosd-css gtk-css \
+for tool in hyprland hyprland-degraded hyprland-nvidia-env fuzzel foot wezterm waybar-css swayosd-css gtk-css \
   lazygit-config lazydocker-config mako hypridle hyprlock newsboat uwsm-env; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then

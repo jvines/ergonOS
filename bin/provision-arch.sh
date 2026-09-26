@@ -596,15 +596,10 @@ GPUS=$(/sbin/lspci -nn 2>/dev/null | grep -iE 'vga|3d controller|display control
 GFX=""
 printf '%s' "$GPUS" | grep -qiE 'amd|ati|radeon' && GFX="$GFX vulkan-radeon"
 printf '%s' "$GPUS" | grep -qi 'intel'            && GFX="$GFX vulkan-intel intel-media-driver"
-printf '%s' "$GPUS" | grep -qiE 'nvidia'          && {
-  # Deliberately the open kernel modules and NOT the proprietary blob: nouveau
-  # cannot drive modern cards, and nvidia-open is what upstream now recommends
-  # for Turing and later. Anything older needs a human decision, so say so
-  # rather than installing something that will not work.
-  GFX="$GFX nvidia-open-dkms nvidia-utils"
-  warn "nvidia detected — nvidia-open-dkms covers Turing and later."
-  warn "  Older cards need the legacy driver chosen by hand; Wayland support varies."
-}
+# NVIDIA is chosen under "hardware" below, by bin/ergon-hardware: the module
+# package depends on the card's generation and on which kernels are installed,
+# and a wrong choice is worse than none -- nvidia-utils blacklists nouveau
+# whether or not a module was built. ERGON-36.
 if [ -n "$GFX" ]; then
   # shellcheck disable=SC2086
   sudo pacman -S --needed --noconfirm $GFX >/dev/null && ok "graphics:$GFX" \
