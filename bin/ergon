@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Run or list the ergon-* commands
 # ergon:group=help
-# ergon:args=[command] [args...] | --list | --group <name> | --pick
+# ergon:args=[command] [args...] | --list | --groups | --group <name> | --pick
 #
 # The one idea worth taking from Omarchy's 457-script CLI: scripts describe
 # themselves in a comment header, and the router reads those headers. There is
@@ -50,6 +50,11 @@ case "${1:-}" in
     usage; exit 0 ;;
   -h|--help) usage; exit 0 ;;
   --list)  entries | awk -F'\t' '{print $2}'; exit 0 ;;
+  # ERGON-31: ergon-menu builds its "Commands" branch from the same header
+  # tags --list and --group already parse -- one group name per line, in the
+  # same order entries() puts them in, so a command in a NEW group shows up
+  # here (and in the menu) without a second parser reading bin/*'s headers.
+  --groups) entries | awk -F'\t' '{print $1}' | uniq; exit 0 ;;
   --group) entries | awk -F'\t' -v g="${2:?--group needs a name}" '$1==g{printf "%-16s %s\n", $2, $3}'; exit 0 ;;
   --pick)
     # The picker, opt-in only now (see the '' arm above). Asked for by name,

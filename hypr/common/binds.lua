@@ -134,6 +134,14 @@ bind("SUPER + ALT + T",      "Previous palette",    "ergon-theme --prev")
 bind("SUPER + SHIFT + B",    "Next background",     "ergon-wallpaper --next")
 bind("SUPER + CTRL + B",     "Previous background", "ergon-wallpaper --prev")
 
+-- ERGON-31: the tree that reaches System, Style (palettes and backgrounds BY
+-- NAME, not only stepped -- see SUPER+T and SUPER+SHIFT+B just above),
+-- Commands and Help. SUPER+ALT+SPACE was free: grepped for ALT and for SPACE
+-- across every file in hypr/ before picking it, the only other ALT chords
+-- being SUPER+ALT+S (screenshot.lua) and the media/brightness ramps in
+-- media.lua, neither of which touches SPACE.
+bind("SUPER + ALT + SPACE",  "Menu",                "ergon-menu")
+
 -- ---------------------------------------------------------------------------
 -- Windows
 bind("SUPER + Q",            "Close window",        hl.dsp.window.close())

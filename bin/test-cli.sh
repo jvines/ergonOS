@@ -151,6 +151,37 @@ else
   ok "ergon --pick invokes fuzzel"
 fi
 
+# ERGON-31: `ergon menu --dump` must stay non-interactive (no fuzzel) and
+# cover every group `ergon --groups` reports, so a command whose header names
+# a group the menu does not already know about cannot go missing from it
+# silently -- the same guarantee `ergon --list` already gives per command.
+#
+# A placeholder $OUT: bin/ergon-wallpaper's own --list refuses only when
+# BOTH magick is missing AND no background is already on disk (it is what
+# keeps a machine with neither from losing its wallpaper daemon entirely --
+# see bin/ergon-wallpaper's comment above that check), and this sandboxed
+# $HOME starts with neither.
+: > "$LOG"
+mkdir -p "$HOME/.local/share/ergon"
+echo placeholder > "$HOME/.local/share/ergon/wallpaper.png"
+dump=$(timeout 5 "$ERGON_BIN" menu --dump 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  bad "ergon menu --dump: exit $rc: $(printf '%s' "$dump" | tr '\n' ' ')"
+elif [ -s "$LOG" ]; then
+  bad "ergon menu --dump: touched fuzzel: $(tr '\n' ';' < "$LOG")"
+else
+  missing=""
+  while IFS= read -r g; do
+    grep -qxF "  $g" <<< "$dump" || missing="$missing $g"
+  done < <("$ERGON_BIN" --groups)
+  if [ -n "$missing" ]; then
+    bad "ergon menu --dump: missing group heading(s) that ergon --groups reports:$missing"
+  else
+    ok "ergon menu --dump covers every command group ergon --groups reports"
+  fi
+fi
+
 # ergon new's .vscode/extensions.json: well-formed, and naming every
 # recommendation. uv and R are stubs that succeed, which keeps this offline;
 # the projects land in $T.

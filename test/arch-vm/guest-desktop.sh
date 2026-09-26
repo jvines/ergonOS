@@ -1312,6 +1312,14 @@ else
   bad "XF86PowerOff's live bind was not found -- cannot check its locked flag"
 fi
 
+# ERGON-31: SUPER+ALT+SPACE, the same "parses but did not register" gap the
+# two checks above exist for -- Hyprland --verify-config (checks.yml,
+# test-hypr-config.sh) proves the Lua parses and nothing more.
+_menu_bind=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Menu" and ((.key // "") | ascii_downcase) == "space")] | .[0] // empty' 2>/dev/null)
+[ -n "$_menu_bind" ] \
+  && ok "hyprctl reports a live 'Menu' bind on key SPACE (SUPER+ALT+SPACE registered)" \
+  || bad "no live bind on key SPACE describes itself 'Menu' -- SUPER+ALT+SPACE may not have registered"
+
 # Source-level wiring, kept as a second signal alongside the live checks above
 # (which prove registration but, like the rest of hyprctl under Lua, cannot
 # show WHAT a bind runs -- only description, key and locked survive).
@@ -1319,6 +1327,8 @@ grep -qE '^bind\("SUPER \+ SHIFT \+ E".*ergon-session' "$H/.config/hypr/common/b
   && ok "SUPER+SHIFT+E runs ergon-session" || bad "SUPER+SHIFT+E is not wired to ergon-session"
 grep -qE '^bind\("XF86PowerOff".*ergon-session' "$H/.config/hypr/common/binds.lua" \
   && ok "XF86PowerOff runs ergon-session" || bad "XF86PowerOff is not wired to ergon-session"
+grep -qE '^bind\("SUPER \+ ALT \+ SPACE".*ergon-menu' "$H/.config/hypr/common/binds.lua" \
+  && ok "SUPER+ALT+SPACE runs ergon-menu" || bad "SUPER+ALT+SPACE is not wired to ergon-menu"
 
 # Hibernate must appear in `ergon session --list` exactly when ergon-hardware
 # -- the one place that decision is made -- says hibernation is ready. This VM
