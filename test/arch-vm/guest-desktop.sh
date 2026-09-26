@@ -1913,6 +1913,7 @@ oom_diag() {
   oom_diag_shown=1
   echo "     --- out-of-memory diagnosis ---"
   for f in /etc/systemd/user/app.slice.d/10-ergon-oomd.conf \
+           /etc/systemd/user/tmux-spawn-.scope.d/10-ergon-oomd.conf \
            /etc/systemd/user/wayland-wm@.service.d/10-ergon-oom.conf \
            /etc/systemd/oomd.conf.d/10-ergon.conf; do
     if [ -r "$f" ]; then
@@ -2096,6 +2097,30 @@ if usr "systemd-run --user --scope --quiet --collect --slice=app.slice -p Memory
 else
   note "no user scope from a serial console (cgroup v2 refuses the migration), so the uwsm-app half of the terminal path is covered only by bin/test-oom.sh and by ergon-doctor's shell-slice row on real hardware"
 fi
+
+# A TMUX PANE (ERGON-47), where long runs live. tmux gives each pane its own
+# scope in the tmux SERVER's slice, and a server started over ssh -- which
+# zsh/common.zsh does on every inbound ssh -- is one the user manager reads as
+# sitting in its ROOT slice. The server here runs in a transient service on
+# that same root slice, for the migration reason above, so the only thing that
+# can put its pane under app.slice is provisioning's tmux-spawn-.scope.d.
+# Without it the pane is user@1000.service/tmux-spawn-*.scope (measured in a
+# container, systemd 262 and tmux 3.7c, with this exact command).
+cat > /tmp/tmux-pane-cgroup.sh <<'SH'
+tmux -L ergon-vm new-session -d 'sleep 60' || exit 1
+sleep 1
+cat "/proc/$(tmux -L ergon-vm list-panes -F '#{pane_pid}')/cgroup"
+tmux -L ergon-vm kill-server
+SH
+_pane=$(usr "timeout 60 systemd-run --user --quiet --wait --pipe --collect --slice=-.slice \
+             --unit=ergon-vm-tmux-probe -- sh /tmp/tmux-pane-cgroup.sh" 2>&1)
+case "$_pane" in
+  */user@1000.service/app.slice/tmux-spawn-*.scope*)
+    ok "a tmux pane from a server outside app.slice still lands under it, where oomd watches" ;;
+  *) bad "a tmux pane is outside app.slice — a runaway job started in tmux is contained by nothing"
+     printf '%s\n' "$_pane" | tail -5 | sed 's/^/     /'
+     oom_diag ;;
+esac
 
 # --- a palette switch reaches the desktop that is already up (ERGON-33) ----
 # NOTE, because it cost a run to learn: this suite tests COMMITTED work. The

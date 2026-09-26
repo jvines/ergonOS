@@ -23,9 +23,10 @@
 # nothing is watching it; the run still happening when the scope is refused; how
 # a kill is attributed to memory WITHOUT any journal access, and what `ergon
 # hist` shows for it; how the app.slice drop-in is made live in a user manager
-# that is ALREADY running, from the session-less shell provisioning runs in; and
-# the three doctor rows in every state, including a machine with no user manager
-# to ask.
+# that is ALREADY running, from the session-less shell provisioning runs in; the
+# drop-in that puts every tmux pane under app.slice (ERGON-47); and the three
+# doctor rows in every state, including a machine with no user manager to ask
+# and a tmux pane reached over ssh.
 #
 # DOES NOT COVER: whether systemd-oomd actually kills the scope under pressure,
 # whether the compositor survives it, or whether a notification is drawn. Those
@@ -59,7 +60,9 @@ heredoc() {  # heredoc <delimiter> <out>
 check "the oomd config is still written by provisioning"        heredoc OOMD   "$T/oomd.conf"
 check "the app.slice drop-in is still written by provisioning"  heredoc OOMAPP "$T/app.slice.conf"
 check "the compositor drop-in is still written by provisioning" heredoc OOMWM  "$T/wayland-wm.conf"
-[ -s "$T/oomd.conf" ] && [ -s "$T/app.slice.conf" ] && [ -s "$T/wayland-wm.conf" ] || {
+check "the tmux pane drop-in is still written by provisioning"  heredoc OOMTMUX "$T/tmux-spawn.conf"
+[ -s "$T/oomd.conf" ] && [ -s "$T/app.slice.conf" ] && [ -s "$T/wayland-wm.conf" ] \
+  && [ -s "$T/tmux-spawn.conf" ] || {
   echo "   cannot read what provisioning writes; the heredoc delimiters moved" >&2
   printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
   exit 1
@@ -97,6 +100,17 @@ check "  and the compositor drop-in against the uwsm template unit" \
   has "$REPO/bin/provision-arch.sh" '/etc/systemd/user/wayland-wm@\.service\.d/'
 check "systemd-oomd is enabled by provisioning" \
   has "$REPO/bin/provision-arch.sh" 'systemctl enable --now systemd-oomd'
+
+# A tmux pane is a transient scope named at random, tmux-spawn-<uuid>.scope, in
+# the tmux SERVER's slice -- the manager's root for a server started over ssh.
+# Only a prefix drop-in reaches a unit nobody can name in advance, so the
+# directory is the mechanism: tmux-spawn-.scope.d, exactly.
+check "every tmux pane is put under app.slice, and nothing else is set" \
+  test "$(grep -vE '^[[:space:]]*(#|$)' "$T/tmux-spawn.conf" | tr '\n' ' ')" = '[Scope] Slice=app.slice '
+check "  from the prefix drop-in the user manager applies to every tmux-spawn-*" \
+  has "$REPO/bin/provision-arch.sh" '/etc/systemd/user/tmux-spawn-\.scope\.d/10-ergon-oomd\.conf'
+check "  and a change to it reloads the manager, as the other two do" \
+  test "$(grep -A1 '^OOMTMUX$' "$REPO/bin/provision-arch.sh" | tail -1)" = 'then _user_reload=1; fi'
 
 # uwsm's unit sets no OOMPolicy=, so it takes the default, stop -- and it stops
 # FAILED, which its own OnFailure=wayland-session-shutdown.target turns into the
@@ -211,6 +225,8 @@ case " $* " in
     # the file on disk never moves, what changes is which manager has read it.
     # No manager to ask about app.slice is no manager to reload either.
     [ -n "${STUB_OOM_APP:-}" ] || exit 1
+    # A manager that answers and still will not reload: busy, or timing out.
+    [ -z "${STUB_RELOAD_REFUSED:-}" ] || exit 1
     : > "$TEST_ROOT/log/daemon-reloaded" ;;
   *" reset-failed "*) ;;
   *"-p Result"*)
@@ -225,6 +241,9 @@ case " $* " in
   # A scope is over by the time ergon-watch asks; the poll exists for the
   # moment before that, and a stub that never says "active" still exercises it.
   *"-p ActiveState"*) echo failed ;;
+  # What the manager says a tmux pane's scope is in. After a reload it names
+  # the drop-in's slice even for a pane whose cgroup never moved.
+  *"-p Slice "*) [ -n "${STUB_PANE_SLICE:-}" ] || exit 1; printf '%s\n' "$STUB_PANE_SLICE" ;;
   *"ManagedOOMMemoryPressure"*)
     if [ -e "$TEST_ROOT/log/daemon-reloaded" ] && [ -n "${STUB_OOM_AFTER_RELOAD:-}" ]; then
       printf '%s\n' "$STUB_OOM_AFTER_RELOAD"
@@ -315,6 +334,21 @@ check "provisioning asks the manager on every run, not only when the file change
 # sitting right there holding auto is how this shipped.
 check "  and keeps 'next login' for the branch where there is no manager" \
   has "$REPO/bin/provision-arch.sh" '^  2\) warn .*the policy applies at the next login'
+
+# Provisioning's own reload-and-report block, run against the stub manager with
+# a drop-in that just changed. The tmux one has no witness of its own -- on any
+# machine provisioned since ERGON-19 app.slice already holds kill -- so a reload
+# refused on the one run that asks for it must not pass in silence (ERGON-47).
+{ echo 'ok() { echo "ok $*"; }; warn() { echo "warn $*"; }; _user_reload=1'
+  sed -n '/^\[ "\$_user_reload" = 0 \]/,/^unset _oom_rc/p' "$REPO/bin/provision-arch.sh"
+} > "$T/oom-block"
+reload_says() { umgr STUB_OOM_APP=kill "$@" -- . "$T/oom-block" 2>&1; }
+check "a reload the running manager refuses is said, with the command that fixes it" \
+  has <(reload_says STUB_RELOAD_REFUSED=1) "^warn .*'systemctl --user daemon-reload'"
+check "  and a reload that lands adds nothing to the ok" \
+  test "$(reload_says)" = "ok app.slice is monitored by oomd in the user manager running now"
+check "  nor is it said where there is no manager, which has its own answer" \
+  not has <(umgr -- . "$T/oom-block" 2>&1) 'daemon-reload'
 
 watch() {  # watch <args>... -- fresh logs, one run
   rm -f "$L"/* "$J"
@@ -485,6 +519,8 @@ EOF
 chmod +x "$T/stub/sudo"
 export ERGON="$T/ergon" ERGON_SYSROOT="$T/sysroot"
 CG="$T/sysroot/proc/self/cgroup"
+# The tmux this suite may itself be running in is not the machine's.
+unset TMUX
 
 doctor() {  # doctor <check> -> that check's JSON object
   "$REPO/bin/ergon-doctor" --json 2>/dev/null | grep -o "{\"name\":\"$1\"[^}]*}"
@@ -520,6 +556,28 @@ printf '0::/user.slice/user-1000.slice/session-3.scope\n' > "$CG"
 check "a shell outside app.slice altogether is a warning, not a pass" \
   has <(doctor shell-slice) '"state":"warn"'
 
+# A tmux pane, where long runs live, asked the way it is usually reached: over
+# ssh, with no graphical session at all (ERGON-47).
+pane() {  # pane [<slice the manager names for its scope>] -> shell-slice, in tmux over ssh
+  ( unset WAYLAND_DISPLAY; export TMUX=/tmp/tmux-1000/default,1,0 STUB_PANE_SLICE="${1:-}"; doctor shell-slice )
+}
+TS=tmux-spawn-0d243bf9-8b89-416a-8706-1021ecf04172.scope
+printf '0::/user.slice/user-1000.slice/user@1000.service/app.slice/%s\n' "$TS" > "$CG"
+check "a tmux pane under app.slice is ok, with no graphical session" has <(pane) '"state":"ok"'
+# Both of these used to be one generic warning, and on a pane opened before
+# provisioning it could never clear: no re-provision moves a pane that exists.
+printf '0::/user.slice/user-1000.slice/user@1000.service/%s\n' "$TS" > "$CG"
+check "a pane at the manager's root with no policy for tmux says to re-provision" \
+  has <(pane -.slice) '"state":"warn".*re-run provisioning'
+# The drop-in can be on disk and still unread, and then re-provisioning changes
+# nothing: the file is unchanged, so nothing reloads the manager.
+check "  and then to reload the user manager, which re-provisioning may not do" \
+  has <(pane -.slice) 're-run provisioning.*systemctl --user daemon-reload.*new pane'
+check "a pane opened before the policy says a new one is contained" \
+  has <(pane app.slice) '"state":"warn".*a new pane or window is'
+check "  and does not send that person to re-provision" \
+  not has <(pane app.slice) 're-run provisioning'
+
 # --- the answer a ROOT shell can honestly give -------------------------------
 # doctor tells you to run itself under sudo for the rows that need root, and
 # under sudo these two are about a user manager and a shell that are not the
@@ -545,7 +603,7 @@ check "--json parses when a scope name carries a backslash" \
 check "  and the note survives the escaping intact" \
   sh -c '"$0"/bin/ergon-doctor --json 2>/dev/null | jq -er ".checks[]|select(.name==\"shell-slice\").note" | grep -q "ergon.x2dterm-1234.scope"' "$REPO"
 unset WAYLAND_DISPLAY
-check "outside a graphical session the row is not asked at all" \
+check "outside a graphical session and outside tmux the row is not asked at all" \
   test -z "$(doctor shell-slice)"
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
