@@ -210,10 +210,11 @@ bind("SUPER + SHIFT + X", "Clear clipboard history", "cliphist wipe")
 
 -- ---------------------------------------------------------------------------
 -- Capture. Screenshots live in screenshot.lua — they have their own sync
--- pipeline and must not be touched. These are the two that do not.
+-- pipeline and must not be touched. These are the ones that do not.
 bind("SUPER + SHIFT + T", "OCR region to clipboard", "ergon-ocr")
 bind("SUPER + SHIFT + P", "Pick colour",             "hyprpicker -a")
 bind("SUPER + SHIFT + R", "Record screen (toggle)",  "ergon-record")
+bind("SUPER + SHIFT + ALT + R", "Record region (toggle)", "ergon-record region")
 
 -- ---------------------------------------------------------------------------
 -- Notifications
