@@ -55,12 +55,17 @@ gui:
   showBottomLine: false
 
 git:
-  # `paging.pager`/`colorArg` is the schema lazygit 0.65 deprecated (ERGON-68):
-  # it migrated this file on every launch, rewriting it and printing a notice
-  # instead of opening. `diffRenderers` is the replacement -- a list so lazygit
-  # can cycle renderers with `|`, but one entry behaves exactly like the old
-  # single global pager. Measured against lazygit 0.65.1: it migrates the old
-  # shape into precisely this one (colorArg unchanged, pager -> command).
+  # `paging`/`pager` is a schema lazygit renamed twice -- to `pagers` in 0.56,
+  # then to `diffRenderers` in 0.64 (ERGON-68) -- and the old shape still
+  # parsed as valid YAML, so lazygit kept accepting it. Because `ergon theme`
+  # rewrites this file from the template on every render, each render put the
+  # old keys straight back: lazygit then migrated the file and printed a
+  # notice on the next launch (it goes on to open normally, it doesn't stop
+  # there), and the cycle repeated at the next render. Writing the current
+  # shape directly ends that. `diffRenderers` is a list so lazygit can cycle
+  # renderers with `|`, but one entry behaves exactly like the old single
+  # global pager. Measured against lazygit 0.65.1: it migrates the old shape
+  # into precisely this one (colorArg unchanged, pager -> command).
   diffRenderers:
     - # delta, so diffs are the same renderer git uses at the terminal. The theme
       # name must match the bat theme this repo installs -- see bat/.

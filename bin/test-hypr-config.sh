@@ -228,10 +228,12 @@ PYEOF
   # so stderr'"'"'s "yaml:" line is what is read, not $?.
   #
   # ERGON-68: a schema lazygit has deprecated still parses -- it is valid YAML
-  # -- so "yaml:" alone missed it. lazygit instead migrates the file in place
-  # and prints "must be migrated" before falling through to the same git-repo
-  # prompt, so that line has to be read too. Measured against the old
-  # git.paging/pager template (lazygit 0.65.1): this is the line it prints.
+  # -- so "yaml:" alone missed it. lazygit instead prints "must be migrated"
+  # and tries to write the migrated file back, which fails here specifically
+  # (this copy is root'"'"'s, /tmp/repo/lazygit/config.yml, and lazygit runs as
+  # t) -- so that line has to be read too. Measured against the old
+  # git.paging/pager template (lazygit 0.65.1): this is the line it prints
+  # before the permission-denied write-back error.
   echo "@@lazygit-config"
   run "cd /tmp && timeout 5 lazygit -ucf /tmp/repo/lazygit/config.yml" \
     | grep -iE "yaml:|must be migrated" || true
