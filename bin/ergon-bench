@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ergon:summary=What this machine does, and whether threading is sane
+# ergon:summary=Time matmul, FFT and a likelihood loop under the current threads
 # ergon:group=system
 # ergon:args=[--json]
 #

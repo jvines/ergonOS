@@ -177,9 +177,10 @@ zram is still parked — it changes what hibernation resumes from, and that need
 - **MIME associations and thumbnailers** — `.parquet` opens Columna, `.fits`
   opens theia, and the file manager previews a FITS image instead of a generic
   icon. Most of what makes a system feel finished rather than assembled
-- **`ergon-bench`** — matmul, FFT, a small sampler. Its real job is diagnostic:
-  mysteriously-10x-slower is almost always threading, and this says so in one
-  command next to `ergon-doctor`'s BLAS finding
+- **`ergon-bench`** — matmul, FFT, a small sampler, timed next to the thread
+  config. The diagnosis lives in `ergon-doctor`'s BLAS rows instead: bench has
+  no process pool, so it cannot observe the oversubscription this used to claim
+  to catch (ERGON-63)
 - **`ergon-calc '3 Rjup in Rearth'`** — astropy units from the shell, no REPL
 - **Locale and keyboard asked at install**, like every other installer
 
