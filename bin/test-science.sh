@@ -59,7 +59,7 @@ export MPLCONFIGDIR="$T/mpl"
 
 echo "== lib/, under uv"
 run=$(cd "$REPO" && "$UV" run --quiet --no-project \
-        --with matplotlib --with pytest \
+        --with matplotlib --with pytest --with pandas --with astropy \
         python -m pytest test/science -q --no-header -p no:cacheprovider 2>&1)
 rc=$?
 

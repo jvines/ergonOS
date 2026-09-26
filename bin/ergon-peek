@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # ergon:summary=Look at a data file without caring what it is
 # ergon:group=data
-# ergon:args=<file>|-
+# ergon:args=<file>|- [--hdu <#|EXTNAME>]
 # ergon:help=native
 #
-# parquet, CSV, FITS, npy/npz, JSON -- schema, null counts, per-column
-# summaries and the first rows, from one command. The alternative is four
-# half-remembered incantations and a collaborator's file you cannot open.
+# parquet, CSV, FITS (plain, .gz and .fz), npy/npz, JSON -- schema, null
+# counts, per-column summaries and the first rows, from one command. The
+# alternative is four half-remembered incantations and a collaborator's file
+# you cannot open.
 #
 #   ergon peek data.parquet
-#   ergon peek survey.fits
+#   ergon peek survey.fits.gz --hdu 2      # ESO/MAST ship FITS gzipped
 #   wl-paste | ergon peek -        # a table copied out of a PDF or a webpage
 #
 # Runs in the pyfleet venv rather than the system python: that is the
@@ -21,7 +22,7 @@ set -euo pipefail
 # for the fuller reasoning.
 for a in "$@"; do
   case "$a" in
-    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   esac
 done
 
