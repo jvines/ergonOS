@@ -68,6 +68,17 @@ age
 sops
 uv                  # python tooling; per-tool venvs, never a system python
 
+# --- printing (ERGON-40) ----------------------------------------------------
+# Driverless IPP only -- campus and observatory printers overwhelmingly speak
+# it, and it needs no PPD or vendor driver on this machine at all.
+cups                # NOT cups-browsed: Omarchy shipped it and then removed it
+                    # (migrations/1788009111.sh over there). system-config-printer
+                    # is left out too; nothing here has needed a GUI for a queue.
+avahi               # advertises/browses over mDNS; cups already depends on it,
+                    # listed anyway because provisioning enables it by name
+nss-mdns            # resolves a *.local NAME through avahi; does nothing until
+                    # nsswitch.conf's hosts: line says to try it (provisioning)
+
 # --- compositor and session ------------------------------------------------
 hyprland
 uwsm                # launches Hyprland under systemd, so the session has a

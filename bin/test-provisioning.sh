@@ -407,6 +407,32 @@ else
     || bad "passwd's keyring line is missing, doubled, misplaced or moves on a re-run: $(tr '\n' '|' < "$T/pw1")"
 fi
 
+# --- ERGON-40: nss-mdns, without clobbering a line a person changed ---------
+# The awk program is pulled out of provision-arch.sh, not copied, same as the
+# PAM one above. Its input is stock Arch's own nsswitch.conf (measured in
+# archlinux:latest), not a fixture invented for this test.
+sed -n "/<<'MDNS'\$/,/^MDNS\$/p" "$REPO/bin/provision-arch.sh" | sed '1d;$d' > "$T/mdns.awk"
+printf 'hosts: mymachines resolve [!UNAVAIL=return] files myhostname dns\nnetworks: files\n' > "$T/nsswitch"
+if [ ! -s "$T/mdns.awk" ]; then
+  bad "provisioning's nss-mdns edit is gone, or its MDNS heredoc moved"
+else
+  awk -f "$T/mdns.awk" "$T/nsswitch" > "$T/ns1"
+  [ "$(head -1 "$T/ns1")" = "hosts: mymachines mdns_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] files myhostname dns" ] \
+    && ok "nsswitch.conf's hosts: line gets mdns_minimal [NOTFOUND=return] before resolve" \
+    || bad "the hosts: line came out wrong: $(head -1 "$T/ns1")"
+  [ "$(sed -n 2p "$T/ns1")" = "networks: files" ] \
+    && ok "  and leaves the rest of the file alone" || bad "  it touched a line it does not own"
+  awk -f "$T/mdns.awk" "$T/ns1" | cmp -s - "$T/ns1" \
+    && ok "  and a second provisioning run changes nothing" \
+    || bad "  a second run changed it again"
+  # A person's own choice -- any mdns token at all, in whatever order they put
+  # it -- is left exactly as they wrote it, not replaced with ours.
+  printf 'hosts: files mdns4_minimal [NOTFOUND=return] resolve dns\n' > "$T/custom"
+  awk -f "$T/mdns.awk" "$T/custom" | cmp -s - "$T/custom" \
+    && ok "  and a hand-written mdns entry is left exactly as it was" \
+    || bad "  it overwrote a person's own mdns entry: $(awk -f "$T/mdns.awk" "$T/custom")"
+fi
+
 # install.sh's half, through its own --check: a graphical host whose HOME has
 # nothing in it must be told the link is coming.
 mkdir -p "$T/inst/uwsm/env-hyprland.d" "$T/inst/hosts/testhost"

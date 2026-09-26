@@ -21,11 +21,11 @@
 #
 # COVERS: the scoped teardown, the input policy, every exception the card names
 # and the two it does not (DHCPv4, and iifname rather than iif for an interface
-# that may not exist at load time), mDNS still being closed, docker's forwarding
-# being left alone, daemon.json's binding and log caps AND what the merge that
-# writes them keeps of the file already on the machine, and every state of the
-# two doctor rows -- including the two that used to be one branch: no root, and
-# root finding no table at all.
+# that may not exist at load time), mDNS admitted to its two multicast groups
+# and nowhere else, docker's forwarding being left alone, daemon.json's binding
+# and log caps AND what the merge that writes them keeps of the file already on
+# the machine, and every state of the three doctor rows -- including the two
+# that used to be one branch: no root, and root finding no table at all.
 #
 # DOES NOT COVER: whether the kernel accepts the ruleset, whether dockerd
 # restarts cleanly, or where a published port really binds. Those are in
@@ -113,11 +113,26 @@ check "  by name, not by an index that does not exist at boot" \
 check "direct WireGuard is accepted, so tailscale need not relay" \
   has "$T/rules" 'udp dport 41641 accept'
 
-# mDNS is what network printer discovery needs and printing is card G22. Closed
-# until that card opens it, and the file has to say so -- a commented-out rule
-# with no owner is one somebody uncomments.
-check "mDNS is closed"          not has "$T/rules" '5353'
-check "and the card that owns opening it is named" has "$T/nftables.conf" 'G22'
+# mDNS: driverless printer discovery and this machine's own *.local name
+# (ERGON-40). Scoped by DESTINATION, not source or interface -- 224.0.0.251 and
+# ff02::fb are link-local multicast groups no conforming router forwards past
+# the local segment, so admitting them is not the same as opening the port: a
+# unicast query straight at this host's own address must still hit the policy.
+check "mDNS v4 is admitted, to the multicast group only" \
+  has "$T/rules" '^[[:space:]]*udp dport 5353 ip daddr 224\.0\.0\.251 accept$'
+check "mDNS v6 is admitted, to the multicast group only" \
+  has "$T/rules" '^[[:space:]]*udp dport 5353 ip6 daddr ff02::fb accept$'
+check "  and there is no bare accept a unicast query on 5353 could hit" \
+  not has "$T/rules" '^[[:space:]]*udp dport 5353 accept$'
+# The check above only rules out THAT one exact literal -- `udp dport 5353
+# counter accept` added right next to the real two rules passed all three
+# checks above unchanged (reproduced: 65/65 still green with it in place).
+# Counting every rule line that mentions the port closes that: the two checks
+# above already pin what those two lines must say, so a third match of any
+# shape is a widened rule this suite has not approved.
+check "  and 5353 appears in exactly those two rules, nowhere else" \
+  test "$(grep -cE '5353' "$T/rules")" = 2
+check "and the card that opened it is named" has "$T/nftables.conf" 'ERGON-40'
 
 # Docker's DNAT delivers a published port through FORWARD. A forward chain here
 # with a drop policy would break container networking outright; an output chain
@@ -221,12 +236,46 @@ mkdir -p "$T/stub" "$T/ergon/lib" "$T/sysroot/etc/docker" "$T/home"
 cp "$REPO/lib/provision-inputs.sh" "$T/ergon/lib/"
 cat > "$T/stub/systemctl" <<'EOF'
 #!/usr/bin/env bash
-# Only the question doctor asks. Anything else succeeds, so an unrelated check
-# further down cannot fail this suite.
+# Only the questions doctor asks, each keyed on the UNIT so the firewall row
+# and the printing row cannot answer for each other. Anything else succeeds,
+# so an unrelated check further down cannot fail this suite.
 case " $* " in
-  *" is-active "*) [ "${STUB_NFTABLES:-active}" = active ] ;;
+  *" is-active "*" cups.socket "*)   [ "${STUB_CUPS_ACTIVE:-active}"   = active  ] ;;
+  *" is-enabled "*" cups.socket "*)  [ "${STUB_CUPS_ENABLED:-enabled}" = enabled ] ;;
+  *" is-active "*)                   [ "${STUB_NFTABLES:-active}"     = active  ] ;;
   *) exit 0 ;;
 esac
+EOF
+cat > "$T/stub/lpstat" <<'EOF'
+#!/usr/bin/env bash
+# `lpstat -h ... -p`, in the shapes a real cupsd hands back and the one doctor
+# must not confuse with either. STUB_LPSTAT_DEAD reproduces a scheduler doctor
+# cannot reach -- measured directly: killing cupsd mid-request and pointing
+# ServerName at nothing both print exactly this line and exit 1.
+if [ "${STUB_LPSTAT_DEAD:-0}" = 1 ]; then
+  echo "lpstat: Scheduler is not running." >&2
+  exit 1
+fi
+n="${STUB_QUEUES:-0}"
+if [ "$n" -eq 0 ]; then
+  # Real cupsd exits 1 here too ("No destinations added.") -- doctor has to
+  # tell this apart from STUB_LPSTAT_DEAD by the TEXT, since the exit code
+  # alone (measured: both are 1) cannot.
+  echo "lpstat: No destinations added." >&2
+  exit 1
+fi
+# `lpstat -p`'s printer lines are gettext-translated (cups ships cups_es.po,
+# cups_de.po in the package); measured against a real cupsd under
+# LANG=es_ES.UTF-8, "printer q1 is idle" becomes "la impresora q1 está
+# inactiva" and doctor's `^printer ` match goes to zero on a queue that is
+# actually configured and running. Standing in for a real locale here rather
+# than installing one: anything but the LC_ALL=C doctor is supposed to force
+# gets the translated line instead.
+if [ "${LC_ALL:-}" = C ]; then
+  for i in $(seq 1 "$n"); do printf 'printer q%d is idle.\n' "$i"; done
+else
+  for i in $(seq 1 "$n"); do printf 'la impresora q%d está inactiva.\n' "$i"; done
+fi
 EOF
 cat > "$T/stub/nft" <<'EOF'
 #!/usr/bin/env bash
@@ -304,6 +353,34 @@ check "no daemon.json at all is a failure, not a skip" \
 # has no sudo at all -- and it is the half the ruleset cannot cover.
 check "  even with no root anywhere" \
   has <(STUB_SUDO=deny doctor docker-publish) '"state":"fail"'
+
+# --- ERGON-40: what doctor says about printing -------------------------------
+# cups.socket, once enabled, stays "active (listening)" permanently -- that is
+# what a listening socket unit IS. So unlike cups.service (asleep until
+# something asks), "not active" here is not idle, it is broken: the socket
+# stopped and `enable --now` did not survive. Only "not enabled" (provisioning
+# never ran, or someone turned it off) is the other unconditional failure.
+check "cups.socket not enabled is a failure -- provisioning never turned it on" \
+  has <(STUB_CUPS_ENABLED=disabled doctor printing) '"state":"fail"'
+check "enabled but not active is a failure too -- it should be listening" \
+  has <(STUB_CUPS_ACTIVE=dead doctor printing) '"state":"fail"'
+# The stub answers this one in Spanish unless LC_ALL=C reaches it, which is
+# exactly the bug it catches: a real es_CL/de_DE install (offered at the
+# locale prompt) would report 2 queues configured as 0, forever, and this
+# check would go from "2 queue" to "0 queue" if ergon-doctor's LC_ALL=C were
+# ever dropped.
+check "enabled and active is ok, with the queue count" \
+  has <(STUB_QUEUES=2 doctor printing) '"state":"ok".*2 queue'
+check "  including zero queues -- that is not a failure" \
+  has <(STUB_QUEUES=0 doctor printing) '"state":"ok".*0 queue'
+# A dead/unreachable scheduler exits the same way lpstat does with zero queues
+# genuinely configured (measured: both are exit 1) -- doctor has to read the
+# TEXT to tell "nothing to print to" from "nothing configured", and get this
+# one wrong instead: reproduced (see the review on this card) with a plain
+# `lpstat -p 2>/dev/null | grep -c` that reported "ok, 0 queues" while cupsd
+# was down.
+check "an unreachable scheduler is not 'ok, 0 queues' -- it is a failure" \
+  not has <(STUB_LPSTAT_DEAD=1 doctor printing) '"state":"ok"'
 
 # --- the check that reported an open machine about a filtered one -------------
 # `nft list chain inet ergon input | grep -q 'policy drop'` returns 141 under

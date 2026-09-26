@@ -495,6 +495,50 @@ else
 fi
 rm -f /etc/sudoers.d/99-harness
 
+# --- ERGON-40: printing ------------------------------------------------------
+# Measured first in ergon64-closure so this VM run, ~15 minutes, is spent on
+# something already known to work: cupsd accepts a file:/dev/null device URI
+# against shipped, untouched config (cups-files.conf's FileDevice is commented
+# out, and that default already allows it -- an earlier version of this test
+# set FileDevice Yes here on the belief it was required; it is not, and doing
+# it anyway meant testing config no provisioned machine ships). `raw` is the
+# one queue model that needs no driver at all, which is exactly why it is the
+# only one ergonOS's driver-free base can exercise here -- "everywhere" needs a
+# real IPP printer to negotiate with, which this harness has no way to give it.
+echo "--- printing ---"
+if systemctl is-enabled --quiet cups.socket && systemctl is-active --quiet cups.socket; then
+  ok "cups.socket is enabled and active"
+else
+  bad "cups.socket is not enabled and active -- provisioning did not turn printing on"
+fi
+if lpadmin -p ergontest -E -v file:/dev/null -m raw >/tmp/lpadmin.log 2>&1; then
+  ok "lpadmin created a file:/dev/null queue with no printer driver installed, against shipped cups-files.conf"
+else
+  bad "lpadmin could not create the test queue"
+  sed 's/^/     /' /tmp/lpadmin.log
+fi
+printf '%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%%%EOF\n' > /tmp/ergon-test.pdf
+if lp -d ergontest /tmp/ergon-test.pdf >/tmp/lp.log 2>&1; then
+  _pr_done=0
+  for _ in $(seq 1 20); do
+    lpstat -W completed -o ergontest 2>/dev/null | grep -q ergontest && { _pr_done=1; break; }
+    sleep 1
+  done
+  [ "$_pr_done" = 1 ] && ok "the PDF reached the completed job state" \
+                       || bad "the job never completed: $(lpstat -o ergontest 2>&1)"
+else
+  bad "lp would not submit the PDF to the test queue"
+  sed 's/^/     /' /tmp/lp.log
+fi
+# state AND the queue count together -- "ok" alone also reads back true on the
+# doctor bug this card's review found (scheduler unreachable, or a translated
+# lpstat, both used to report "ok, 0 queues" on a queue that is right there).
+_pr_row=$(doctor_row printing su - "$U" -c "$G/bin/ergon-doctor --json")
+case "$_pr_row" in
+  *'"state":"ok"'*'1 queue'*) ok "ergon doctor reports printing ok, one queue counted: $_pr_row" ;;
+  *) bad "ergon doctor's printing row: ${_pr_row:-<none>}" ;;
+esac
+
 # --- a bundle from a real forge, over ssh on a non-standard port ------------
 # test-bundles.sh fetches from a local repository through stubs. This is the
 # path a private overlay actually takes: sshd on 2222, the user's own key,
