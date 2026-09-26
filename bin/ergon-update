@@ -33,6 +33,12 @@
 # point is now its own deliberate --no-snapshot; unread news is cleared by
 # reading it.
 #
+# --check writes nothing and reports everything, gates included: it names each
+# gate a real run would stop at and carries on to the orphan, rebuild, .pacnew
+# and restart lines. It exits 1 when any gate would have stopped a real run, so
+# `ergon update --check` answers "would an update go through" by status too; 0
+# means one would, not that nothing is pending.
+#
 # The transaction runs under `systemd-run --scope` while a
 # sleep:shutdown:handle-lid-switch inhibitor is held. There are three ways a
 # pacman stops half way through, none of them pacman's doing: a terminal opened
@@ -58,6 +64,17 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   ok   %s\n' "$*"; }
 warn() { printf '   !!   %s\n' "$*" >&2; }
 die()  { printf '   FAIL %s\n' "$*" >&2; exit 1; }
+# A gate stops a real run where it stands. Under --check it is recorded and the
+# run goes on: it used to die here too, so a machine with unread news -- the one
+# most likely to need the orphan, .pacnew and reboot lines -- got none of them,
+# from the one flag whose whole purpose is to say what an update would do.
+STOPS=()
+gate() {  # gate <name> <message...>
+  local name=$1; shift
+  [ "$CHECK_ONLY" = 1 ] || die "$*"
+  printf '   !!   a real run stops here: %s\n' "$*" >&2
+  STOPS+=("$name")
+}
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 # shellcheck source=../lib/transaction.sh
@@ -73,18 +90,21 @@ say "space"
 # Two separate places, and they fail differently. / filling mid-transaction
 # corrupts a package set; the cache filling just aborts the download.
 root_free=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
-[ "$root_free" -ge "$MIN_ROOT_GIB" ] \
-  || die "only ${root_free} GiB free on / — need ${MIN_ROOT_GIB} GiB. Run 'ergon update' after 'sudo paccache -rk1'"
-ok "${root_free} GiB free on /"
+if [ "$root_free" -ge "$MIN_ROOT_GIB" ]; then
+  ok "${root_free} GiB free on /"
+else
+  gate space "only ${root_free} GiB free on / — need ${MIN_ROOT_GIB} GiB. Run 'ergon update' after 'sudo paccache -rk1'"
+fi
 
 # Snapshots live on the same filesystem and are not free. A btrfs filesystem
 # that reports space in df can still be out of METADATA, which fails in a way
 # that looks nothing like a full disk.
 if [ "$(findmnt -no FSTYPE /)" = btrfs ]; then
   if btrfs filesystem usage / 2>/dev/null | grep -qE 'Metadata.*Free.*0\.00'; then
-    die "btrfs metadata is exhausted on / — run 'sudo btrfs balance start -m /' first"
+    gate "btrfs metadata" "btrfs metadata is exhausted on / — run 'sudo btrfs balance start -m /' first"
+  else
+    ok "btrfs metadata has headroom"
   fi
-  ok "btrfs metadata has headroom"
 fi
 
 say "rollback point"
@@ -94,7 +114,7 @@ elif [ "$NO_SNAPSHOT" = 1 ]; then
   warn "no snapper/snap-pac, and --no-snapshot: this upgrade will NOT be rollback-able"
 else
   warn "no snapper/snap-pac: this upgrade would NOT be rollback-able"
-  die "refusing an unsnapshotted upgrade; pass --no-snapshot to accept that"
+  gate "rollback point" "refusing an unsnapshotted upgrade; pass --no-snapshot to accept that"
 fi
 
 say "keyring"
@@ -110,9 +130,10 @@ if command -v informant >/dev/null; then
   if ! informant check >/dev/null 2>&1; then
     warn "unread Arch news — read it before upgrading:"
     informant list -r 2>/dev/null | head -5 || true
-    die "run 'informant read' first"
+    gate news "run 'informant read' first"
+  else
+    ok "no unread news"
   fi
-  ok "no unread news"
 else
   warn "informant not installed — manual-intervention notices are not gated"
 fi
@@ -311,7 +332,10 @@ if [ "$CHECK_ONLY" = 1 ]; then
   report_pacnew
   report_restart
   printf '\n   --check: nothing applied\n'
-  exit 0
+  [ "${#STOPS[@]}" -gt 0 ] || exit 0
+  s=$(printf '%s, ' "${STOPS[@]}")
+  printf '   a real run would stop at: %s\n' "${s%, }"
+  exit 1
 fi
 
 if [ "$PENDING" = 1 ]; then

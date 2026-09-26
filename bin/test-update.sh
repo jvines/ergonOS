@@ -18,7 +18,8 @@
 # than assumed; --yes meaning only --noconfirm -- it
 # waives neither gate and never removes an orphan; nothing pending still
 # reporting orphans, firmware, .pacnew and what needs restarting; a replaced
-# kernel and a replaced compositor; --check writing nothing at all; and
+# kernel and a replaced compositor; --check writing nothing at all, and still
+# reporting past every gate a real run would stop at (ERGON-46); and
 # ERGON-29's rebuild step -- which foreign packages checkrebuild's output
 # actually names, that --yes rebuilds them without asking while it still
 # refuses to remove an orphan, and that --check rebuilds nothing.
@@ -291,6 +292,27 @@ check "  trims no cache and refreshes no firmware" test ! -e "$L/paccache" -a ! 
 check "  removes no orphan" not grep -q -- '-Rns' "$L/pacman"
 check "  but still reports them" has "$T/out" "libfoo"
 check "  and says nothing was applied" has "$T/out" "--check: nothing applied"
+check "  and no gate it would have stopped at" not has "$T/out" "would stop at"
+
+# ERGON-46. The gates used to die under --check exactly as in a real run, so the
+# machine with unread news -- the one about to need the rest -- was told nothing.
+rm -f "$VMLINUZ"
+update STUB_PENDING=vim STUB_NEWS=1 STUB_ORPHANS=libfoo STUB_FOREIGN=waybar-git \
+       STUB_REBUILD=foreign/waybar-git STUB_PACNEW=/etc/pacman.conf.pacnew -- --check
+check "unread news: --check exits 1, because a real run would not go through" test "$?" -eq 1
+check "  but still reports orphans" has "$T/out" "libfoo"
+check "  rebuilds" has "$T/out" "ergon aur --rebuild"
+check "  .pacnew files" has "$T/out" "/etc/pacman.conf.pacnew"
+check "  and a kernel that needs a reboot" has "$T/out" "reboot when convenient"
+check "  and names the gate" has "$T/out" "a real run would stop at: news"
+check "  having written nothing" noxact
+: > "$VMLINUZ"
+update STUB_PENDING=vim STUB_NO_SNAPPAC=1 STUB_ORPHANS=libfoo -- --check
+check "no snap-pac: --check still reports" has "$T/out" "libfoo"
+check "  and names that gate" has "$T/out" "a real run would stop at: rollback point"
+update STUB_PENDING=vim STUB_NEWS=1 STUB_NO_SNAPPAC=1 STUB_FREE_GIB=2 -- --check
+check "every gate is named, not only the first" \
+  has "$T/out" "a real run would stop at: space, rollback point, news"
 
 echo "== foreign packages left linked against a library that is gone"
 # checkrebuild names repo packages too; those are pacman's problem. Only the
