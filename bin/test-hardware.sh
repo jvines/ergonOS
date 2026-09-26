@@ -10,7 +10,9 @@
 # would have run.
 #
 # COVERS: every capability on and off (s2idle-only + hibernation, amdgpu
-# panel, fprintd, light sensor + backlight, and that UPower's
+# panel, fprintd, light sensor + backlight, an NVIDIA card -- Turing,
+# pre-Turing, hybrid, a kernel with no prebuilt module, the dkms earlier
+# provisioning left -- and that UPower's
 # CriticalPowerAction is never overridden -- see ergon-hardware for why),
 # removal of a config whose capability went away (and never of a
 # hand-written one), kernel parameters from a profile, DMI matching,
@@ -21,8 +23,9 @@
 # only while discharging).
 #
 # DOES NOT COVER: real sysfs, logind, fprintd, illuminanced or upowerd itself,
-# or an actual suspend. test-hypr-session.sh covers the lid on a VM made
-# s2idle-only.
+# an NVIDIA module loading, or an actual suspend. test-hypr-session.sh covers
+# the lid on a VM made s2idle-only; test-hypr-config.sh, that Hyprland loads
+# the NVIDIA env file.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -46,7 +49,9 @@ done
 cat >> "$T/stub/sudo" <<'EOF'
 exec "$@"
 EOF
+# -Q answers from $TEST_ROOT/installed, one package per line.
 cat >> "$T/stub/pacman" <<'EOF'
+case $1 in -Q*) grep -qxF -- "${!#}" "$TEST_ROOT/installed" 2>/dev/null; exit ;; esac
 printf '%s\n' "$*" >> "$TEST_ROOT/log/pacman"
 EOF
 cat >> "$T/stub/systemctl" <<'EOF'
@@ -68,6 +73,10 @@ reset_logs() { rm -f "$T"/log/*; }
 # apply <machine>: run against $T/<machine>/root, writing into $T/<machine>/dest
 apply() { ERGON_SYSROOT="$T/$1/root" ERGON_DESTROOT="$T/$1/dest" "$EH" apply > "$T/out" 2>&1; }
 put() { mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; }
+# pci <root> <slot> <class> <vendor> <device>; kernel <root> <release> <pkgbase>
+pci() { put "$1/sys/bus/pci/devices/$2/class" "$3"; put "$1/sys/bus/pci/devices/$2/vendor" "$4"
+        put "$1/sys/bus/pci/devices/$2/device" "$5"; }
+kernel() { put "$1/usr/lib/modules/$2/pkgbase" "$3"; }
 
 # --- three machines -------------------------------------------------------------
 # A Framework-like AMD laptop: s2idle only, hibernation set up, amdgpu eDP,
@@ -114,7 +123,7 @@ put "$R/sys/class/dmi/id/sys_vendor" "LENOVO"; put "$R/sys/class/dmi/id/product_
 put "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"'
 
 # An AMD desktop: S3, amdgpu on an external DP port, no battery, no sensor,
-# no backlight, no fprintd.
+# no backlight, no fprintd, no NVIDIA.
 R=$T/desk/root; D=$T/desk/dest
 put "$R/sys/power/mem_sleep" "s2idle [deep]"
 put "$R/sys/power/state" "freeze mem disk"
@@ -122,6 +131,7 @@ put "$R/proc/cmdline" "root=/dev/sda2"
 printf 'Filename\tType\tSize\tUsed\tPriority\n' > "$R/proc/swaps"
 mkdir -p "$R/sys/class/drm/card0-DP-1" "$R/sys/class/drm/card0/device"
 ln -s ../../../../bus/pci/drivers/amdgpu "$R/sys/class/drm/card0/device/driver"
+pci "$R" 0000:03:00.0 0x030000 0x1002 0x744c
 put "$R/sys/class/dmi/id/sys_vendor" "ASUS"; put "$R/sys/class/dmi/id/product_name" "System Product Name"
 put "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"'
 
@@ -165,6 +175,7 @@ check "no resume=, no swap: no UPower hibernate drop-in" test ! -e "$D/etc/UPowe
 check "amdgpu without a built-in panel: no ABM drop-in" test ! -e "$D/etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf"
 check "no fprintd: no resume unit" test ! -e "$D/etc/systemd/system/ergon-fprintd-resume.service"
 check "no sensor or backlight: no illuminanced" not has "$T/log/pacman" "illuminanced"
+check "an AMD GPU and no NVIDIA: no NVIDIA package" not has "$T/log/pacman" "nvidia"
 check "power key: ignored by logind on a desktop with no laptop capabilities at all" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 
 echo "== a pacman failure elsewhere in _capabilities must not skip the power key"
@@ -205,6 +216,58 @@ check "sensor gone: illuminanced disabled" hasx "$T/log/systemctl" "disable --no
 check "  and its generated config removed" test ! -e "$D/etc/illuminanced.toml"
 check "a hand-written file at a managed path is never removed" hasx "$D/etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf" "# mine, by hand"
 check "  same for a hand-written UPower drop-in at our managed path" hasx "$D/etc/UPower/UPower.conf.d/90-ergon-hibernate.conf" "# mine, by hand"
+
+echo "== NVIDIA"
+# A Turing desktop. The card's HDMI audio is vendor 0x10de too and the chipset's
+# USB controller is another vendor: neither is a GPU, so this is not hybrid.
+R=$T/nv/root; NV=$T/nv/dest/etc/ergon/hypr/nvidia.lua
+pci "$R" 0000:01:00.0 0x030000 0x10de 0x1f08
+pci "$R" 0000:01:00.1 0x040300 0x10de 0x10f9
+pci "$R" 0000:02:00.0 0x0c0330 0x1022 0x43ee
+kernel "$R" 7.2.7-arch1-1 linux; kernel "$R" 6.18.54-1-lts linux-lts
+mkdir -p "$R/usr/lib/modules/7.1.9-arch1-1"   # left by an upgrade, no pkgbase
+echo nvidia-open-dkms > "$T/installed"         # what provisioning used to install
+reset_logs; apply nv
+check "Turing: a prebuilt module for each installed kernel, and the VA-API driver" \
+  hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open nvidia-open-lts libva-nvidia-driver"
+check "  after removing the dkms package, which conflicts and built nothing" \
+  test "$(head -1 "$T/log/pacman")" = "-Rdd --noconfirm nvidia-open-dkms"
+check "  Hyprland env: LIBVA_DRIVER_NAME" hasx "$NV" 'hl.env("LIBVA_DRIVER_NAME", "nvidia")'
+check "  __GLX_VENDOR_LIBRARY_NAME" hasx "$NV" 'hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")'
+check "  NVD_BACKEND" hasx "$NV" 'hl.env("NVD_BACKEND", "direct")'
+check "  the marker on line 1, the only line Lua skips" has <(head -1 "$NV") "# Written by ergon-hardware"
+check "  at the path hypr/common/env.lua loads" has "$REPO/hypr/common/env.lua" 'pcall(require, "/etc/ergon/hypr/nvidia")'
+kernel "$R" 7.2.7-zen1-1-zen linux-zen
+reset_logs; apply nv
+check "a kernel with no prebuilt module: dkms for every kernel, with their headers" \
+  hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open-dkms linux-headers linux-lts-headers linux-zen-headers libva-nvidia-driver"
+check "  and the dkms package is kept" not has "$T/log/pacman" "-Rdd"
+rm -f "$T/installed"; rm -rf "$R/sys/bus/pci/devices/0000:01:00.0"
+reset_logs; apply nv
+check "card gone: the env file goes too" test ! -e "$NV"
+
+R=$T/pascal/root
+pci "$R" 0000:01:00.0 0x030000 0x10de 0x1b80
+kernel "$R" 7.2.7-arch1-1 linux
+reset_logs; apply pascal
+check "pre-Turing: nothing installed, so nouveau is not blacklisted" not has "$T/log/pacman" "nvidia"
+check "  refused, naming the legacy driver" has "$T/out" "nvidia-580xx-dkms + nvidia-580xx-utils (AUR)"
+check "  no Hyprland env" test ! -e "$T/pascal/dest/etc/ergon/hypr/nvidia.lua"
+
+# A laptop: Intel drives the panel, the NVIDIA card is a 3D controller.
+R=$T/hyb/root
+pci "$R" 0000:00:02.0 0x030000 0x8086 0x7d55
+pci "$R" 0000:01:00.0 0x030200 0x10de 0x2820
+kernel "$R" 7.2.7-arch1-1 linux
+put "$T/hyb/dest/etc/ergon/hypr/nvidia.lua" "# Written by ergon-hardware from what this machine has; removed when that stops being true."
+reset_logs; apply hyb
+check "hybrid: the module, and prime-run for offload" hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open nvidia-prime"
+check "  no global env, which would put every GL client on the dGPU" test ! -e "$T/hyb/dest/etc/ergon/hypr/nvidia.lua"
+ERGON_SYSROOT=$R "$EH" detect > "$T/out" 2>&1
+check "detect names the card" hasx "$T/out" "  nvidia:       0x2820"
+check "  and the hybrid" hasx "$T/out" "  hybrid gpu:   yes"
+ERGON_SYSROOT=$T/desk/root "$EH" detect > "$T/out" 2>&1
+check "an AMD GPU alone is not hybrid" hasx "$T/out" "  hybrid gpu:   no"
 
 echo "== profiles"
 mkdir -p "$E/hardware/bad-model"

@@ -8,10 +8,10 @@
 #
 #   capabilities  what the machine HAS, read from sysfs: s2idle-only firmware,
 #                 a working hibernation setup, an amdgpu-driven built-in
-#                 panel, a fingerprint daemon, an ambient light
-#                 sensor. The same image does the right thing on a Framework,
-#                 a ThinkPad, a desktop or a VM, because nothing here names a
-#                 model.
+#                 panel, a fingerprint daemon, an ambient light sensor, an
+#                 NVIDIA card and a second GPU beside it. The same image does
+#                 the right thing on a Framework, a ThinkPad, a desktop or a
+#                 VM, because nothing here names a model.
 #   profiles      quirks that belong to ONE model, matched by DMI
 #                 (hardware/<name>/). Only what cannot be expressed as a
 #                 capability goes there.
@@ -106,10 +106,55 @@ _backlight() {
 
 _has_unit() { [ -e "$ROOT/usr/lib/systemd/system/$1" ]; }
 
+# PCI display controllers (class 0x03xxxx), one "vendor device" per line. The
+# class matters: an NVIDIA card's HDMI audio and USB-C functions carry vendor
+# 0x10de too, and a chipset's USB controller is "another vendor" on every PC.
+_gpus() {
+  local d
+  for d in "$ROOT"/sys/bus/pci/devices/*; do
+    case $(cat "$d/class" 2>/dev/null) in 0x03*) ;; *) continue ;; esac
+    printf '%s %s\n' "$(cat "$d/vendor")" "$(cat "$d/device")"
+  done
+}
+
+# The highest NVIDIA display device id, which is the newest generation.
+_nvidia() {
+  local v id best=0
+  while read -r v id; do
+    [ "$v" = 0x10de ] && (( id > best )) && best=$id
+  done < <(_gpus)
+  (( best )) && printf '0x%04x\n' "$best"
+}
+
+# NVIDIA plus another GPU: on a laptop, the iGPU the panel is wired to. Not
+# grep -q: under pipefail its early exit can SIGPIPE _gpus and read as "no".
+_hybrid() { _nvidia >/dev/null && _gpus | grep -v '^0x10de ' >/dev/null; }
+
+# The NVIDIA module packages for the kernels this machine HAS, read from the
+# pkgbase each kernel package puts in its module directory -- not the two
+# arch-bootstrap.sh installs. Arch builds nvidia-open for linux and
+# nvidia-open-lts for linux-lts and for nothing else. Any other kernel needs
+# nvidia-open-dkms, which conflicts with both (NVIDIA-MODULE), so then every
+# kernel takes dkms, each with its headers: dkms 3.4.3 lists them only as
+# optdepends and builds nothing without them.
+_nvidia_modules() {
+  local k all=1 pre=() dkms=(nvidia-open-dkms)
+  for k in $(cat "$ROOT"/usr/lib/modules/*/pkgbase 2>/dev/null | sort -u); do
+    case $k in
+      linux)     pre+=(nvidia-open) ;;
+      linux-lts) pre+=(nvidia-open-lts) ;;
+      *)         all=0 ;;
+    esac
+    dkms+=("$k-headers")
+  done
+  [ "${#dkms[@]}" -gt 1 ] || return 1
+  if [ "$all" = 1 ]; then printf '%s\n' "${pre[@]}"; else printf '%s\n' "${dkms[@]}"; fi
+}
+
 # --- what to do about it ---------------------------------------------------------
 
 _capabilities() {
-  local als bl
+  local als bl nv P=()
 
   # Power key. logind's own default is poweroff on a bare press, and on the
   # Framework 13 that key IS the fingerprint reader (bin/ergon-fingerprint) --
@@ -221,6 +266,56 @@ EOF
     sudo systemctl daemon-reload 2>/dev/null || true
     sudo systemctl enable ergon-fprintd-resume.service >/dev/null 2>&1 \
       && ok "fingerprint: fprintd restarted after resume" || warn "could not enable ergon-fprintd-resume.service"
+  fi
+
+  # NVIDIA. Turing and newer (device id >= 0x1e00, Omarchy's test in
+  # omarchy-hw-nvidia-gsp) get the open modules, PREBUILT for each kernel.
+  # This used to be nvidia-open-dkms from provisioning, with no headers
+  # anywhere, so no module was ever built -- while nvidia-utils blacklisted
+  # nouveau and nova regardless. Older cards get nothing: nvidia-open cannot
+  # drive them, and nvidia-utils would take nouveau away from them too.
+  #
+  # No nvidia-suspend/-hibernate/-resume units and no
+  # NVreg_PreserveVideoMemoryAllocations. nvidia-utils 615.71.09 sets
+  # NVreg_UseKernelSuspendNotifiers=1 in /usr/lib/modprobe.d/nvidia-utils.conf,
+  # and its .install disables those units on upgrade as "no longer needed with
+  # open kernel modules".
+  nv=$(_nvidia) || nv=""
+  if [ -n "$nv" ] && (( nv >= 0x1e00 )); then
+    mapfile -t P < <(_nvidia_modules)
+    [ "${#P[@]}" -gt 0 ] || warn "NVIDIA $nv, but no kernel with a pkgbase under /usr/lib/modules"
+    # Every NVIDIA machine provisioned before this has nvidia-open-dkms, and
+    # over it pacman --noconfirm answers the conflict "N" and installs nothing
+    # (measured). -dd, because what is installed next provides NVIDIA-MODULE.
+    if [ "${P[0]:-}" != nvidia-open-dkms ] && pacman -Qq nvidia-open-dkms >/dev/null 2>&1; then
+      sudo pacman -Rdd --noconfirm nvidia-open-dkms >/dev/null || warn "could not remove nvidia-open-dkms"
+    fi
+    if _hybrid; then
+      # prime-run is the offload: __NV_PRIME_RENDER_OFFLOAD and
+      # __GLX_VENDOR_LIBRARY_NAME=nvidia for ONE program. The env file below
+      # would do that for every GL client and keep the dGPU awake. No supergfxd.
+      P+=(nvidia-prime)
+      _unput /etc/ergon/hypr/nvidia.lua
+    else
+      # Loaded by hypr/common/env.lua. $MARK has to stay the FIRST line: Lua
+      # skips a first line starting with #, and only that one (0.56.2).
+      P+=(libva-nvidia-driver)
+      _put /etc/ergon/hypr/nvidia.lua <<EOF
+$MARK
+-- NVIDIA $nv drives the display: VA-API, GLX and the VA-API driver's backend.
+hl.env("LIBVA_DRIVER_NAME", "nvidia")
+hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
+hl.env("NVD_BACKEND", "direct")
+EOF
+    fi
+    sudo pacman -S --needed --noconfirm -- "${P[@]}" >/dev/null \
+      && ok "nvidia $nv: ${P[*]}" || warn "NVIDIA packages failed: ${P[*]}"
+  else
+    _unput /etc/ergon/hypr/nvidia.lua
+    if [ -n "$nv" ]; then
+      warn "NVIDIA $nv is older than Turing: nvidia-open cannot drive it, so nothing was installed and nouveau keeps it."
+      warn "  NVIDIA's driver for Maxwell to Volta: nvidia-580xx-dkms + nvidia-580xx-utils (AUR), with each kernel's headers."
+    fi
   fi
 
   # Auto-brightness wherever there is a sensor and a backlight to drive. It moves
@@ -386,6 +481,8 @@ case "${1:-detect}" in
     printf '  amdgpu panel: %s\n' "$(has _amdgpu_panel)"
     printf '  light sensor: %s\n' "$(_als || echo no)"
     printf '  backlight:    %s\n' "$(_backlight || echo no)"
+    printf '  nvidia:       %s\n' "$(_nvidia || echo no)"
+    printf '  hybrid gpu:   %s\n' "$(has _hybrid)"
     d=$(_detected)
     [ -n "$d" ] && printf '  profile(s):   %s\n' "$(printf '%s ' $d)" \
                 || printf '  profile(s):   none — no model-specific quirks\n'
