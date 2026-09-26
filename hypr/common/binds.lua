@@ -136,10 +136,10 @@ bind("SUPER + CTRL + B",     "Previous background", "ergon-wallpaper --prev")
 
 -- ERGON-31: the tree that reaches System, Style (palettes and backgrounds BY
 -- NAME, not only stepped -- see SUPER+T and SUPER+SHIFT+B just above),
--- Commands and Help. SUPER+ALT+SPACE was free: grepped for ALT and for SPACE
--- across every file in hypr/ before picking it, the only other ALT chords
--- being SUPER+ALT+S (screenshot.lua) and the media/brightness ramps in
--- media.lua, neither of which touches SPACE.
+-- Commands and Help. SUPER+ALT+SPACE was free: grepped for SPACE across
+-- every file in hypr/ before picking it -- free, and stays free, since
+-- ergon-lint's no-chord-bound-twice check enforces that rather than this
+-- comment having to keep its own list of every ALT chord in sync.
 bind("SUPER + ALT + SPACE",  "Menu",                "ergon-menu")
 
 -- ---------------------------------------------------------------------------
