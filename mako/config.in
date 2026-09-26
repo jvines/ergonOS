@@ -81,3 +81,11 @@ default-timeout=0
 # something already drawn in the middle of the screen.
 [app-name=swayosd]
 invisible=1
+
+# Do-not-disturb, for `ergon display present`: notifications still arrive,
+# and none is drawn over the slides. Inert until the mode is set;
+# `ergon display extend` unsets it. Last, so it wins over every block above --
+# [urgency=critical] included, so a battery warning is hidden too. Whether that
+# should be is ERGON-32's call, with the toggle bind and the bar indicator.
+[mode=do-not-disturb]
+invisible=1

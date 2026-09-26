@@ -2325,6 +2325,53 @@ else
   tail -25 /tmp/palette-restore.log 2>/dev/null | sed 's/^/     /'
 fi
 
+# --- a projector is mirrored, and stays mirrored (ERGON-37) -----------------
+# The VM has one output, so the projector is a headless one the compositor
+# makes itself. A mirror drops out of `monitors` and shows in `monitors all`
+# with mirrorOf = the source's id, which is what is read. The reload is the
+# point of the middle assertion: it clears every monitor rule, and `ergon
+# theme` sends one, so a mirror that does not survive it dies the moment the
+# text is enlarged for the back row.
+_nb=$(hq binds -j | jq '[.[].description | select(IN("Toggle split", "Toggle group",
+  "Next window in group", "Previous window in group", "Last workspace",
+  "Move window to next monitor", "Move workspace to next monitor"))] | length' 2>/dev/null)
+[ "${_nb:-0}" = 7 ] && ok "the seven layout and monitor binds registered" \
+                     || bad "only ${_nb:-0} of the seven layout and monitor binds registered"
+_dsp_src=$(hq monitors -j | jq -r '.[0].name' 2>/dev/null)
+_dsp_out=$(hq output create headless ERGON-PROJ)
+mirror_of() { hq monitors all -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .mirrorOf' 2>/dev/null; }
+mirrored() {  # mirrored yes|no, polled: a rule from eval lands on the next refresh
+  local want=none
+  [ "$1" = no ] || want=$(hq monitors all -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | .id')
+  for _ in $(seq 1 10); do [ "$(mirror_of)" = "$want" ] && return 0; sleep 1; done; return 1
+}
+for _ in $(seq 1 10); do [ -n "$(mirror_of)" ] && break; sleep 1; done
+if [ -z "$(mirror_of)" ]; then
+  bad "hyprctl output create headless made no second output: $_dsp_out"
+else
+  # With no eDP the focused output is the source, so focus the VM's own.
+  hq "dispatch 'hl.dsp.focus({ monitor = \"$_dsp_src\" })'" >/dev/null
+  usr "ergon-display present" > /tmp/display.log 2>&1
+  usr "makoctl mode" 2>/dev/null | grep -qx do-not-disturb \
+    && ok "ergon display present hides notifications (mako do-not-disturb)" \
+    || bad "ergon display present left mako out of do-not-disturb"
+  if mirrored yes; then
+    ok "  and mirrors $_dsp_src onto the second output"
+    hq reload >/dev/null; sleep 2
+    mirrored yes && ok "  and the mirror survives hyprctl reload" \
+      || bad "  but hyprctl reload undid the mirror (mirrorOf '$(mirror_of)')"
+    usr "ergon-display extend" >> /tmp/display.log 2>&1
+    mirrored no && ok "ergon display extend undoes the mirror" \
+      || { bad "ERGON-PROJ still mirrors after extend"; sed 's/^/     /' /tmp/display.log; }
+    usr "makoctl mode" 2>/dev/null | grep -qx do-not-disturb \
+      && bad "  but leaves mako in do-not-disturb" || ok "  and lets notifications through again"
+  else
+    bad "  but ERGON-PROJ does not mirror $_dsp_src (mirrorOf '$(mirror_of)')"
+    sed 's/^/     /' /tmp/display.log
+  fi
+  hq output remove ERGON-PROJ >/dev/null
+fi
+
 # --- what the OS hands its agents -----------------------------------------
 # Every one of these is installed by a step that WARNS rather than fails, so
 # provisioning stays green whatever happens here and nothing else in this suite

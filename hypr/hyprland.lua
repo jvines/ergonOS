@@ -113,6 +113,14 @@ if f then f:close() end
 -- broken per-host override must never take the base config down with it.
 pcall(require, "hosts." .. host)
 
+-- What `ergon display` changed in THIS session: a mirror, a scale. After the
+-- host file, so it wins over it, and re-read on every load because a reload
+-- clears every monitor rule -- and `ergon theme` reloads, so enlarging the text
+-- for a talk would undo the projector's mirror. Written by bin/ergon-display
+-- and nothing else; common.lid re-reads it on hotplug too.
+local rt = os.getenv("XDG_RUNTIME_DIR")
+if rt then pcall(dofile, rt .. "/ergon/display.lua") end
+
 -- Yours. Last, so an hl.config() here wins over everything above it.
 --
 -- The explicit path is the whole point and a bare require("user") would be a
