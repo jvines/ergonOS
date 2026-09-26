@@ -9,16 +9,22 @@ ones, generated from what is actually installed and bound right now.
 ## Snapshots undo a bad update; backup survives a dead disk
 
 `snap-pac` hooks `pacman` directly, so every transaction — not just ones run
-through `ergon update` — gets a btrfs snapshot first, and two boots that never
-reach the default boot target make GRUB boot the last one that worked, on its
-own, using that snapshot's own kernel. `ergon rollback` does the same by hand,
-from a number you pick with `ergon rollback --list`.
+through `ergon update` — gets a btrfs snapshot first, and two boots in a row
+that never reach the default target make GRUB boot the last snapshot that did,
+on its own. That fallback is not sticky: the next boot that reaches the
+desktop clears it again, so it buys you one boot to fix things in, not a
+standing rollback. `sudo ergon rollback N` makes one permanent, replacing `@`
+outright — `sudo ergon rollback --list` shows the candidates — but it refuses
+to run FROM `@` itself; boot the snapshot from the GRUB submenu, or the Arch
+ISO, first.
 
 That protects you from an update, not from the disk. A snapshot lives on the
 same device as the data it is a snapshot of, so a dead SSD takes all of them
 with it. `ergon backup` sends `/home` somewhere else entirely — encrypted,
-deduplicated, restorable file by file — and the one thing it cannot protect is
-its own key: `ergon backup init` prints it once, and keeping the only copy on
+deduplicated, restorable file by file — but it does nothing at all until
+`ergon backup init REPO` names a destination; the timers provisioning installs
+sit inert until then. The one thing it cannot protect is its own key:
+`ergon backup key` prints it whenever you ask, and keeping the only copy on
 this laptop defeats the entire point.
 
 ## Bundles are what you asked for, and nothing you didn't
@@ -46,10 +52,12 @@ anything.
 
 ## Where things land
 
-- **Screenshots** go to `~/screenshots-outgoing`
-  (`hypr/common/screenshot.lua`); a systemd `.path` unit mirrors each one to
-  checo, the author's own machine, as it is written. That destination is not
-  yet a per-host setting — the base install still assumes this fleet.
+- **Screenshots** go to `~/screenshots-outgoing` and the clipboard, in one
+  pipeline (`hypr/common/screenshot.lua`). That directory name is a leftover
+  of the author's own setup, where a separate script — not part of ergonOS —
+  watches it and mirrors captures elsewhere; a stock install ships no such
+  watcher, so the files simply accumulate there until ERGON-39 makes the
+  destination a real per-host setting.
 - **Recordings** go to `~/recordings` (`ergon record`, `$ERGON_RECORD_DIR` to
   move it).
 - **Figures** get their provenance stamped automatically by the shared Python
@@ -63,16 +71,17 @@ anything.
 
 ## Your own settings vs. the generated ones
 
-Seventeen desktop surfaces — the bar, the launcher, the terminal, the Lua
-config itself — are rendered from a template on every `ergon theme` run and on
+Every themed desktop surface — the bar, the launcher, the terminal, the Lua
+config itself — is rendered from a template on every `ergon theme` run and on
 every `install.sh`, so anything typed directly into one of those files is gone
-at the next render. What survives is `~/.config/ergon/`: one file per themed
-surface, created once if it does not already exist and never touched again by
-anything shipped here — `lib/user-config.sh` and `lib/ergon_arxiv.py` are the
-only two writers, both create-if-absent, and `ergon-lint` holds everything
-else in the repo to that rule. That is where a hand-written waybar rule, your
-own Hyprland binds, or an enrolled fingerprint block belongs. The exact file
-for each surface, and what breaks if it goes missing, is
+at the next render. What survives is `~/.config/ergon/`: an include file for
+each surface that has somewhere to put one, created once if it does not
+already exist and never touched again by anything shipped here —
+`lib/user-config.sh` and `lib/ergon_arxiv.py` are the only two writers, both
+create-if-absent, and `ergon-lint` holds everything else in the repo to that
+rule. That is where a hand-written waybar rule, your own Hyprland binds, or an
+enrolled fingerprint block belongs. Not every surface has this escape hatch —
+the exact set, and what breaks on each one if its file goes missing, is
 `ergon explain desktop-config`.
 
 ## The security model

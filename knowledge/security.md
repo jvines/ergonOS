@@ -46,12 +46,19 @@ group," on a machine where a fresh process already has it.
 ## sudo is full and password-gated; faillock is what happens when you fail it
 
 `%wheel ALL=(ALL:ALL) ALL` -- wheel, which on a single-user laptop is you, can
-run anything as root, and a password is asked every time. There is no
-NOPASSWD anywhere on a real install; the only place that string appears in
-this repo is `test/arch-vm/*`, writing it inside a disposable VM harness so a
-scripted test run needs no one to type a password into a pipe. Shipping that
-line to a real machine would be the exact mistake this paragraph exists to
-make someone notice.
+run anything as root. There is no NOPASSWD anywhere on a real install; the
+only place that string appears in this repo is `test/arch-vm/*`, writing it
+inside a disposable VM harness so a scripted test run needs no one to type a
+password into a pipe. Shipping that line to a real machine would be the exact
+mistake this paragraph exists to make someone notice.
+
+Provisioning does not touch `timestamp_timeout`, so it is not asked every
+single time either: Arch's own sudo default caches a success for five minutes
+per tty (`sudo -V` on a fresh install reports it), not a password on every
+invocation. That is the same trade the docker group above makes, just
+narrower and time-boxed -- for five minutes after you type the password,
+anything running on that terminal, a coding agent or a build script included,
+has root through sudo the same way it would through the docker socket.
 
 Arch's own default for the gate behind that password -- `pam_faillock`,
 `deny = 3`, `unlock_time = 600` -- is tuned for a login shared by people who
