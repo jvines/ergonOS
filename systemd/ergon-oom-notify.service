@@ -13,9 +13,9 @@ RestartSec=5s
 # one process that has to outlive a kill in order to report it must never be a
 # candidate for that kill.
 Slice=session.slice
-# notify-send finds mako over this and nothing else (GDBus has no fallback to
-# $XDG_RUNTIME_DIR/bus), and the manager only carries it when something imported
-# it -- the VM harness measured a manager without one. Stating it costs nothing.
+# Belt and braces: GDBus falls back to $XDG_RUNTIME_DIR/bus without it (glib
+# 2.88, measured), but the manager carries this only when something imported it,
+# and the VM harness measured one that had not.
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
 
 [Install]

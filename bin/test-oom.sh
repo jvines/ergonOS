@@ -575,12 +575,18 @@ for a; do case "$a" in
 esac; done
 [ -z "${STUB_JOURNAL_DIES:-}" ] || exit 1
 if [ "$follow" = 1 ]; then
-  { jq -c "$f" "$TEST_ROOT/journal.old" | tail -n "$lines"; jq -c "$f" "$TEST_ROOT/journal.new"; }
+  # Held open, as a real follower is: EOF is what would flush a stage that buffers.
+  { jq -c "$f" "$TEST_ROOT/journal.old" | tail -n "$lines"; jq -c "$f" "$TEST_ROOT/journal.new"; exec sleep 30; }
 else
   cat "$TEST_ROOT/journal.old" "$TEST_ROOT/journal.new" | jq -c "$f" | tail -n "$lines"
 fi | if [ "$out" = cat ]; then jq -r .MESSAGE; else cat; fi
 EOF
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TEST_ROOT/log/notify-send"\n' > "$T/stub/notify-send"
+# Logged as a server receives it: the real notify-send g_strcompress()es its BODY,
+# the last argument, so \\ arrives as \ and \x2d as x2d.
+cat > "$T/stub/notify-send" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s\n' "${*:1:$#-1}" "$(printf '%s' "${!#}" | sed 's/\\\(.\)/\1/g')" >> "$TEST_ROOT/log/notify-send"
+EOF
 chmod +x "$T/stub/journalctl" "$T/stub/notify-send"
 KILL=d989611b15e44c9dbf31e3c81256e4ed; START=39f53479d3a045ac8e11786248231fbf
 entry() {  # entry <message-id> <unit> <invocation> <message> [uid]
@@ -595,11 +601,18 @@ TERM_U='app-Hyprland-ergon\\x2dterm-cafef00d.scope'   # as JSON carries it
   entry d9b373ed55a64feb8242e02dbe79a49c "$TERM_U" i2 "Failed with result 'oom-kill'."
   entry $START 'ergon-watch-fit-4242.scope' i3 'Started [systemd-run] /usr/bin/python3 fit.py.'
   entry $KILL  'ergon-watch-fit-4242.scope' i3 'systemd-oomd killed 1 process(es) in this unit.'
-  entry $KILL  'app-Hyprland-other-22222222.scope' i4 'not ours' $(( $(id -u) + 1 )); } > "$T/journal.new"
+  entry $KILL  'app-Hyprland-other-22222222.scope' i4 'not ours' $(( $(id -u) + 1 ))
+  entry $KILL  'app-Hyprland-gone-33333333.scope' i9 'systemd-oomd killed 1 process(es) in this unit.'; } > "$T/journal.new"
 rm -f "$L"/*
-"$REPO/bin/ergon-oom-notify" >/dev/null 2>&1
-check "one kill in the session is exactly one notification" \
-  test "$(wc -l < "$L/notify-send" 2>/dev/null)" = 1
+# Waited for by the LAST kill, so every line before it has been handled; timeout
+# because it signals its whole process group, the stub's sleep included.
+timeout 20 "$REPO/bin/ergon-oom-notify" >/dev/null 2>&1 & fp=$!
+for _ in $(seq 100); do hasf "$L/notify-send" gone-33333333 && break; sleep 0.1; done
+kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null
+check "each kill is announced as it arrives, while the journal is still open" \
+  hasf "$L/notify-send" 'app-Hyprland-gone-33333333.scope'
+check "two kills in the session are exactly two notifications" \
+  test "$(wc -l < "$L/notify-send" 2>/dev/null)" = 2
 check "  naming the unit that died, as the manager wrote it" \
   hasf "$L/notify-send" 'app-Hyprland-ergon\x2dterm-cafef00d.scope'
 check "  and what it was, from the line that started it, at critical urgency" \
@@ -610,9 +623,6 @@ check "a kill already in the journal when the follower started is not announced 
   not hasf "$L/notify-send" 'app-Hyprland-foot-11111111'
 check "a kill in another user's manager is not this session's" \
   not hasf "$L/notify-send" 'app-Hyprland-other-22222222'
-
-entry $KILL 'app-Hyprland-gone-33333333.scope' i9 'systemd-oomd killed 1 process(es) in this unit.' > "$T/journal.new"
-rm -f "$L"/*; "$REPO/bin/ergon-oom-notify" >/dev/null 2>&1
 check "with no Started line left to read, the unit name is the summary" \
   hasf "$L/notify-send" 'app-Hyprland-gone-33333333.scope was killed for memory'
 # The unit restarts on-failure, which only works if a dead follower IS a failure.
