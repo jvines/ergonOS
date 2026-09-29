@@ -100,12 +100,14 @@ jobs:
           set -euo pipefail
           # Fail here, naming the cause, rather than twelve minutes in.
           [ -c /dev/kvm ] || { echo "/dev/kvm is missing -- the runner cannot virtualise" >&2; exit 1; }
-          docker image inspect fleet-qemu >/dev/null 2>&1 \
-            || { echo "the fleet-qemu image is missing on this runner" >&2; exit 1; }
+          # No check for the fleet-qemu image. test-arch-vm.sh builds it as its
+          # first step, so requiring it here refused the one run that would
+          # have rebuilt it: the image went missing between 2026-09-26 and the
+          # 28th, and the weekly run failed in its first second from then on.
           avail=$(df -BG --output=avail /home | tail -1 | tr -dc '0-9')
           [ "${avail:-0}" -ge 40 ] \
             || { echo "only ${avail}G free on /home; a run needs about 40G" >&2; exit 1; }
-          echo "kvm, fleet-qemu and ${avail}G free"
+          echo "kvm and ${avail}G free"
 
       - name: Check out the commit under test
         run: |
@@ -204,10 +206,14 @@ jobs:
           # docker, as root, and the runner's own rm cannot unlink them. That
           # failed this step, and with it the job, on every run there has been,
           # whatever the tests said.
+          #
+          # debian:13, not fleet-qemu: removing files needs no qemu, and a
+          # $WORK left by an earlier run can outlive the local image, which
+          # docker would then try to pull from Docker Hub under that name.
           rm -rf "$CI_DIR"
           if [ -d "$WORK" ]; then
             docker run --rm --label cl.jvines.owner=ergon-vm-ci \
-              -v "$(dirname "$WORK"):/p" fleet-qemu rm -rf "/p/$(basename "$WORK")"
+              -v "$(dirname "$WORK"):/p" debian:13 rm -rf "/p/$(basename "$WORK")"
           fi
 
       # ERGON-12's third criterion, and the one that was never met: a failure
