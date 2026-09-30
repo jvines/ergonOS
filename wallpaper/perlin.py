@@ -209,6 +209,10 @@ def generate(size, seed=0, jobs=None, length=None, step=0.6):
     import multiprocessing as mp
     with mp.Pool(jobs) as pool:
         acc = None
-        for part in pool.imap_unordered(_trace, work):
+        # imap, not imap_unordered: the parts below are SUMMED, and float
+        # addition is not associative, so completion order changed the result.
+        # Measured on flame, which had the same shape: six renders at one seed
+        # differed by up to 1/255 from each other. See wallpaper/flame.py.
+        for part in pool.imap(_trace, work):
             acc = part if acc is None else acc + part
     return acc.reshape(h, w)

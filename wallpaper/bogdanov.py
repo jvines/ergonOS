@@ -287,7 +287,11 @@ def generate(size, seed=0, jobs=None, parts=False):
     cov = ton = mist = None
     import multiprocessing as mp
     with mp.Pool(jobs) as pool:
-        for c, t, m in pool.imap_unordered(_worker, work):
+        # imap, not imap_unordered: the parts below are SUMMED, and float
+        # addition is not associative, so completion order changed the result.
+        # Measured on flame, which had the same shape: six renders at one seed
+        # differed by up to 1/255 from each other. See wallpaper/flame.py.
+        for c, t, m in pool.imap(_worker, work):
             cov = c if cov is None else cov + c
             ton = t if ton is None else ton + t
             mist = m if mist is None else mist + m

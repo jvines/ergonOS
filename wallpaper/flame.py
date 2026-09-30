@@ -249,7 +249,25 @@ def accumulate(g, size, seed=0, spp=40.0, jobs=None, fit="cover", zoom=None,
     import multiprocessing as mp
     with mp.Pool(jobs) as pool:
         acc = None
-        for part in pool.imap_unordered(_worker, work):
+        # imap, NOT imap_unordered, and the difference is reproducibility.
+        #
+        # Every worker is seeded deterministically (seed * 1000 + j above), so
+        # the parts themselves are fixed -- but float addition is not
+        # associative, and summing them in completion order made the total
+        # depend on which core finished first. Measured: six renders of the
+        # same genome at the same seed, maxdiff against the first of
+        # 1, 0, 0, 1, 1 out of 255.
+        #
+        # That is invisible on screen and still wrong, because lib.py's premise
+        # for generating wallpapers at all is that one "is reproducible from a
+        # seed". It also quietly defeats the pixel-check this repo uses to
+        # decide whether a change altered an approved image: a 1/255 diff that
+        # appears on its own cannot be told from one a refactor caused, which is
+        # exactly what happened while verifying the prepare()/colourise() split.
+        #
+        # imap still streams, so this costs a little buffering when one worker
+        # lags and nothing else -- the chunks are equal-sized by construction.
+        for part in pool.imap(_worker, work):
             acc = part if acc is None else acc + part
     # Divided by the samples per cell, so 1.0 means "as dense as if the orbit
     # had spread evenly over the frame" whatever the sample count: the log
