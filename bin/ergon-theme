@@ -66,6 +66,15 @@ CHECK=0; [ "${1:-}" = "--check" ] && { CHECK=1; shift; }
 # restarting the bar under someone who is looking at it is not an acceptable
 # side effect of a file sync.
 APPLY=1; [ "${1:-}" = "--no-apply" ] && { APPLY=0; shift; }
+# --gsettings sets GNOME's interface keys from the ACTIVE palette and does
+# nothing else. autostart.lua runs it at every session start, because those
+# keys are otherwise only written by a palette switch made inside a session
+# (provisioning over ssh has no bus to write them on). Until then a fresh
+# install's gsettings say color-scheme 'default', the Settings portal reports
+# "no preference", and GTK4 takes that as light -- over settings.ini, over
+# the dark @media block in gtk-4.0's gtk.css, over everything (measured,
+# ERGON-73): every GTK4 app comes up light under a dark palette.
+GSETTINGS_ONLY=0; [ "${1:-}" = "--gsettings" ] && { GSETTINGS_ONLY=1; shift; }
 
 # ONE palette, and that is a decision rather than an unfinished job.
 #
@@ -224,6 +233,20 @@ if [ "$MODE" = light ]; then
 else
   PREFER_DARK=1; GTK_THEME=Adwaita-dark; ICON_THEME=Papirus-Dark;  OTHER_MODE=light
 fi
+
+# GTK4 and libadwaita read the theme from gsettings, NOT from settings.ini,
+# so a light palette that only rewrote the ini would leave every GTK4 app
+# dark. Needs a session bus, which is why this is not in the provisioner --
+# provisioning over ssh has none. Used by a palette switch and by --gsettings.
+sync_gsettings() {
+  command -v gsettings >/dev/null 2>&1 || return 0
+  local _cs; _cs=$( [ "$MODE" = light ] && echo prefer-light || echo prefer-dark )
+  gsettings set org.gnome.desktop.interface color-scheme "$_cs"       2>/dev/null || true
+  gsettings set org.gnome.desktop.interface gtk-theme   "$GTK_THEME"  2>/dev/null || true
+  gsettings set org.gnome.desktop.interface icon-theme  "$ICON_THEME" 2>/dev/null || true
+}
+if [ "$GSETTINGS_ONLY" = 1 ]; then sync_gsettings; exit 0; fi
+
 {
   printf 's|@COOL_MODE@|%s|g\n'        "$MODE"
   printf 's|@COOL_PREFER_DARK@|%s|g\n' "$PREFER_DARK"
@@ -444,16 +467,7 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
     # is worse than no lock, and this is the shape that does it.
     ( setsid ergon-wallpaper-gen --recolour >/dev/null 2>&1 9>&- & ) || true
   fi
-  # GTK4 and libadwaita read the theme from gsettings, NOT from settings.ini,
-  # so a light palette that only rewrote the ini would leave every GTK4 app
-  # dark. Needs a session bus, which is why this is here and not in the
-  # provisioner -- provisioning over ssh has none.
-  if command -v gsettings >/dev/null 2>&1; then
-    _cs=$( [ "$MODE" = light ] && echo prefer-light || echo prefer-dark )
-    gsettings set org.gnome.desktop.interface color-scheme "$_cs"       2>/dev/null || true
-    gsettings set org.gnome.desktop.interface gtk-theme   "$GTK_THEME"  2>/dev/null || true
-    gsettings set org.gnome.desktop.interface icon-theme  "$ICON_THEME" 2>/dev/null || true
-  fi
+  sync_gsettings
   "$ERGON/bin/ergon-wallpaper" --force >/dev/null 2>&1 || true
   hyprctl reload >/dev/null 2>&1 || true
   # waybar and swayosd both parse everything they draw exactly once, at

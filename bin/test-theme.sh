@@ -261,5 +261,16 @@ check "gtk-4.0's settings.ini says dark under a dark palette" \
   hasx "$E/gtk/settings4.ini" "gtk-interface-color-scheme=dark"
 check "--check sees gtk4.css as current right after a render" quiet run --check
 
+# Session start (autostart.lua): GNOME's keys from the active palette and
+# nothing else. Without it a fresh install's 'default' colour scheme makes
+# every GTK4 app light under a dark palette.
+reset_logs; _before=$(cat "$E/gtk/gtk4.css")
+run --gsettings >/dev/null 2>&1
+check "--gsettings sets the active palette's colour scheme (cool: dark)" \
+  hasx "$T/log/gsettings" "set org.gnome.desktop.interface color-scheme prefer-dark"
+check "  and does nothing else: no render, no reload, no restart" \
+  bash -c '[ ! -e "$1/log/pkill" ] && [ ! -e "$1/log/hyprctl" ] && [ "$(cat "$2")" = "$3" ]' \
+  _ "$T" "$E/gtk/gtk4.css" "$_before"
+
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

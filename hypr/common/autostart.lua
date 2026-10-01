@@ -13,6 +13,12 @@ hl.on("hyprland.start", function()
   hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE HYPRLAND_INSTANCE_SIGNATURE")
   hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE HYPRLAND_INSTANCE_SIGNATURE")
 
+  -- GNOME's interface keys from the active palette, before any GTK app starts.
+  -- Otherwise only a palette switch made in a session writes them, and a fresh
+  -- install's 'default' colour scheme makes every GTK4 app light under a dark
+  -- palette (bin/ergon-theme, --gsettings).
+  hl.exec_cmd("ergon-theme --gsettings")
+
   -- Secrets. Chromium and Electron apps (Discord, VS Code) keep their key in
   -- the Secret Service once uwsm/env-hyprland.d/ergon-keyring points them at
   -- it (ERGON-64), and otherwise in plaintext or in memory. Firefox uses its own
