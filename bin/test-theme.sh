@@ -259,6 +259,10 @@ rm -f "$T/state/ergon/palette-light"; run cool >/dev/null 2>&1
 check "  and with no sibling either, the default does"            blk light "$(bg catppuccin-latte)"
 check "gtk-4.0's settings.ini says dark under a dark palette" \
   hasx "$E/gtk/settings4.ini" "gtk-interface-color-scheme=dark"
+check "  without prefer-dark, which pins GTK4 to Adwaita's dark variant for the life of the app" \
+  not has "$E/gtk/settings4.ini" "gtk-application-prefer-dark-theme"
+check "  while gtk-3.0 keeps it: GTK3 has nothing else" \
+  hasx "$E/gtk/settings.ini" "gtk-application-prefer-dark-theme=1"
 check "--check sees gtk4.css as current right after a render" quiet run --check
 
 # Session start (autostart.lua): GNOME's keys from the active palette and

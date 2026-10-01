@@ -270,10 +270,14 @@ start at all. The update check still runs.
 ## Theia answers ds9's scripting names, on loopback
 
 `environment.d/60-theia.conf` sets `THEIA_XPA=public`, so Theia registers the
-XPA access points `DS9:ds9` and `DS9:fitsviewer` the way ds9 does, and every
-existing `xpaset -p ds9 ...` script and `pyds9.DS9()` call drives it unchanged
-(ERGON-73). Theia's own default is private: one 0700 directory per instance
-that only `theiactl` reaches. What "public" weakens is who can drive the
+XPA access points `DS9:ds9` and `DS9:fitsviewer` the way ds9 does, and an
+existing `xpaset -p ds9 ...` script drives it unchanged (ERGON-73). pyds9
+needs the target named, `pyds9.DS9("DS9:ds9")`: a bare `DS9()` matches both
+access points and raises "too many ds9 instances" (measured, pyds9 1.8.1).
+Theia's own default is private: one 0700 directory per instance that only
+`theiactl` reaches -- and, as of Theia 185357b, `theiactl` reaches ONLY those,
+so under this setting it lists nothing and xpaget/xpaset are the way in. What
+"public" weakens is who can drive the
 viewer -- open any file its user can read, change the display, read back the
 open path and regions, quit it. XPA has no authentication of its own; on a
 single-user laptop "any local user" is you and your own processes, the same
