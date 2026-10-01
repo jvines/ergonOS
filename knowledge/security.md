@@ -266,3 +266,30 @@ Signing in to GitHub is what turns it on. To take it out of the interface
 instead, set `"chat.disableAIFeatures": true` in
 `~/.config/Code - OSS/User/settings.json`: with it the agent host does not
 start at all. The update check still runs.
+
+## Theia answers ds9's scripting names, on loopback
+
+`environment.d/60-theia.conf` sets `THEIA_XPA=public`, so Theia registers the
+XPA access points `DS9:ds9` and `DS9:fitsviewer` the way ds9 does, and every
+existing `xpaset -p ds9 ...` script and `pyds9.DS9()` call drives it unchanged
+(ERGON-73). Theia's own default is private: one 0700 directory per instance
+that only `theiactl` reaches. What "public" weakens is who can drive the
+viewer -- open any file its user can read, change the display, read back the
+open path and regions, quit it. XPA has no authentication of its own; on a
+single-user laptop "any local user" is you and your own processes, the same
+set that can already run `theiactl`.
+
+It is public to this machine and no further, and that is the second line in
+the same file, `XPA_METHOD=localhost`. libxpa's default method is inet on
+every interface -- measured, `xpans` on `0.0.0.0:14285` and `:14286` and each
+access point on a random `0.0.0.0` port. The firewall drops that from the LAN
+but accepts `tailscale0` (see "Inbound is dropped" above), so without it any
+host on the tailnet could have opened files in, and quit, the viewer.
+`localhost` is the same TCP transport bound to `127.0.0.1`; a script that sets
+no `XPA_METHOD` at all still reaches it. Theia's HTTP scripting API is
+unaffected either way: loopback, with a per-instance 0600 bearer token.
+
+To keep Theia private, put `THEIA_XPA=private` in a later file in
+`~/.config/environment.d/` (say `61-theia-private.conf`) and start a new
+session. The variable outranks Theia's Settings -> DS9 scripts choice, so the
+Settings window cannot undo it.

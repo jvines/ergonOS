@@ -1,2 +1,4 @@
 topcat               # the table/catalogue tool everyone in this field uses
-ds9                  # until theia replaces it
+ds9                  # until theia-fits-bin is on the AUR; then Theia replaces this line
+                     # (ERGON-73, operator's call 2026-10-01). install.sh already
+                     # prefers Theia for FITS and falls back to ds9 meanwhile.

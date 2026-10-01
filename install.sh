@@ -141,24 +141,28 @@ else
       || warn "update-mime-database failed -- npy/npz stay unknown blobs"
   fi
 
-  # ds9's own .desktop (its AUR package) registers only image/x-fits, an
-  # ALIAS -- and on Hyprland `xdg-open` runs DE-less (no XDG_CURRENT_DESKTOP
-  # xdg-utils recognises), so `xdg-mime query default` reads mimeapps.list
-  # literally and never resolves an alias to it. image/fits is what file(1)
-  # reports for a plain primary-HDU image (measured), so that is the only key
-  # set for ds9.
+  # FITS opens in Theia (ERGON-73), with a fallback for as long as the
+  # astronomy bundle still ships ds9 and topcat. A Default Applications value
+  # is a LIST, and xdg-mime returns its first entry that is installed --
+  # measured DE-less, xdg-utils 1.2.1: with only ds9 present,
+  # "cl.jvines.theia.desktop;ds9.desktop;" answers ds9.desktop and xdg-open
+  # starts ds9. So a machine without Theia keeps exactly what it had.
   #
-  # application/fits is deliberately NOT keyed to ds9: file(1) reports it for
-  # both a table-only FITS (a light curve, a catalogue) and an image sitting
-  # in an extension with an empty primary HDU -- one mime, two right answers
-  # -- so a blanket default here sent a table-only file to ds9 instead of
-  # topcat (ERGON-62 review, reproduced in a container). topcat's own
-  # .desktop already lists application/fits directly, so it resolves there
-  # without an override; an extension-image FITS needs a content-aware
-  # opener, which is beyond this card. Its jar was inspected too and bundles
-  # a real Parquet reader (uk.ac.starlink.parquet) but no HDF5 or NumPy one,
-  # so those get no default because nothing installed by any bundle opens
-  # them.
+  # image/fits is what file(1) reports for a plain primary-HDU image. ds9's
+  # own .desktop registers only image/x-fits, an ALIAS, and on Hyprland
+  # `xdg-open` runs DE-less (no XDG_CURRENT_DESKTOP xdg-utils recognises), so
+  # it reads mimeapps.list literally and never resolves an alias to ds9 --
+  # hence ds9 is named here rather than left to its .desktop.
+  #
+  # application/fits is the hard one: file(1) reports it for a table-only
+  # FITS (a light curve, a catalogue) AND for an image sitting in an
+  # extension behind an empty primary HDU -- one mime, two right answers.
+  # ERGON-62 kept it away from ds9, which sent table-only files to a viewer
+  # that cannot show a table. Theia shows both, an image in any HDU and a
+  # table as a paged grid, so it takes this key too (operator's call,
+  # 2026-10-01), with topcat behind it. topcat's jar bundles a real Parquet
+  # reader (uk.ac.starlink.parquet) but no HDF5 or NumPy one, so those get no
+  # default because nothing installed by any bundle opens them.
   #
   # An idempotent key-set, not a symlink: mimeapps.list is user-editable the
   # same way btop.conf is -- but unlike btop.conf, the key here can be the
@@ -171,15 +175,22 @@ else
   # stale entry naming a since-removed app still degrades on its own --
   # confirmed the same way, that xdg-open skips a Default Applications line
   # whose .desktop or Exec cannot be found.
+  #
+  # The one exception is a value THIS script wrote before and has since
+  # changed: the optional third argument. Without it, every machine
+  # provisioned before ERGON-73 would keep "image/fits=ds9.desktop;" for good,
+  # because the key exists. Only that exact old value is replaced; anything
+  # else in the key is the user's and is left alone.
   if [ "$CHECK" != 1 ]; then
     MIMEAPPS="$HOME/.config/mimeapps.list"
     mkdir -p "$(dirname "$MIMEAPPS")"
     [ -f "$MIMEAPPS" ] || : > "$MIMEAPPS"
-    _mimedefault() {  # _mimedefault <mimetype> <desktop-file>
-      awk -v key="$1" -v val="$2" '
+    _mimedefault() {  # _mimedefault <mimetype> <desktop-list> [<value we used to write>]
+      awk -v key="$1" -v val="$2" -v old="${3:-}" '
         BEGIN { insec = 0; has = 0; done = 0 }
         /^\[Default Applications\]/ { insec = 1; has = 1; print; next }
         /^\[/ { if (insec && !done) { print key "=" val ";"; done = 1 }; insec = 0; print; next }
+        insec && old != "" && $0 == key "=" old ";" { print key "=" val ";"; done = 1; next }
         { if (insec && $0 ~ "^" key "=") done = 1; print }
         END {
           if (insec && !done) print key "=" val ";"
@@ -187,10 +198,11 @@ else
         }
       ' "$MIMEAPPS" > "$MIMEAPPS.new" && mv "$MIMEAPPS.new" "$MIMEAPPS"
     }
-    _mimedefault image/fits ds9.desktop
+    _mimedefault image/fits "cl.jvines.theia.desktop;ds9.desktop" ds9.desktop
+    _mimedefault application/fits "cl.jvines.theia.desktop;topcat.desktop"
     _mimedefault application/vnd.apache.parquet topcat.desktop
     unset -f _mimedefault
-    ok "mimeapps.list: image/fits -> ds9, parquet -> topcat (ignored where not installed)"
+    ok "mimeapps.list: FITS -> Theia (then ds9 / topcat), parquet -> topcat (ignored where not installed)"
   fi
 
   # bat's theme has to be COMPILED into its cache before it is selectable, so
@@ -239,6 +251,9 @@ else
   # uwsm. Without it every ergon-* in the bar and the keybinds is not found:
   # the module fires, the command is missing, and nothing surfaces it.
   link environment.d/10-ergon-path.conf .config/environment.d/10-ergon-path.conf
+  # Theia answers ds9's XPA names, on loopback only (ERGON-73; the file says
+  # why both variables are needed).
+  link environment.d/60-theia.conf .config/environment.d/60-theia.conf
   # ERGON-64: what makes Electron apps keep their key in the keyring rather than
   # in plaintext. uwsm's own env, because environment.d drops the empty value it
   # needs (the file says why). A drop-in uwsm reads after env-hyprland, and not
