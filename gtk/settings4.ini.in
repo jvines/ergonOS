@@ -1,0 +1,14 @@
+# GENERATED from gtk/settings4.ini.in — edit the .in, then run: ergon theme
+#
+# Linked to ~/.config/gtk-4.0/settings.ini: gtk/settings.ini.in, plus one key
+# GTK3 does not have. GTK3 warns "Unknown key" for it on every start, waybar's
+# included, so the two directories cannot share one file any more.
+@COOL_GTK_SETTINGS@
+
+# Which @media block of gtk-4.0/gtk.css applies when the session has no colour
+# scheme at all (no session bus, no Settings portal). GTK picks the LIGHT one
+# then, whatever the palette, and prefer-dark above does not move it. Measured:
+# a live scheme from the portal beats this in both directions -- and so does a
+# portal answering "no preference" (gsettings color-scheme 'default'), which
+# still means light. Only `ergon theme` in the session sets gsettings.
+gtk-interface-color-scheme=@COOL_MODE@

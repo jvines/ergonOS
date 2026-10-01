@@ -271,7 +271,10 @@ if [ -f "$ERGON/gtk/gtk4.css.in" ]; then
   # sed's `r` queues a file for output and `d` drops the placeholder line, so
   # each placeholder becomes a whole stylesheet. Unexpanded, they are @COOL_*@
   # names, so the leftover check below refuses the file rather than shipping it.
-  printf '/^@COOL_GTK_%s@$/{\nr %s\nd\n}\n' LIGHT "$_tmpd/light" DARK "$_tmpd/dark" >> "$SEDPROG"
+  # The same splice gives gtk-4.0 its own settings.ini (gtk/settings4.ini.in).
+  sed -f "$SEDPROG" "$ERGON/gtk/settings.ini.in" > "$_tmpd/settings"
+  printf '/^@COOL_GTK_%s@$/{\nr %s\nd\n}\n' LIGHT "$_tmpd/light" DARK "$_tmpd/dark" \
+    SETTINGS "$_tmpd/settings" >> "$SEDPROG"
 fi
 
 rc=0; rendered=0; changed=0

@@ -110,7 +110,7 @@ manager does not re-read it.
 
 **Do not edit a themed config. It is generated, and your edit has a short life.**
 
-Eighteen files are rendered from a `.in` template beside them by
+Nineteen files are rendered from a `.in` template beside them by
 `ergon theme`, which expands the active palette into `@COOL_*@` placeholders:
 
     waybar/style.css      mako/config        hypr/hyprlock.conf
@@ -119,12 +119,15 @@ Eighteen files are rendered from a `.in` template beside them by
     yazi/theme.toml       lnav/config.json   lazygit/config.yml
     lazydocker/config.yml wezterm/wezterm.lua btop/themes/ergon.theme
     bat/themes/ergon.tmTheme  swayosd/style.css  gtk/gtk4.css
+    gtk/settings4.ini
 
 `gtk/gtk4.css` is the one exception to "the active palette": it is
 `gtk/gtk.css.in` rendered twice, a light palette and a dark one in
 `@media (prefers-color-scheme)` blocks, so a GTK4 app that is already running
 follows a palette switch. Why, and which palette fills the other block, is in
-`gtk/gtk4.css.in`.
+`gtk/gtk4.css.in`. `gtk/settings4.ini` is gtk-4.0's `settings.ini`: gtk-3.0's
+plus `gtk-interface-color-scheme`, which picks the block when the session has
+no colour scheme, and which GTK3 would warn about on every start.
 
 They are **gitignored**, and `install.sh` renders them before it links anything.
 That is why switching palette no longer leaves the repo dirty — and it is also
@@ -182,14 +185,14 @@ before either of those unrelated, always-fatal-here errors does. `lazygit
 -ucf` points straight at the rendered file; `lazydocker` has no such flag, so
 it is symlinked into `~/.config/lazydocker` instead.
 
-**Five of the eighteen rendered files are still checked by nothing**, each
+**Six of the nineteen rendered files are still checked by nothing**, each
 for a measured reason rather than an assumed one:
 
-- `gtk/settings.ini` — read with `GLib.KeyFile`, the same loader GTK's own
-  settings reader is built on, but that loader has no schema: measured, a
-  bogus key and a wrong-typed value are both perfectly valid keyfile syntax.
-  Only gross syntax breaks it, which nothing this template produces comes
-  close to.
+- `gtk/settings.ini` and `gtk/settings4.ini` — read with `GLib.KeyFile`, the
+  same loader GTK's own settings reader is built on, but that loader has no
+  schema: measured, a bogus key and a wrong-typed value are both perfectly
+  valid keyfile syntax. Only gross syntax breaks it, which nothing this
+  template produces comes close to.
 - `yazi/theme.toml` — yazi opens a real TTY before it does anything else and
   fails identically (`Inappropriate ioctl for device`) whether the theme is
   valid, has an unknown key, or is not parseable TOML at all — measured
@@ -238,9 +241,9 @@ generated `[urgency=critical]` and friends are parsed *after* yours and win on
 any key both set. You can add criteria the repo does not define; you cannot
 restyle the ones it does.
 
-Nine surfaces have **no** include mechanism and cannot be overridden this way:
-`gtk/settings.ini`, `yazi/theme.toml`, `lnav/config.json`, `lazygit/config.yml`,
-`lazydocker/config.yml`, `btop`'s theme, `bat`'s tmTheme,
+Ten surfaces have **no** include mechanism and cannot be overridden this way:
+`gtk/settings.ini`, `gtk/settings4.ini`, `yazi/theme.toml`, `lnav/config.json`,
+`lazygit/config.yml`, `lazydocker/config.yml`, `btop`'s theme, `bat`'s tmTheme,
 `wezterm/wezterm.lua`, and `swayosd/style.css` — that last one because
 `~/.config/swayosd/style.css` **is** swayosd's user-override slot, and this
 repo has taken it; swayosd loads the package's own sheet first and this one

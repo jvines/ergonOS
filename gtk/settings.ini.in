@@ -1,6 +1,6 @@
 # GENERATED from gtk/settings.ini.in — edit the .in, then run: ergon theme
 #
-# Linked to BOTH ~/.config/gtk-3.0/settings.ini and ~/.config/gtk-4.0/settings.ini.
+# Linked to ~/.config/gtk-3.0/settings.ini; gtk/settings4.ini.in adds one key for gtk-4.0.
 #
 # GTK4 reads its theme from gsettings, not from this file, and provision-arch.sh
 # sets those keys too — but only when there is a session bus to set them on.

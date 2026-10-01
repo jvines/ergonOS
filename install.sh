@@ -31,7 +31,7 @@ link() {  # link <repo path> <path under $HOME> [generated]
   local src="$ERGON/$1" dst="$HOME/$2"
   if [ ! -e "$src" ]; then
     # "generated" marks a file that does not exist until the render above has
-    # run. Thirteen of the eighteen rendered outputs are linked as part of a
+    # run. Thirteen of the nineteen rendered outputs are linked as part of a
     # whole directory, which always exists, so this guard never sees them; the
     # gtk files are linked file by file, so on a never-rendered clone --check
     # reported them as "missing in the repo". They are not missing from the
@@ -63,7 +63,7 @@ else
   # Render BEFORE linking anything, and treat a failure as fatal.
   #
   # The themed configs are generated and not committed, so a fresh clone has
-  # eighteen missing files and link() would happily point $HOME at every one of
+  # nineteen missing files and link() would happily point $HOME at every one of
   # them. Two of those are not cosmetic:
   #
   #   hypr/common/looknfeel.lua  hyprland.lua requires it WITHOUT a pcall, and a
@@ -233,7 +233,7 @@ else
     ok "btop themed (cool)"
   fi
   link gtk/settings.ini .config/gtk-3.0/settings.ini generated
-  link gtk/settings.ini .config/gtk-4.0/settings.ini generated
+  link gtk/settings4.ini .config/gtk-4.0/settings.ini generated
   # The palette's colours, on top of Adwaita's widgets. Not the same file in
   # both: GTK4's carries a light and a dark palette so a running app follows a
   # palette switch, and GTK3 cannot parse that (gtk/gtk4.css.in).

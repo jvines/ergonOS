@@ -37,6 +37,7 @@ foot/foot.ini
 fuzzel/fuzzel.ini
 gtk/gtk.css
 gtk/gtk4.css
+gtk/settings4.ini
 gtk/settings.ini
 hypr/common/looknfeel.lua
 hypr/hyprlock.conf

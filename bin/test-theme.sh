@@ -243,6 +243,12 @@ check "gtk-4.0's light block is the active light palette" blk light "$(bg gruvbo
 check "  and its dark block the last dark palette used"   blk dark  "$(bg gruvbox)"
 check "gtk-3.0 keeps the active palette alone: GTK3 cannot parse @media" \
   bash -c '! grep -q "^@media" "$1" && grep -qF "window_bg_color $2;" "$1"' _ "$E/gtk/gtk.css" "$(bg gruvbox-light)"
+check "gtk-4.0's settings.ini says light under a light palette, for a session that says nothing" \
+  hasx "$E/gtk/settings4.ini" "gtk-interface-color-scheme=light"
+check "  and carries the rest of settings.ini with it" \
+  hasx "$E/gtk/settings4.ini" "gtk-icon-theme-name=Papirus-Light"
+check "  while gtk-3.0's never sees the key: GTK3 warns on every start" \
+  not has "$E/gtk/settings.ini" "gtk-interface-color-scheme"
 check "the user's file is imported once, outside both blocks" \
   test "$(grep -c '^@import' "$E/gtk/gtk4.css")-$(tail -n1 "$E/gtk/gtk4.css" | cut -c1-7)" = "1-@import"
 run cool >/dev/null 2>&1; run gruvbox-light >/dev/null 2>&1
@@ -251,6 +257,8 @@ rm -f "$T/state/ergon/palette-dark"; run gruvbox-light >/dev/null 2>&1
 check "  and with nothing remembered, the sibling fills it"       blk dark "$(bg gruvbox)"
 rm -f "$T/state/ergon/palette-light"; run cool >/dev/null 2>&1
 check "  and with no sibling either, the default does"            blk light "$(bg catppuccin-latte)"
+check "gtk-4.0's settings.ini says dark under a dark palette" \
+  hasx "$E/gtk/settings4.ini" "gtk-interface-color-scheme=dark"
 check "--check sees gtk4.css as current right after a render" quiet run --check
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
