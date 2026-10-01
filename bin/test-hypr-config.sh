@@ -60,12 +60,12 @@ out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:
   cp -r /tmp/repo/hypr    /home/t/.config/hypr
   cp -r /tmp/repo/waybar  /home/t/.config/waybar
   cp -r /tmp/repo/swayosd /home/t/.config/swayosd
-  # gtk.css has the identical trap: it is linked into BOTH gtk-3.0 and
-  # gtk-4.0 (install.sh), and its own @import is relative, so it too has to
-  # sit where a real desktop puts it or "../ergon/gtk.css" resolves nowhere.
+  # gtk.css and gtk4.css have the identical trap: their @import is relative,
+  # so each has to sit where install.sh links it or "../ergon/gtk.css"
+  # resolves nowhere.
   install -d /home/t/.config/gtk-3.0 /home/t/.config/gtk-4.0
-  cp /tmp/repo/gtk/gtk.css /home/t/.config/gtk-3.0/gtk.css
-  cp /tmp/repo/gtk/gtk.css /home/t/.config/gtk-4.0/gtk.css
+  cp /tmp/repo/gtk/gtk.css  /home/t/.config/gtk-3.0/gtk.css
+  cp /tmp/repo/gtk/gtk4.css /home/t/.config/gtk-4.0/gtk.css
   # lazydocker has no --use-config-file (lazygit does, used below instead);
   # its config is only ever found at $XDG_CONFIG_HOME/lazydocker/config.yml.
   ln -s /tmp/repo/lazydocker /home/t/.config/lazydocker
@@ -212,11 +212,13 @@ PYEOF
   echo "@@swayosd-css"
   run "python3 /tmp/css4.py /home/t/.config/swayosd/style.css" || true
 
-  # gtk.css through BOTH engines too, same reason as the pair above: it is
-  # linked into gtk-3.0 AND gtk-4.0 (install.sh), and one syntax is not the
-  # other. Flagged as unvalidated before ERGON-52 review, when it was really
-  # just the same two parsers already in this container, pointed at one more
-  # file.
+  # Each GTK user stylesheet through the engine that reads it. Flagged as
+  # unvalidated before ERGON-52 review, when it was really just the same two
+  # parsers already in this container, pointed at one more file. Since
+  # ERGON-73 they are two files: gtk4.css carries @media blocks, which GTK3
+  # rejects as "unknown @ rule". Measured inside @media on GTK 4.22, css4.py
+  # still reports an unterminated block, a bad hex colour, an unknown property
+  # and a misspelt media feature -- so wrapping the rules did not blind it.
   echo "@@gtk-css"
   run "python3 /tmp/css3.py /home/t/.config/gtk-3.0/gtk.css" || true
   run "python3 /tmp/css4.py /home/t/.config/gtk-4.0/gtk.css" || true

@@ -36,6 +36,7 @@ btop/themes/ergon.theme
 foot/foot.ini
 fuzzel/fuzzel.ini
 gtk/gtk.css
+gtk/gtk4.css
 gtk/settings.ini
 hypr/common/looknfeel.lua
 hypr/hyprlock.conf

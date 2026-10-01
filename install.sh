@@ -31,9 +31,9 @@ link() {  # link <repo path> <path under $HOME> [generated]
   local src="$ERGON/$1" dst="$HOME/$2"
   if [ ! -e "$src" ]; then
     # "generated" marks a file that does not exist until the render above has
-    # run. Thirteen of the seventeen rendered outputs are linked as part of a
+    # run. Thirteen of the eighteen rendered outputs are linked as part of a
     # whole directory, which always exists, so this guard never sees them; the
-    # gtk pair is linked file by file, so on a never-rendered clone --check
+    # gtk files are linked file by file, so on a never-rendered clone --check
     # reported them as "missing in the repo". They are not missing from the
     # repository, they are unrendered, and saying the first about the second
     # sends someone looking for a broken checkout.
@@ -63,7 +63,7 @@ else
   # Render BEFORE linking anything, and treat a failure as fatal.
   #
   # The themed configs are generated and not committed, so a fresh clone has
-  # seventeen missing files and link() would happily point $HOME at every one of
+  # eighteen missing files and link() would happily point $HOME at every one of
   # them. Two of those are not cosmetic:
   #
   #   hypr/common/looknfeel.lua  hyprland.lua requires it WITHOUT a pcall, and a
@@ -234,11 +234,11 @@ else
   fi
   link gtk/settings.ini .config/gtk-3.0/settings.ini generated
   link gtk/settings.ini .config/gtk-4.0/settings.ini generated
-  # The palette's colours, on top of Adwaita-dark's widgets. Both directories
-  # get the same file: GTK3 and libadwaita name the roles differently and
-  # gtk.css defines both sets, so one rendered file serves both.
-  link gtk/gtk.css .config/gtk-3.0/gtk.css generated
-  link gtk/gtk.css .config/gtk-4.0/gtk.css generated
+  # The palette's colours, on top of Adwaita's widgets. Not the same file in
+  # both: GTK4's carries a light and a dark palette so a running app follows a
+  # palette switch, and GTK3 cannot parse that (gtk/gtk4.css.in).
+  link gtk/gtk.css  .config/gtk-3.0/gtk.css generated
+  link gtk/gtk4.css .config/gtk-4.0/gtk.css generated
   # The OSD. swayosd-server searches $XDG_CONFIG_HOME/swayosd/style.css itself
   # and loads it over the package's own sheet, so this needs no --style flag in
   # autostart.lua -- the file simply has to be at that path. One file rather

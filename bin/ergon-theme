@@ -149,11 +149,16 @@ else
   _want=cool
 fi
 
-case "$_want" in
-  /*|./*|../*) PALETTE="$_want" ;;
-  *)           PALETTE="$ERGON/theme/$_want.env" ;;
-esac
-[ -f "$PALETTE" ] || PALETTE="$_want"
+# A palette as it is typed or recorded -> its file. A function because the
+# gtk-4.0 render below resolves a second, remembered palette the same way.
+resolve() {
+  case "$1" in
+    /*|./*|../*) printf '%s\n' "$1" ;;
+    *) if [ -f "$ERGON/theme/$1.env" ]; then printf '%s\n' "$ERGON/theme/$1.env"
+       else printf '%s\n' "$1"; fi ;;
+  esac
+}
+PALETTE=$(resolve "$_want")
 
 [ -f "$PALETTE" ] || {
   echo "no palette '$_want' (try: ergon theme --list)" >&2; exit 1
@@ -164,29 +169,34 @@ if [ "$CHECK" != 1 ]; then
   # again; a bare basename would resolve to theme/<name>.env, which may not
   # exist. ergon-wallpaper reads this same file.
   case "$PALETTE" in
-    "$ERGON"/theme/*) basename "$PALETTE" .env > "$PALETTE_FILE" ;;
-    *)                printf '%s\n' "$PALETTE" > "$PALETTE_FILE" ;;
+    "$ERGON"/theme/*) _rec=$(basename "$PALETTE" .env) ;;
+    *)                _rec=$PALETTE ;;
   esac
+  printf '%s\n' "$_rec" > "$PALETTE_FILE"
 fi
 
-# Build the sed program from the palette. Keys are validated so a stray line in
+# Build the sed program from a palette. Keys are validated so a stray line in
 # cool.env cannot inject sed syntax.
-SEDPROG=$(mktemp); trap 'rm -f "$SEDPROG"' EXIT
-while IFS='=' read -r k v; do
-  case "$k" in
-    ''|'#'*) continue ;;
-    COOL_[A-Z0-9_]*) ;;
-    *) echo "bad key in cool.env: $k" >&2; exit 1 ;;
-  esac
-  v="${v%%[[:space:]]*}"                       # strip trailing comments
-  case "$v" in
-    '#'[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) ;;
-    *) echo "$k is not a 6-digit hex colour: '$v'" >&2; exit 1 ;;
-  esac
-  # Two forms: @COOL_X@ -> #RRGGBB, and @COOL_X:raw@ -> RRGGBB (hyprland wants
-  # 0xAARRGGBB or bare hex; CSS and ini want the hash).
-  printf 's|@%s@|%s|g\ns|@%s:raw@|%s|g\n' "$k" "$v" "$k" "${v#\#}" >> "$SEDPROG"
-done < "$PALETTE"
+sedprog() {  # sedprog <palette> <program file>
+  local k v
+  while IFS='=' read -r k v; do
+    case "$k" in
+      ''|'#'*) continue ;;
+      COOL_[A-Z0-9_]*) ;;
+      *) echo "bad key in $1: $k" >&2; exit 1 ;;
+    esac
+    v="${v%%[[:space:]]*}"                       # strip trailing comments
+    case "$v" in
+      '#'[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) ;;
+      *) echo "$k is not a 6-digit hex colour: '$v'" >&2; exit 1 ;;
+    esac
+    # Two forms: @COOL_X@ -> #RRGGBB, and @COOL_X:raw@ -> RRGGBB (hyprland wants
+    # 0xAARRGGBB or bare hex; CSS and ini want the hash).
+    printf 's|@%s@|%s|g\ns|@%s:raw@|%s|g\n' "$k" "$v" "$k" "${v#\#}" >> "$2"
+  done < "$1"
+}
+SEDPROG=$(mktemp); _tmpd=$(mktemp -d); trap 'rm -rf "$SEDPROG" "$_tmpd"' EXIT
+sedprog "$PALETTE" "$SEDPROG"
 
 # Derived, non-colour substitutions.
 #
@@ -201,15 +211,18 @@ done < "$PALETTE"
 # threshold is 50% of 255.
 # Read from the file rather than a shell variable: this script never sources
 # the palette (sourcing would execute it), so COOL_BG0 is not in scope here.
-_bg0=$(sed -n 's/^COOL_BG0=\(#[0-9A-Fa-f]\{6\}\).*/\1/p' "$PALETTE" | head -1)
-[ -n "$_bg0" ] || { echo "palette has no COOL_BG0: $PALETTE" >&2; exit 1; }
-_hex=${_bg0#\#}
-_r=$((16#${_hex:0:2})); _g=$((16#${_hex:2:2})); _b=$((16#${_hex:4:2}))
-_lum=$(( (2126 * _r + 7152 * _g + 722 * _b) / 10000 ))
-if [ "$_lum" -gt 127 ]; then
-  MODE=light; PREFER_DARK=0; GTK_THEME=Adwaita;      ICON_THEME=Papirus-Light
+mode_of() {  # mode_of <palette> -> light | dark; fails without a COOL_BG0
+  local h
+  h=$(sed -n 's/^COOL_BG0=#\([0-9A-Fa-f]\{6\}\).*/\1/p' "$1" 2>/dev/null | head -1)
+  [ -n "$h" ] || return 1
+  if [ $(( (2126 * 16#${h:0:2} + 7152 * 16#${h:2:2} + 722 * 16#${h:4:2}) / 10000 )) -gt 127 ]
+  then echo light; else echo dark; fi
+}
+MODE=$(mode_of "$PALETTE") || { echo "palette has no COOL_BG0: $PALETTE" >&2; exit 1; }
+if [ "$MODE" = light ]; then
+  PREFER_DARK=0; GTK_THEME=Adwaita;      ICON_THEME=Papirus-Light; OTHER_MODE=dark
 else
-  MODE=dark;  PREFER_DARK=1; GTK_THEME=Adwaita-dark; ICON_THEME=Papirus-Dark
+  PREFER_DARK=1; GTK_THEME=Adwaita-dark; ICON_THEME=Papirus-Dark;  OTHER_MODE=light
 fi
 {
   printf 's|@COOL_MODE@|%s|g\n'        "$MODE"
@@ -217,6 +230,49 @@ fi
   printf 's|@COOL_GTK_THEME@|%s|g\n'   "$GTK_THEME"
   printf 's|@COOL_ICON_THEME@|%s|g\n'  "$ICON_THEME"
 } >> "$SEDPROG"
+
+# gtk-4.0 gets BOTH modes, in @media (prefers-color-scheme) blocks that GTK4
+# re-evaluates live -- gtk/gtk4.css.in says why and what was measured. GTK3 has
+# no @media, so gtk/gtk.css stays the active palette alone.
+#
+# The active palette fills its own mode's block. The other block takes the
+# first of these that exists AND is of that mode, computed as MODE is, since a
+# remembered palette may have been edited since:
+#
+#   1. the last palette of that mode you used. Flipping between two palettes is
+#      the common case, and the only one a running app gets exactly right: what
+#      it flips to is already in the file it read at startup.
+#   2. a sibling: the name up to its first '-' is the family, so gruvbox finds
+#      gruvbox-light and catppuccin finds catppuccin-latte with no table to
+#      drift from theme/.
+#   3. cool for dark, catppuccin-latte for light.
+#
+# If none qualifies the active palette fills both: the single-palette file this
+# replaced, so no worse than before.
+[ "$CHECK" = 1 ] || printf '%s\n' "$_rec" > "$STATE/palette-$MODE"
+if [ -f "$ERGON/gtk/gtk4.css.in" ]; then
+  OTHER=$PALETTE
+  _fam=$(basename "$PALETTE" .env); _fam=${_fam%%-*}; _dir=$(dirname "$PALETTE")
+  _def=$( [ "$OTHER_MODE" = dark ] && echo cool || echo catppuccin-latte )
+  for _c in "$(resolve "$(cat "$STATE/palette-$OTHER_MODE" 2>/dev/null || true)")" \
+            "$_dir/$_fam.env" "$_dir/$_fam"-*.env "$ERGON/theme/$_def.env"; do
+    if [ -f "$_c" ] && [ "$(mode_of "$_c")" = "$OTHER_MODE" ]; then OTHER=$_c; break; fi
+  done
+  # In a subshell, because sedprog exits on a bad palette -- and a broken
+  # remembered palette must cost this one block, not the whole render.
+  if ! ( sedprog "$OTHER" "$_tmpd/prog" ); then
+    echo "!! $OTHER cannot fill gtk-4.0's $OTHER_MODE block; using $PALETTE" >&2
+    cp "$SEDPROG" "$_tmpd/prog"
+  fi
+  # Each block is gtk.css.in rendered in that block's palette, less its @import:
+  # gtk4.css.in imports the user's file once, outside both blocks.
+  sed -f "$SEDPROG"     "$ERGON/gtk/gtk.css.in" | grep -v '^@import' > "$_tmpd/$MODE"
+  sed -f "$_tmpd/prog"  "$ERGON/gtk/gtk.css.in" | grep -v '^@import' > "$_tmpd/$OTHER_MODE"
+  # sed's `r` queues a file for output and `d` drops the placeholder line, so
+  # each placeholder becomes a whole stylesheet. Unexpanded, they are @COOL_*@
+  # names, so the leftover check below refuses the file rather than shipping it.
+  printf '/^@COOL_GTK_%s@$/{\nr %s\nd\n}\n' LIGHT "$_tmpd/light" DARK "$_tmpd/dark" >> "$SEDPROG"
+fi
 
 rc=0; rendered=0; changed=0
 while IFS= read -r tpl; do

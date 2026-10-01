@@ -110,7 +110,7 @@ manager does not re-read it.
 
 **Do not edit a themed config. It is generated, and your edit has a short life.**
 
-Seventeen files are rendered from a `.in` template beside them by
+Eighteen files are rendered from a `.in` template beside them by
 `ergon theme`, which expands the active palette into `@COOL_*@` placeholders:
 
     waybar/style.css      mako/config        hypr/hyprlock.conf
@@ -118,7 +118,13 @@ Seventeen files are rendered from a `.in` template beside them by
     foot/foot.ini         newsboat/config    gtk/settings.ini
     yazi/theme.toml       lnav/config.json   lazygit/config.yml
     lazydocker/config.yml wezterm/wezterm.lua btop/themes/ergon.theme
-    bat/themes/ergon.tmTheme  swayosd/style.css
+    bat/themes/ergon.tmTheme  swayosd/style.css  gtk/gtk4.css
+
+`gtk/gtk4.css` is the one exception to "the active palette": it is
+`gtk/gtk.css.in` rendered twice, a light palette and a dark one in
+`@media (prefers-color-scheme)` blocks, so a GTK4 app that is already running
+follows a palette switch. Why, and which palette fills the other block, is in
+`gtk/gtk4.css.in`.
 
 They are **gitignored**, and `install.sh` renders them before it links anything.
 That is why switching palette no longer leaves the repo dirty — and it is also
@@ -137,14 +143,14 @@ sixteen ANSI slots were being discarded with no error anywhere.
 
     ./bin/test-hypr-config.sh      # what the list below is, run for real
 
-`./bin/test-hypr-config.sh` loads thirteen files through the parser that will
+`./bin/test-hypr-config.sh` loads fourteen files through the parser that will
 actually read each one: `hypr/hyprland.lua` (which is what pulls in the
 rendered `looknfeel.lua`), `fuzzel.ini`, `foot.ini`, `wezterm/wezterm.lua`,
 `newsboat/config`, `lazygit/config.yml`, `lazydocker/config.yml`,
-`mako/config`, `hypridle.conf`, `hyprlock.conf`, and three stylesheets through
+`mako/config`, `hypridle.conf`, `hyprlock.conf`, and four stylesheets through
 the GTK engine that actually reads each — `waybar/style.css` and `gtk/gtk.css`
-through GTK3, `swayosd/style.css` and `gtk/gtk.css` again through GTK4, because
-`gtk.css` is linked into both and the two engines do not accept the same file.
+through GTK3, `swayosd/style.css` and `gtk/gtk4.css` through GTK4. The two
+engines do not accept the same file: GTK3 has no `@media` at all.
 `waybar/config.jsonc` is exercised functionally instead: the VM session suite
 starts a real bar and asserts it maps a layer surface, which is stronger than
 parsing it.
@@ -176,7 +182,7 @@ before either of those unrelated, always-fatal-here errors does. `lazygit
 -ucf` points straight at the rendered file; `lazydocker` has no such flag, so
 it is symlinked into `~/.config/lazydocker` instead.
 
-**Five of the seventeen rendered files are still checked by nothing**, each
+**Five of the eighteen rendered files are still checked by nothing**, each
 for a measured reason rather than an assumed one:
 
 - `gtk/settings.ini` — read with `GLib.KeyFile`, the same loader GTK's own
@@ -216,7 +222,7 @@ nothing in this repo ever writes those files — `ergon-lint` enforces that, and
 | `fuzzel.ini` | `fuzzel/fuzzel.ini` | fails `--check-config` |
 | `foot.ini` | `foot/foot.ini` | fails `--check-config` |
 | `newsboat.conf` | `newsboat/config` | **newsboat will not start** |
-| `gtk.css` | `gtk/gtk.css` | a warning on stderr |
+| `gtk.css` | `gtk/gtk.css`, `gtk/gtk4.css` | a warning on stderr |
 | `hyprlock.conf` | `hypr/hyprlock.conf` | nothing; it is optional by design |
 | `user.lua` | `hypr/hyprland.lua` | nothing; `pcall` covers it |
 

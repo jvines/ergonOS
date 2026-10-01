@@ -1,0 +1,38 @@
+/* GENERATED from gtk/gtk4.css.in — edit the .in, then run: ergon theme
+ *
+ * Linked to ~/.config/gtk-4.0/gtk.css. GTK3 gets gtk/gtk.css instead. Each
+ * block below is that same gtk.css.in, rendered once per colour scheme.
+ *
+ * Both modes are in here because a GTK4 app reads this file ONCE, at startup.
+ * A palette switch reaches a running app only as a flip of the colour scheme
+ * (gsettings -> the Settings portal -> GtkSettings). With one palette baked in,
+ * an app started under catppuccin-latte and switched to cool drew Adwaita's
+ * dark widgets in latte's light colours until it was restarted. Seen in the VM
+ * with the packaged Theia (ERGON-73).
+ *
+ * GTK 4.22 re-evaluates (prefers-color-scheme) in the user stylesheet when
+ * gtk-interface-color-scheme changes, @define-color inside a block included.
+ * Measured on a running process: a gsettings flip moved both. What does NOT
+ * move it is gtk-application-prefer-dark-theme, which is all settings.ini
+ * carries; and with no colour scheme from the session at all, the LIGHT block
+ * is the one GTK picks, whatever the palette.
+ *
+ * GTK3 has no @media ("unknown @ rule"), so it keeps a single-mode file.
+ *
+ * The block in the active palette's mode is that palette. The other one holds
+ * the last palette of that mode you used, else a sibling (gruvbox-light for
+ * gruvbox), else a default -- see bin/ergon-theme. A running app is therefore
+ * EXACT only when you switch to the palette in the other block; any other
+ * switch lands on the right mode in the wrong palette until a restart.
+ */
+@media (prefers-color-scheme: light) {
+@COOL_GTK_LIGHT@
+}
+
+@media (prefers-color-scheme: dark) {
+@COOL_GTK_DARK@
+}
+
+/* Your overrides: outside both blocks so they hold in either mode, and last so
+ * they win. See the end of gtk.css.in. */
+@import url("../ergon/gtk.css");

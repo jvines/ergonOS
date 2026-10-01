@@ -35,13 +35,15 @@ check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi
 has()  { grep -qaF -- "$2" "$1" 2>/dev/null; }
 hasx() { grep -qxF -- "$2" "$1" 2>/dev/null; }
 not()  { ! "$@"; }
+quiet() { "$@" >/dev/null 2>&1; }
 
 # --- a throwaway ergonOS, holding only what the renderer touches -------------
 E=$T/ergon
 mkdir -p "$E/bin" "$E/lib" "$E/theme" "$T/stub" "$T/log" "$T/home"
 cp "$REPO/bin/ergon-theme" "$E/bin/"
 cp "$REPO/lib/user-config.sh" "$E/lib/"
-cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/gruvbox-light.env" "$E/theme/"
+cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/gruvbox-light.env" \
+   "$REPO/theme/catppuccin-latte.env" "$E/theme/"
 for d in foot mako waybar swayosd fuzzel gtk btop/themes; do
   mkdir -p "$E/$d"; cp "$REPO/$d"/*.in "$E/$d/" 2>/dev/null
 done
@@ -230,6 +232,26 @@ check "  and a light palette reaches the launcher's icons, which it never did" \
   has "$E/fuzzel/fuzzel.ini" "icon-theme=Papirus-Light"
 check "  the same way it reaches GTK's" \
   has "$E/gtk/settings.ini" "gtk-icon-theme-name=Papirus-Light"
+
+# --- gtk-4.0 carries both modes, so a running GTK4 app follows a switch -------
+# Asserted per BLOCK, through the one define every palette renders exactly once
+# per copy of gtk.css.in; a whole-file grep would pass with the two swapped.
+bg() { sed -n 's/^COOL_BG0=\(#[0-9A-Fa-f]*\).*/\1/p' "$E/theme/$1.env" | head -1; }
+blk() { awk -v m="prefers-color-scheme: $1)" '/^@media /{ on = index($0, m) > 0 } on' "$E/gtk/gtk4.css" \
+          | grep -qF "@define-color window_bg_color ${2:-<unset>};"; }
+check "gtk-4.0's light block is the active light palette" blk light "$(bg gruvbox-light)"
+check "  and its dark block the last dark palette used"   blk dark  "$(bg gruvbox)"
+check "gtk-3.0 keeps the active palette alone: GTK3 cannot parse @media" \
+  bash -c '! grep -q "^@media" "$1" && grep -qF "window_bg_color $2;" "$1"' _ "$E/gtk/gtk.css" "$(bg gruvbox-light)"
+check "the user's file is imported once, outside both blocks" \
+  test "$(grep -c '^@import' "$E/gtk/gtk4.css")-$(tail -n1 "$E/gtk/gtk4.css" | cut -c1-7)" = "1-@import"
+run cool >/dev/null 2>&1; run gruvbox-light >/dev/null 2>&1
+check "a remembered dark palette beats the light one's sibling" blk dark "$(bg cool)"
+rm -f "$T/state/ergon/palette-dark"; run gruvbox-light >/dev/null 2>&1
+check "  and with nothing remembered, the sibling fills it"       blk dark "$(bg gruvbox)"
+rm -f "$T/state/ergon/palette-light"; run cool >/dev/null 2>&1
+check "  and with no sibling either, the default does"            blk light "$(bg catppuccin-latte)"
+check "--check sees gtk4.css as current right after a render" quiet run --check
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

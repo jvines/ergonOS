@@ -1,6 +1,8 @@
 /* GENERATED from gtk/gtk.css.in — edit the .in, then run: ergon theme
  *
- * Linked to BOTH ~/.config/gtk-3.0/gtk.css and ~/.config/gtk-4.0/gtk.css.
+ * Rendered in the active palette and linked to ~/.config/gtk-3.0/gtk.css.
+ * GTK4 gets this same template twice over, once per colour scheme, in
+ * gtk/gtk4.css -- see gtk4.css.in for why one palette was not enough there.
  *
  * This is NOT a widget theme. Adwaita-dark still draws every control — its
  * metrics, its focus rings, its animations — and this file only changes the
@@ -183,8 +185,9 @@ tooltip, tooltip.background {
 
 /* Your overrides. Last, so they win -- see waybar/style.css.in for why.
  *
- * Both .config/gtk-3.0/gtk.css and .config/gtk-4.0/gtk.css are links to this
- * one rendered file, and ../ergon/gtk.css resolves correctly from either.
+ * ../ergon/gtk.css resolves from .config/gtk-3.0 and .config/gtk-4.0 alike.
+ * gtk4.css drops this line from its two copies and imports the file once,
+ * outside them -- and the drop matches a line STARTING with @import.
  *
  * Gentler than waybar's: GTK loads the user stylesheet with a NULL GError,
  * which puts its parser in warn-and-continue rather than discard-the-file. A
