@@ -24,6 +24,9 @@
  * gruvbox), else a default -- see bin/ergon-theme. A running app is therefore
  * EXACT only when you switch to the palette in the other block; any other
  * switch lands on the right mode in the wrong palette until a restart.
+ * Theia watches this file and reloads it itself (ac20a15), and from 19cc737
+ * reloads GTK's own launch-time copy too, so nothing of the launch palette is
+ * left: a running Theia from 19cc737 is exact on any switch.
  */
 @media (prefers-color-scheme: light) {
 @COOL_GTK_LIGHT@
