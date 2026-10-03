@@ -1,0 +1,3 @@
+# The Arch archive day the VM suite last passed: vm.yml writes this,
+# ergon update holds machines at it. See lib/archive-pin.sh.
+2026-10-02
