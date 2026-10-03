@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+# ergon:summary=Fuzzel tree for system actions, palettes, backgrounds and help
+# ergon:group=help
+# ergon:args=[--dump]
+#
+# `ergon` (bare) already lists every command and `ergon --pick` already pops a
+# flat picker of them, but nothing on the desktop opened either one, and a
+# palette or a background could only be STEPPED (SUPER+T, SUPER+SHIFT+B),
+# worst case 9 repaints to compare 9 things. This is the tree that reaches all
+# of it by name: System, Style, Commands, Help.
+#
+# ERGON-31's own verification found the OLD flat picker (bin/ergon:42-46, the
+# non-tty-stdout branch this file replaces as a menu entry point) running the
+# chosen command with NO terminal and NO arguments -- so `doctor`, `update`,
+# anything that prints or asks for sudo did it into a void, with nothing on
+# screen to say it had even started. Every command reached from Commands or
+# Help below runs bare, in a REAL terminal, and pauses before the window
+# closes -- the "any key to close" idiom bin/ergon-keys already uses for its
+# own terminal fallback, reused here rather than invented twice.
+#
+# Bare, not `--help` and not a typed-args prompt: every command in bin/ that
+# NEEDS an argument already dies with its own usage line when it is missing
+# (bin/ergon-rollback's `[ -n "${TARGET:-}" ] || die "usage: ..."`,
+# bin/ergon-launch-tui's `${1:?usage: ...}`, and so on) -- verified against
+# both of those. So bare invocation already IS "ask for args": read the
+# message the command itself prints, then type the real one into the terminal
+# that is now sitting open, focused, and yours.
+#
+# System and Style are the two exceptions: `ergon-session` and the
+# `ergon-theme`/`ergon-wallpaper` setters are quick, self-contained and
+# already either fuzzel-driven or silent-on-success, so they run detached,
+# the same way SUPER+T and SUPER+SHIFT+B already do.
+set -euo pipefail
+
+BINDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Group and command names come from bin/ergon's own entries() (via --groups
+# and --group), topics from bin/ergon-explain's own --list. Nothing here
+# parses a `# ergon:` header a second time, and nothing here hardcodes a
+# topic name -- both lists are read fresh on every run, so a new command or a
+# new knowledge topic appears on its own.
+groups()   { "$BINDIR/ergon" --groups; }
+in_group() { "$BINDIR/ergon" --group "$1"; }                      # "name   summary" lines
+topics()   { "$BINDIR/ergon-explain" --list | tail -n +3 | awk '{print $1}'; }
+
+# ergon-theme --list and ergon-wallpaper --list both mark the active entry
+# with a fixed 5-column " * "/"   " prefix (bin/ergon-theme:113-127,
+# bin/ergon-wallpaper:199-205) -- stripping it is not re-parsing anything,
+# it is un-doing formatting the same two commands already applied.
+unmarked() { cut -c6-; }
+
+# $2, when given, is a fuzzel --width. 48 (fuzzel.ini.in's default) is fine
+# for the four top-level nouns; a command's own summary or a background's
+# path needs more room than that to read as anything but a shared prefix.
+pick() { fuzzel --dmenu --prompt "$1  " ${2:+--width "$2"}; }
+
+# ERGON-31 review: binds.lua runs this whole menu with no `launch` prefix
+# (bare `hl.dsp.exec_cmd("ergon-menu")`), same as SUPER+T/SUPER+SHIFT+B right
+# above it in that file -- fine for a process that only ever picks and
+# execs. A TERMINAL it opens is not that: "EVERY terminal goes through
+# `launch` too (ERGON-19)" (binds.lua), because a bare one lives in
+# wayland-wm@hyprland.service, where a kill ends the session, not just the
+# window. Plain `ergon-term` does not add that scope on its own --
+# ergon-launch-tui does, by probing for a live uwsm session first -- so this
+# reuses that exact probe rather than assuming uwsm-app is even there.
+launch() {
+  if command -v uwsm-app >/dev/null 2>&1 \
+     && systemctl --user list-units --state=active --no-legend 'wayland-wm@*.service' 2>/dev/null | grep -q .; then
+    exec uwsm-app -- "$@"
+  fi
+  exec "$@"
+}
+
+run_in_terminal() {  # $1: a bare `ergon` subcommand name
+  # $BINDIR/ergon by full path, not `ergon` off PATH: the menu already read
+  # its command list from THIS checkout, so the terminal it opens runs the
+  # same one rather than whatever `ergon` a differently-scoped PATH finds.
+  launch "$BINDIR/ergon-term" sh -c \
+    '"$0" "$1" || true; echo; echo "-- press enter to close --"; read -r _' \
+    "$BINDIR/ergon" "$1"
+}
+
+show_topic() {  # $1: an `ergon explain` topic name
+  # Paged the way bin/ergon-welcome pages the same topics (glow, else a
+  # plain fallback): desktop-config/troubleshooting/security run 214-359
+  # lines each (`wc -l knowledge/*.md`), so unpaged the terminal scrolls
+  # straight to the tail and the close prompt, never the start of the page.
+  launch "$BINDIR/ergon-term" sh -c '
+    if command -v glow >/dev/null 2>&1; then "$0" explain "$1" | glow -p -
+    elif command -v less >/dev/null 2>&1; then "$0" explain "$1" | less -R
+    else "$0" explain "$1"; echo; echo "-- press enter to close --"; read -r _
+    fi' "$BINDIR/ergon" "$1"
+}
+
+style_menu() {
+  local sel
+  sel=$(printf 'Palette\nBackground\n' | pick style) || exit 0
+  case "$sel" in
+    Palette)
+      sel=$("$BINDIR/ergon-theme" --list | pick palette) || exit 0
+      exec "$BINDIR/ergon-theme" "$(unmarked <<<"$sel")"
+      ;;
+    Background)
+      background_menu
+      ;;
+  esac
+}
+
+# ergon-wallpaper --list prints each candidate as its ABSOLUTE PATH (or the
+# "generated (from <palette>)" label) -- bin/ergon-wallpaper:199-205. A path
+# under .local/share/ergon/backgrounds/<palette>/ runs 60+ columns, past
+# fuzzel's default width=48 (fuzzel.ini.in), and every background under the
+# SAME palette directory shares that first 48-column prefix -- so all of
+# them showed as one indistinguishable truncated line (rendered and
+# screenshotted in headless sway, ERGON-31 review). Show basename(dirname)
+# instead and keep a parallel array back to the real path, rather than
+# re-deriving the path from the label by re-walking the directories --list
+# already walked -- that would be the second parser this card avoids
+# elsewhere, just moved here.
+background_menu() {
+  local raw path labels=() paths=() sel i
+  while IFS= read -r raw; do
+    path=$(unmarked <<<"$raw")
+    paths+=("$path")
+    case "$path" in
+      'generated ('*) labels+=("$path") ;;
+      *)              labels+=("$(basename "$path")  ($(basename "$(dirname "$path")"))") ;;
+    esac
+  done < <("$BINDIR/ergon-wallpaper" --list)
+  # --list itself can refuse with nothing on stdout (no imagemagick and no
+  # background on disk yet -- see its own comment above that check), which
+  # used to reach fuzzel as empty input and, per fuzzel.ini's
+  # exit-immediately-if-empty, close the menu with nothing on screen saying
+  # why. Same failure dump() now reports instead of dying on; here there is
+  # no dump to write it into, so it goes to notify-send.
+  if [ "${#labels[@]}" -eq 0 ]; then
+    command -v notify-send >/dev/null 2>&1 \
+      && notify-send "ergon-menu" "no backgrounds to choose from (see: ergon wallpaper --list)"
+    exit 0
+  fi
+  sel=$(printf '%s\n' "${labels[@]}" | pick background 60) || exit 0
+  for i in "${!labels[@]}"; do
+    [ "${labels[$i]}" = "$sel" ] || continue
+    case "${paths[$i]}" in
+      # The generated gradient's own flag is --generated, not --set, because
+      # there is no FILE to give --set (bin/ergon-wallpaper:216-217 requires
+      # one that exists).
+      'generated ('*) exec "$BINDIR/ergon-wallpaper" --generated ;;
+      *)              exec "$BINDIR/ergon-wallpaper" --set "${paths[$i]}" ;;
+    esac
+  done
+}
+
+commands_menu() {
+  local g sel
+  g=$(groups | pick commands) || exit 0
+  # 76: what `ergon --pick` already uses for the same "name  summary" shape
+  # (bin/ergon), wide enough that a summary is not cut to the same prefix
+  # every other command in the group shares.
+  sel=$(in_group "$g" | pick "$g" 76) || exit 0
+  run_in_terminal "$(awk '{print $1}' <<<"$sel")"
+}
+
+help_menu() {
+  local sel
+  sel=$({ printf 'Keybindings\n'; topics; } | pick help) || exit 0
+  if [ "$sel" = Keybindings ]; then
+    exec "$BINDIR/ergon-keys"   # already fuzzel-driven; no terminal needed
+  fi
+  show_topic "$sel"
+}
+
+# Prints the same tree the interactive menu walks, flattened, so a person or
+# the session test can see it without a compositor. Group and command lines
+# are exactly `ergon --groups`/`ergon --group`'s own output, indented -- the
+# coverage test in bin/test-cli.sh compares the Commands section against
+# `ergon --list` (not --groups/--group, which this function itself calls --
+# see that test for why comparing it to itself would be circular).
+dump() {
+  printf 'System\n  session menu (ergon session)\n'
+  printf 'Style\n  Palette\n'
+  "$BINDIR/ergon-theme" --list | unmarked | sed 's/^/    /'
+  printf '  Background\n'
+  # Non-fatal: --list itself refuses (exit 1, its error on stderr, nothing on
+  # stdout) on a machine with neither imagemagick nor a background on disk
+  # yet -- provisioning, or this sandboxed test -- and under set -e that used
+  # to take Commands/Help down with it, a much bigger loss than one missing
+  # sub-list. stderr stays SEPARATE from the captured list on the success
+  # path: ergon-wallpaper can print an unrelated palette-fallback warning
+  # there even while --list itself succeeds, and merging the two would file
+  # that warning as if it were a background's own name.
+  local bg
+  if bg=$("$BINDIR/ergon-wallpaper" --list 2>/dev/null); then
+    unmarked <<<"$bg" | sed 's/^/    /'
+  else
+    printf '    (unavailable: %s)\n' "$("$BINDIR/ergon-wallpaper" --list 2>&1 >/dev/null)"
+  fi
+  printf 'Commands\n'
+  while IFS= read -r g; do
+    printf '  %s\n' "$g"
+    in_group "$g" | sed 's/^/    /'
+  done < <(groups)
+  printf 'Help\n  Keybindings\n  Explain\n'
+  topics | sed 's/^/    /'
+}
+
+if [ "${1:-}" = --dump ]; then
+  dump
+  exit 0
+fi
+
+command -v fuzzel >/dev/null 2>&1 || { echo "ergon-menu: fuzzel is not installed" >&2; exit 1; }
+
+sel=$(printf 'System\nStyle\nCommands\nHelp\n' | pick ergon) || exit 0
+case "$sel" in
+  System)   exec "$BINDIR/ergon-session" ;;
+  Style)    style_menu ;;
+  Commands) commands_menu ;;
+  Help)     help_menu ;;
+esac
