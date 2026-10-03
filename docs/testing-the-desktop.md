@@ -24,6 +24,11 @@ Framework arrives. Everything below runs in a VM on checo.
 VM — not a reinstall. Package or `/etc` changes still need
 `test-hypr-session.sh`, because that is the only thing that runs provisioning.
 
+A kept disk carries the Arch archive day it was installed from
+(`$WORK/archive-date`, ERGON-35), and every `test-hypr-session.sh` provisions it
+from that same day. A disk kept from before that file existed has no day, and
+its session run fails saying so: install it again with `--keep`.
+
 ## Connecting
 
 `hypr-vm` prints a `vnc://` URL on the tailnet and a password. On the Mac:

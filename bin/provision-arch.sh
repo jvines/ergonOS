@@ -32,6 +32,8 @@ ERGON="${ERGON:-$HOME/ergonOS}"
 export PATH="$HOME/.local/bin:$PATH"
 # shellcheck source=../lib/transaction.sh
 . "$ERGON/lib/transaction.sh"
+# shellcheck source=../lib/archive-pin.sh
+. "$ERGON/lib/archive-pin.sh"
 # How to reach the user manager that is already running from a shell that has
 # no session, which is every shell this script is ever started from.
 # shellcheck source=../lib/user-manager.sh
@@ -126,7 +128,22 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   # a laptop with a session open and a lid to close.
   ergon_txn_space 8 "Run 'sudo paccache -rk1', then provision again." || exit 1
   ergon_txn_wrap ergon-provision provisioning "package install"
-  sudo "${ERGON_TXN[@]}" pacman -Syu --needed --noconfirm "${PKGS[@]}"
+  # ERGON-35: from the Arch `ergon update` holds the machine at, and pacman.conf
+  # is pointed there only here, beside the -Syu that syncs against it -- a run
+  # with nothing to install leaves both alone (lib/archive-pin.sh). -Syyu until
+  # a sync against the list has gone through, for the reason ergon-update
+  # gives; recorded only once this whole command has, so a failed one is forced
+  # again by whichever of the two syncs next.
+  if PIN=$(ergon_tested_date); then
+    ok "installing from Arch as of $PIN, the day the VM suite last passed"
+  else
+    PIN=""; warn "no usable packages/tested-date — installing from live mirrors, which no VM run has tested"
+  fi
+  _rc=0; ergon_pin_apply "$PIN" || _rc=$?
+  [ "$_rc" -lt 2 ] || { warn "could not point pacman at $ERGON_PIN_LIST"; exit 1; }
+  _sync=-Syu; ! ergon_pin_owed || _sync=-Syyu
+  sudo "${ERGON_TXN[@]}" pacman "$_sync" --needed --noconfirm "${PKGS[@]}"
+  [ "$_sync" = -Syu ] || sudo bash -c "$(ergon_pin_synced_cmd)"
   ok "${#PKGS[@]} packages"
 else
   ok "${#PKGS[@]} packages already installed; nothing to upgrade here (use: ergon update)"

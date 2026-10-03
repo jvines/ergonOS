@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Upgrade the system, with the checks that keep Arch boring
 # ergon:group=system
-# ergon:args=[--check] [--yes] [--no-snapshot]
+# ergon:args=[--check] [--yes] [--no-snapshot] [--latest]
 #
 # `pacman -Syu` with the preconditions that turn "Arch breaks a lot" into "Arch
 # is fine". None of these are clever; they are the four ways a rolling upgrade
@@ -40,6 +40,14 @@
 # "would an update go through" by status too; 0 means one would, not that
 # nothing is pending.
 #
+# The upgrade is to the Arch the VM suite last passed, not to today's
+# (ERGON-35, lib/archive-pin.sh): packages/tested-date, the whole system. The
+# cost is up to about a week of security fixes, and every run says so. --latest
+# takes live mirrors instead, untested, and pacman stays on them until the next
+# plain `ergon update`, or provisioning that installs a package: holding the
+# date for bundles after an upgrade past it would mean installing that day's
+# builds against newer libraries.
+#
 # The transaction runs under `systemd-run --scope` while a
 # sleep:shutdown:handle-lid-switch inhibitor is held. There are three ways a
 # pacman stops half way through, none of them pacman's doing: a terminal opened
@@ -49,12 +57,13 @@
 # answers the first two, the inhibitor the third.
 set -euo pipefail
 
-CHECK_ONLY=0; ASSUME_YES=0; NO_SNAPSHOT=0
+CHECK_ONLY=0; ASSUME_YES=0; NO_SNAPSHOT=0; LATEST=0
 for a in "$@"; do
   case "$a" in
     --check) CHECK_ONLY=1 ;;
     --yes|-y) ASSUME_YES=1 ;;
     --no-snapshot) NO_SNAPSHOT=1 ;;
+    --latest) LATEST=1 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -80,6 +89,8 @@ gate() {  # gate <name> <message...>
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 # shellcheck source=../lib/transaction.sh
 . "$ERGON/lib/transaction.sh"
+# shellcheck source=../lib/archive-pin.sh
+. "$ERGON/lib/archive-pin.sh"
 MIN_ROOT_GIB="${ERGON_UPDATE_MIN_ROOT_GIB:-8}"
 # ERGON_SYSROOT is the seam bin/test-update.sh uses, the same one ergon-hardware
 # and ergon-sync read: the paths that say whether the running kernel and
@@ -139,6 +150,36 @@ else
   warn "informant not installed — manual-intervention notices are not gated"
 fi
 
+say "arch date"
+# Written before checkupdates, so the preview and the upgrade are against the
+# same day, and only past the gates: a run they stop writes nothing. A missing
+# or unreadable tested date is a warning and live mirrors, never a refusal --
+# an update that cannot run at all is the worse way to hold a machine back.
+PIN=""; PIN_OWED=0
+if [ "$LATEST" = 1 ]; then
+  warn "--latest: live mirrors, which no VM run has tested; pacman stays on them until the next plain 'ergon update', or provisioning that installs a package"
+elif PIN=$(ergon_tested_date); then
+  ok "Arch as of $PIN, the day the VM suite last passed, $(( ($(date -u +%s) - $(date -u -d "$PIN" +%s)) / 86400 )) day(s) ago"
+  printf '   %s\n' "Security fixes released since then wait for the next passing run, normally a week" \
+    "at most, and for 'ergon sync' to bring its day here. 'ergon update --latest' takes" \
+    "them now, untested."
+else
+  warn "packages/tested-date is missing or unreadable — this update follows live mirrors, which no VM run has tested"
+fi
+if [ "$CHECK_ONLY" = 1 ]; then
+  held=$(ergon_pin_held) || held="live mirrors"
+  [ "$held" = "${PIN:-live}" ] \
+    || printf '   pacman is at %s: a real run moves it first, and pending below is against %s\n' "$held" "$held"
+else
+  rc=0; ergon_pin_apply "$PIN" || rc=$?
+  case "$rc" in
+    0) ok "$ERGON_PIN_LIST now says ${PIN:-live mirrors}, and pacman.conf reads it" ;;
+    1) ! ergon_pin_owed || warn "no sync against $ERGON_PIN_LIST has gone through since it last moved: this one is forced" ;;
+    *) die "could not write $ERGON_PIN_LIST or point /etc/pacman.conf at it — nothing was upgraded" ;;
+  esac
+  ! ergon_pin_owed || PIN_OWED=1
+fi
+
 say "pending"
 # checkupdates uses a temporary database, so it never touches the real one.
 # `pacman -Sy` to "check" is the classic way to create a partial-upgrade state.
@@ -159,6 +200,10 @@ if command -v checkupdates >/dev/null; then
 else
   warn "pacman-contrib not installed — cannot preview"
 fi
+# A list that moved, and no sync since has gone through, owes one even with
+# nothing to upgrade. The databases have to follow it, or a bundle's `pacman
+# -S` asks that day's archive for files it never had.
+[ "$PIN_OWED" = 0 ] || PENDING=1
 
 # Orphans are REPORTED; they are removed only by a person answering yes. A
 # package that arrived as a dependency and is now unneeded is very often one you
@@ -356,7 +401,19 @@ upgrade() {
   # by then the databases are refreshed, and a refreshed database with no -Su
   # behind it is itself the partial-upgrade state. -Su runs, and hits the
   # signature errors itself if the keyring really was the problem.
-  local txn="pacman -Sy $confirm || exit 10"
+  #
+  # -Syy until a sync against the list has gone through. Moved to an older day
+  # than the databases -- the first pin on a machine that followed live
+  # mirrors, a plain update after --latest -- a plain -Sy keeps the newer
+  # database it has: measured, with the list at 2026-08-20 the database still
+  # offered 2026-09-24's bash 5.3.20 after -Sy, and 5.3.15 only after -Syy. -Su
+  # then warns "local is newer" and downgrades nothing. "Gone through" is
+  # recorded inside the transaction, after the sync and never before, so one
+  # that fails, or a Ctrl-C in it, is forced again by the next run.
+  local sync=-Sy
+  [ "$PIN_OWED" = 0 ] || sync=-Syy
+  local txn="pacman $sync $confirm || exit 10"
+  [ "$PIN_OWED" = 0 ] || txn="$txn; $(ergon_pin_synced_cmd)"
   txn="$txn; pacman -S --needed $confirm archlinux-keyring || true"
   txn="$txn; pacman -Su $confirm"
   sudo "${ERGON_TXN[@]}" bash -c "$txn" || rc=$?
