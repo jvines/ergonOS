@@ -120,6 +120,7 @@ put "$R/sys/class/power_supply/BAT0/type" "Battery"
 put "$R/sys/class/power_supply/BAT0/capacity" "63"
 put "$R/sys/class/power_supply/BAT0/status" "Charging"
 mkdir -p "$R/sys/class/drm/card0-eDP-1" "$R/sys/class/drm/card0/device"
+pci "$R" 0000:00:02.0 0x030000 0x8086 0x9b41 1
 put "$R/usr/lib/systemd/system/power-profiles-daemon.service" ""
 put "$R/usr/lib/systemd/system/upower.service" ""
 ln -s ../../../../bus/pci/drivers/i915 "$R/sys/class/drm/card0/device/driver"
@@ -171,6 +172,8 @@ check "battery: still no UPower override, independently of the lid decision or u
 check "i915 panel: no ABM drop-in" test ! -e "$D/etc/systemd/system/power-profiles-daemon.service.d/10-no-abm.conf"
 check "fprintd: restarted after resume" test -e "$D/etc/systemd/system/ergon-fprintd-resume.service"
 check "no light sensor: no illuminanced" not has "$T/log/pacman" "illuminanced"
+check "Intel GPU: vulkan-intel and the media driver installed" hasx "$T/log/pacman" "-S --needed --noconfirm vulkan-intel intel-media-driver"
+check "  an Intel-only machine gets no AMD package (ERGON-71: 'ati' is a substring of 'Corporation')" not has "$T/log/pacman" "vulkan-radeon"
 check "no profile matches: grub untouched" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"'
 check "power key: ignored by logind (no S3/hibernation dependency)" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 
@@ -182,6 +185,8 @@ check "amdgpu without a built-in panel: no ABM drop-in" test ! -e "$D/etc/system
 check "no fprintd: no resume unit" test ! -e "$D/etc/systemd/system/ergon-fprintd-resume.service"
 check "no sensor or backlight: no illuminanced" not has "$T/log/pacman" "illuminanced"
 check "an AMD GPU and no NVIDIA: no NVIDIA package" not has "$T/log/pacman" "nvidia"
+check "an AMD GPU: vulkan-radeon installed" hasx "$T/log/pacman" "-S --needed --noconfirm vulkan-radeon"
+check "  and no Intel package" not has "$T/log/pacman" "vulkan-intel"
 check "power key: ignored by logind on a desktop with no laptop capabilities at all" hasx "$D/etc/systemd/logind.conf.d/10-power-key.conf" "HandlePowerKey=ignore"
 
 echo "== a pacman failure elsewhere in _capabilities must not skip the power key"
@@ -274,6 +279,8 @@ check "pre-Turing: nothing installed, so nouveau is not blacklisted" not has "$T
 check "  refused, naming the legacy driver" has "$T/out" "nvidia-580xx-dkms + nvidia-580xx-utils (AUR)"
 check "  no Hyprland env" test ! -e "$T/pascal/dest/etc/ergon/hypr/nvidia.lua"
 check "  and no blacklist claimed where there is none" not has "$T/out" "blacklists nouveau"
+check "an NVIDIA-only machine gets no AMD package" not has "$T/log/pacman" "vulkan-radeon"
+check "  nor an Intel one" not has "$T/log/pacman" "vulkan-intel"
 echo nvidia-utils > "$T/installed"; reset_logs; apply pascal; rm "$T/installed"
 check "  where nvidia-utils is left over, it says the card has no driver" has "$T/out" "blacklists nouveau, so the card has no driver"
 
@@ -288,6 +295,8 @@ reset_logs; apply am5
 check "NVIDIA drives the display beside an iGPU and a BMC: the global env, no prime-run" \
   hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open libva-nvidia-driver"
 check "  and the env file" test -e "$T/am5/dest/etc/ergon/hypr/nvidia.lua"
+check "  the idle AMD iGPU still gets its ICD (ERGON-71: a second _gpus | grep -q used to SIGPIPE the first)" \
+  hasx "$T/log/pacman" "-S --needed --noconfirm vulkan-radeon"
 
 # A laptop: Intel drives the panel, the NVIDIA card is a 3D controller.
 R=$T/hyb/root
@@ -298,6 +307,8 @@ put "$T/hyb/dest/etc/ergon/hypr/nvidia.lua" "# Written by ergon-hardware from wh
 reset_logs; apply hyb
 check "hybrid: the module, and prime-run for offload" hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open nvidia-prime"
 check "  no global env, which would put every GL client on the dGPU" test ! -e "$T/hyb/dest/etc/ergon/hypr/nvidia.lua"
+check "  the panel's Intel iGPU gets its ICD too (ERGON-71: grep -q's early exit used to SIGPIPE _gpus)" \
+  hasx "$T/log/pacman" "-S --needed --noconfirm vulkan-intel intel-media-driver"
 ERGON_SYSROOT=$R "$EH" detect > "$T/out" 2>&1
 check "detect names the card" hasx "$T/out" "  nvidia:       0x2820"
 check "  and the hybrid" hasx "$T/out" "  hybrid gpu:   yes"

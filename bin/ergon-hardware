@@ -163,7 +163,7 @@ _nvidia_modules() {
 # --- what to do about it ---------------------------------------------------------
 
 _capabilities() {
-  local als bl nv q env=0 P=() old=() R=()
+  local als bl nv q env=0 P=() old=() R=() GFX=""
 
   # Power key. logind's own default is poweroff on a bare press, and on the
   # Framework 13 that key IS the fingerprint reader (bin/ergon-fingerprint) --
@@ -275,6 +275,33 @@ EOF
     sudo systemctl daemon-reload 2>/dev/null || true
     sudo systemctl enable ergon-fprintd-resume.service >/dev/null 2>&1 \
       && ok "fingerprint: fprintd restarted after resume" || warn "could not enable ergon-fprintd-resume.service"
+  fi
+
+  # AMD and Intel Vulkan ICDs, by PCI vendor id -- not by grepping lspci's
+  # product string the way provision-arch.sh used to: "ati" is a substring of
+  # "Corporation", so a name match also fired on "NVIDIA Corporation" and
+  # "Intel Corporation" and put vulkan-radeon on both (ERGON-71). A machine
+  # with more than one vendor's GPU (a hybrid laptop, an idle iGPU beside a
+  # discrete card) gets each one's packages; NVIDIA's own package is decided
+  # below instead, next to _nvidia_modules, since it also depends on which
+  # kernels are installed.
+  #
+  # gpus= once, not `_gpus | grep -q` twice: -q's early exit on the first
+  # match can SIGPIPE _gpus before it has written every device, so the second
+  # grep would see a truncated (or empty) list -- the same trap _hybrid's
+  # comment already names. Measured: an Intel iGPU + NVIDIA dGPU laptop lost
+  # vulkan-intel entirely, 8/8 runs, until _gpus was read into a variable once.
+  gpus=$(_gpus)
+  grep -q '^0x1002 ' <<<"$gpus" && GFX="$GFX vulkan-radeon"
+  grep -q '^0x8086 ' <<<"$gpus" && GFX="$GFX vulkan-intel intel-media-driver"
+  if [ -n "$GFX" ]; then
+    # shellcheck disable=SC2086
+    sudo pacman -S --needed --noconfirm $GFX >/dev/null && ok "graphics:$GFX" \
+      || warn "some graphics packages failed:$GFX"
+  elif [ -z "$gpus" ]; then
+    skip "graphics: no GPU recognised on the PCI bus -- mesa software rendering only"
+  else
+    skip "graphics: no AMD or Intel display controller"
   fi
 
   # NVIDIA. Turing and newer (device id >= 0x1e00, Omarchy's test in
