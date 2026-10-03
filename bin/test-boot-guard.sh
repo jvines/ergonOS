@@ -29,6 +29,8 @@ USERPASS="${USER_PASSWORD:-testuser123}"
 VMHOST="${HOSTNAME_NEW:-testarch}"
 USERNAME="${USERNAME:-jayvains}"
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+. "$ERGON/lib/docker-cmd.sh"
+ergon_resolve_docker || exit 1
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
@@ -178,7 +180,7 @@ expect {
 }
 EXPECT
 
-docker run --rm --device /dev/kvm -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
+"${DOCKER[@]}" run --rm --device /dev/kvm -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "${IMAGE:-fleet-qemu}" expect -f /w/guard.exp 2>&1 | tee "$WORK/guard.log"
 
 # The guest scripts print their own counts; the driver's job is to insist both

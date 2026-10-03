@@ -53,13 +53,14 @@ ok()   { printf '   ok   %s\n' "$*"; }
 fail() { printf '   FAIL %s\n' "$*"; FAILED=$((FAILED+1)); }
 FAILED=0
 
-command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
+. "$ERGON/lib/docker-cmd.sh"
+ergon_resolve_docker || exit 1
 [ -c /dev/kvm ] || { echo "/dev/kvm missing — this needs hardware virtualisation" >&2; exit 1; }
 [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "/dev/kvm not readable/writable by $USER" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 say "container image"
-docker build -q -t "$IMAGE" - >/dev/null <<'DOCKERFILE'
+"${DOCKER[@]}" build -q -t "$IMAGE" - >/dev/null <<'DOCKERFILE'
 FROM debian:13
 ENV DEBIAN_FRONTEND=noninteractive
 # ovmf is the point: the laptop boots UEFI and GRUB is installed in UEFI mode,
@@ -113,7 +114,7 @@ ok "Arch as of $ARCHIVE_DATE, for the install and the provisioning after it"
 # ---------------------------------------------------------------------------
 say "disk and firmware"
 rm -f "$WORK/disk.qcow2" "$WORK/OVMF_VARS.fd"
-docker run --rm -v "$WORK:/w" -v "$ISO:/iso:ro" "$IMAGE" bash -euo pipefail -c "
+"${DOCKER[@]}" run --rm -v "$WORK:/w" -v "$ISO:/iso:ro" "$IMAGE" bash -euo pipefail -c "
   qemu-img create -f qcow2 /w/disk.qcow2 ${DISK_GIB}G >/dev/null
   # A WRITABLE copy of the variable store. This is not bookkeeping: the UEFI
   # boot entry efibootmgr creates during grub-install lives in here, and with a
@@ -258,7 +259,7 @@ for v in timeout saved_timeout i ready; do
   grep -q "\$$v" "$WORK/install.exp" || { echo "install.exp lost Tcl variable \$$v — check heredoc escaping" >&2; exit 1; }
 done
 
-docker run --rm --device /dev/kvm \
+"${DOCKER[@]}" run --rm --device /dev/kvm \
   -v "$WORK:/w" -v "$ISO:/iso:ro" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/install.exp 2>&1 | tee "$WORK/phase1.log" | grep -E '^(==|   ok|   !!|-- |!! )' || true
 grep -q 'BOOTSTRAP_RC=0' "$WORK/phase1.log" || { echo "   FAIL install did not complete — see $WORK/phase1.log" >&2; exit 1; }
@@ -311,7 +312,7 @@ send "echo '$USERPASS' | sudo -S poweroff\r"
 expect eof
 EXPECT
 
-docker run --rm --device /dev/kvm \
+"${DOCKER[@]}" run --rm --device /dev/kvm \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/boot.exp 2>&1 | tee "$WORK/phase2.log" \
   | grep -E '^(   ok|   FAIL|--- |!! )' || true
@@ -436,7 +437,7 @@ send "echo '$USERPASS' | sudo -S poweroff\r"
 expect eof
 EXPECT
 
-docker run --rm --device /dev/kvm \
+"${DOCKER[@]}" run --rm --device /dev/kvm \
   -v "$WORK:/w" -v "$ISO:/iso:ro" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/rollback.exp 2>&1 | tee "$WORK/phase3.log" \
   | grep -E '^(   ok|   FAIL|--- |!! |-- armed|PRE_SNAPSHOT)' || true

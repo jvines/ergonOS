@@ -16,11 +16,12 @@ set -euo pipefail
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
 HOSTNAME_FOR_TEST="${1:-testarch}"
 
-command -v docker >/dev/null || { echo "docker required" >&2; exit 1; }
+. "$ERGON/lib/docker-cmd.sh"
+ergon_resolve_docker || exit 1
 
 echo "== desktop configs, checked by their own parsers"
 
-out=$(docker run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c '
+out=$("${DOCKER[@]}" run --rm --label cl.jvines.owner=ergon-test-hypr-config -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c '
   # gtk3 AND gtk4, deliberately: waybar is a GTK3 app and swayosd-server links
   # libgtk-4, and the two CSS engines do not accept the same stylesheet. GTK4
   # rejects waybar/style.css outright over -gtk-icon-effect, which is a real

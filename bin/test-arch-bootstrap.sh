@@ -33,9 +33,11 @@
 set -euo pipefail
 IMG_SIZE="${IMG_SIZE:-12G}"
 ERGON="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ERGON/lib/docker-cmd.sh"
+ergon_resolve_docker || exit 1
 
 echo "== testing arch-bootstrap.sh against a ${IMG_SIZE} loopback image"
-docker run --rm --privileged -v /dev:/dev -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c "
+"${DOCKER[@]}" run --rm --privileged -v /dev:/dev -v "$ERGON:/df:ro" archlinux:latest bash -euo pipefail -c "
 pacman -Sy --noconfirm --needed arch-install-scripts gptfdisk btrfs-progs cryptsetup dosfstools util-linux parted >/dev/null 2>&1
 
 # The host /dev is bind-mounted in. Docker otherwise gives a minimal devtmpfs

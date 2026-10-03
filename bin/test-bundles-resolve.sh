@@ -36,6 +36,7 @@
 set -uo pipefail
 
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+. "$ERGON/lib/docker-cmd.sh"
 B="$ERGON/packages/bundles"
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS + 1)); printf '   ok   %s\n' "$*"; }
@@ -135,10 +136,10 @@ EOF
 )
 
 echo "== pacman: every name is a package in the sync DBs, by its exact name"
-if ! command -v docker >/dev/null; then
+if ! ergon_resolve_docker; then
   bad "docker required; no pacman list checked"
 else
-  out=$(docker run --rm --label cl.jvines.owner=ergon-test-bundles-resolve -v "$B:/b:ro" \
+  out=$("${DOCKER[@]}" run --rm --label cl.jvines.owner=ergon-test-bundles-resolve -v "$B:/b:ro" \
           archlinux:latest bash -c "$(declare -f lines); $INNER" 2>&1) || true
   # The end marker, not the absence of failures: a container that died before
   # the loop reports no bad names, and that must not read as none existing.

@@ -26,6 +26,8 @@ USERPASS="${USER_PASSWORD:-testuser123}"
 VMHOST="${HOSTNAME_NEW:-testarch}"
 USERNAME="${USERNAME:-jayvains}"
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
+. "$ERGON/lib/docker-cmd.sh"
+ergon_resolve_docker || exit 1
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
@@ -103,7 +105,7 @@ send "echo '$USERPASS' | sudo -S poweroff\r"
 expect eof
 EXPECT
 
-docker run --rm --device /dev/kvm \
+"${DOCKER[@]}" run --rm --device /dev/kvm \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/hibernate.exp 2>&1 | tee "$WORK/hibernate.log" \
   | grep -E '^(   ok|   FAIL|--- |!! |-- )' || true
