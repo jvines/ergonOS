@@ -195,13 +195,13 @@ EOF
 cat > "$T/stub/journalctl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/journalctl"
-# What the REAL journalctl does for the owner of a machine this repo builds:
-# prints nothing and exits 0. systemd's tmpfiles grants the journal ACL to
-# `adm`, arch-bootstrap.sh creates the user with -G wheel, and provisioning adds
-# only video and input -- so an attribution that greps the system journal
-# succeeds, matches nothing, and records every real kill as an ordinary
-# failure. Kept as a stub, and asserted unused, so that going back to the
-# journal fails this suite rather than a laptop two hours into a fit.
+# What the REAL journalctl does for an owner with no journal ACL: prints
+# nothing and exits 0. Arch's tmpfiles grant that ACL to `adm` AND `wheel`
+# (checked at systemd 239, 255 and 262) -- arch-bootstrap.sh's -G wheel owner
+# already has it there; a Debian-style build granting `adm` alone would not.
+# Kept as a stub regardless, and asserted unused, so this suite depends on the
+# manager rather than on any host's journal permissions, and going back to
+# the journal fails this suite rather than a laptop two hours into a fit.
 exit 0
 EOF
 cat > "$T/stub/systemctl" <<'EOF'
@@ -436,9 +436,9 @@ check "  and the run still happens either way" hasf "$J" '"exit":0'
 
 # --- a run the machine killed ------------------------------------------------
 # NOT out of the system journal. `journalctl -u systemd-oomd` and `journalctl -k`
-# print nothing and exit 0 for a user outside `adm`, which is every user this
-# repo builds, so the stub journalctl is the silent one a real owner gets and
-# the attribution has to work without it.
+# print nothing and exit 0 for a user with no journal ACL at all -- Arch grants
+# it to `adm` and `wheel` both (see the stub above), so the attribution is
+# built to need neither group rather than to work around lacking one.
 killed() {  # killed <env assignments...> -- one killed run, fresh logs
   rm -f "$L"/* "$J"
   env STUB_KILLED=1 "$@" "$REPO/bin/ergon-watch" --quiet --name fit -- true >/dev/null 2>&1

@@ -169,16 +169,14 @@ RSS_MB=$(( ${RSS_KB:-0} / 1024 ))
 # oomd's kill is a userspace SIGKILL, so it looks exactly like `kill -9`.
 #
 # The witness is the USER MANAGER's verdict on the scope, and NOT the system
-# journal. `journalctl -u systemd-oomd` and `journalctl -k` print nothing and
-# exit 0 for a user outside `adm` -- which is every user this repo builds:
-# arch-bootstrap.sh creates the owner with -G wheel and provisioning adds only
-# video and input, while systemd's tmpfiles grants the journal ACL to `adm`
-# alone. Grepping the journal therefore recorded every real kill as an ordinary
-# exit 137 on the one machine it was written for, which is the whole thing this
-# card claims to have fixed. The manager owns the scope, answers without
-# privilege and without a group change, and says oom-kill for BOTH killers: the
-# kernel's, off the cgroup's memory.events, and oomd's, off the user.oomd_ooms
-# xattr it sets before it kills.
+# journal. Arch's tmpfiles grant that ACL to `adm` AND `wheel` -- checked at
+# systemd 239 (2018), 255 and 262, all identical on this point -- so
+# arch-bootstrap.sh's -G wheel owner already has it; the distinction is the
+# distro's build, not the systemd version (Debian's own systemd 257 grants
+# `adm` alone). The manager is asked anyway: it owns the scope, answers
+# without needing either group, and says oom-kill for BOTH killers: the
+# kernel's, off the cgroup's memory.events, and oomd's, off the
+# user.oomd_ooms xattr it sets before it kills.
 #
 # With no scope there is no unit to ask, and the answer stays "no" rather than a
 # guess: a run recorded as an OOM kill that was actually a Ctrl-C would send the
