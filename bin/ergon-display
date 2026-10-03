@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# ergon:summary=Mirror to a projector, step the scale, size the text
+# ergon:group=hardware
+# ergon:args=present|mirror|extend|scale +|scale -|text [N]
+#
+# Giving a talk used to mean editing Lua in front of the audience (ERGON-37).
+#
+#   ergon display present     mirror, and mako's do-not-disturb mode
+#   ergon display mirror      every other output shows the internal one
+#                             (eDP-*), or the focused one on a desktop
+#   ergon display extend      undo both
+#   ergon display scale +|-   step the focused output through 1 1.25 1.6 2 3 4
+#   ergon display text [N]    the text size every surface is sized from
+#
+# Every monitor change is `hyprctl eval`, which is Lua source the compositor
+# runs (ergon explain desktop-config). So nothing reaches it that this script
+# did not build from a closed vocabulary: output names come from the compositor
+# and are refused unless they are plain connector names, scales come from the
+# list below, and a text size never goes near Lua -- ergon-theme validates it.
+#
+# What changed is also written to $XDG_RUNTIME_DIR/ergon/display.lua, which
+# hypr/hyprland.lua re-reads on every load. `hyprctl reload` clears every
+# monitor rule (ConfigManager.cpp, 0.56.2) and `ergon theme` reloads, so without
+# it `text` would undo the mirror mid-talk. Runtime, not state, on purpose: a
+# mirror must not outlive the session and ambush the next screen plugged into
+# that port. A scale worth keeping belongs in hosts/<host>/hyprland.lua.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+SAVED="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ergon/display.lua"
+
+usage() { sed -n 's/^#   \{0,1\}ergon display/ergon display/p' "$0" >&2; exit 2; }
+[ -n "${1:-}" ] || usage
+if [ "$1" = text ]; then exec "$ERGON/bin/ergon-theme" --text ${2:+"$2"}; fi
+
+command -v hyprctl >/dev/null && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] \
+  || { echo "ergon display: not in a Hyprland session" >&2; exit 1; }
+
+# eDP-1, HDMI-A-1, DP-3, Virtual-1, HEADLESS-2. A quote, bracket or backslash
+# would be Lua syntax, so the name is refused rather than escaped.
+name_ok() { [[ $1 =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "refusing output name '$1'" >&2; return 1; }; }
+
+# set_rule OUTPUT FIELD VALUE: now, and for every reload this session. An empty
+# VALUE clears the field and is not remembered. hyprctl's exit status only
+# reflects a reply that starts "error:" (hyprctl/src/main.cpp, 0.56.2), and
+# under set -e that status would end the script before saying why -- so the
+# reply is the check: anything but "ok" is a refusal.
+set_rule() {
+  local key="hl.monitor({ output = \"$1\", $2 = " r
+  r=$(hyprctl eval "$key\"$3\" })" 2>&1) || true
+  [ "$r" = ok ] || { echo "hyprland refused $1 $2=$3: $r" >&2; return 1; }
+  mkdir -p "${SAVED%/*}"
+  { grep -vF "$key" "$SAVED" 2>/dev/null || true
+    [ -z "$3" ] || printf '%s"%s" })\n' "$key" "$3"; } > "$SAVED.new"
+  mv -f "$SAVED.new" "$SAVED"
+}
+
+mirror() {
+  local mons src t n=0 rc=0
+  mons=$(hyprctl monitors -j)    # enabled outputs, not counting mirrors
+  src=$(jq -r '(map(select(.name | startswith("eDP"))) + map(select(.focused)))[0].name // empty' <<<"$mons")
+  [ -n "$src" ] && name_ok "$src" || { echo "no output to mirror" >&2; return 1; }
+  while IFS= read -r t; do
+    if name_ok "$t" && set_rule "$t" mirror "$src"; then echo "   $t mirrors $src"; n=$((n + 1)); else rc=1; fi
+  done < <(jq -r --arg s "$src" '.[] | select(.name != $s) | .name' <<<"$mons")
+  [ "$n" -gt 0 ] || [ "$rc" != 0 ] && return "$rc"
+  hyprctl monitors all -j | jq -e 'any(.[]; .mirrorOf != "none")' >/dev/null \
+    && { echo "   already mirrored"; return 0; }
+  echo "only $src is connected: nothing to mirror onto" >&2; return 1
+}
+
+# The steps, as exact fractions. Hyprland will not take a scale that leaves a
+# fractional logical pixel: it searches 1/120ths either side for one that does
+# not, uses that, and puts up a red warning (Monitor.cpp, 0.56.2). Replaying
+# that search: 3 on a 2560x1440 panel becomes 3.2, and 1.25 on 1366x768 becomes
+# 1 -- a keypress that changes nothing but the warning. So a step the mode
+# does not divide by is skipped here instead, by integer arithmetic.
+STEPS="1:1:1 1.25:5:4 1.6:8:5 2:2:1 3:3:1 4:4:1"
+
+scale() {
+  local mon name w h cur pick="" st dec num den
+  mon=$(hyprctl monitors -j | jq -c 'map(select(.focused))[0] // empty')
+  [ -n "$mon" ] || { echo "no focused output" >&2; return 1; }
+  read -r name w h cur < <(jq -r '"\(.name) \(.width) \(.height) \(.scale * 100 | round)"' <<<"$mon")
+  name_ok "$name"
+  for st in $STEPS; do
+    IFS=: read -r dec num den <<<"$st"
+    (( (w * den) % num == 0 && (h * den) % num == 0 )) || continue
+    if [ "$1" = + ]; then
+      [ $((100 * num / den)) -gt "$cur" ] && { pick=$st; break; }
+    else
+      [ $((100 * num / den)) -lt "$cur" ] && pick=$st
+    fi
+  done
+  [ -n "$pick" ] || { echo "$name (${w}x$h) is at the end of the steps that divide it evenly" >&2; return 1; }
+  IFS=: read -r dec num den <<<"$pick"
+  set_rule "$name" scale "$dec"
+  echo "   $name: scale $dec ($((w * den / num))x$((h * den / num)))"
+}
+
+case "$1" in
+  mirror)  mirror ;;
+  present)
+    mirror
+    makoctl mode -a do-not-disturb >/dev/null 2>&1 \
+      && echo "   notifications hidden (do-not-disturb)" \
+      || echo "   mako did not take do-not-disturb: notifications will show" >&2 ;;
+  extend)
+    rc=0
+    while IFS= read -r t; do
+      if name_ok "$t" && set_rule "$t" mirror ""; then echo "   $t extends the desktop"; else rc=1; fi
+    done < <(hyprctl monitors all -j | jq -r '.[] | select(.mirrorOf != "none") | .name')
+    # A refused unmirror leaves the projector mirrored, so its saved rule and
+    # do-not-disturb stay too. Dropping them anyway returned 0 while the next
+    # reload quietly unmirrored it and toasts drew over the slides.
+    [ "$rc" = 0 ] || exit 1
+    # A mirror of an output unplugged since, too, or it returns on replug.
+    [ ! -f "$SAVED" ] || sed -i '/, mirror = /d' "$SAVED"
+    makoctl mode -r do-not-disturb >/dev/null 2>&1 || true ;;
+  scale)
+    case "${2:-}" in +|-) scale "$2" ;; *) usage ;; esac ;;
+  *) usage ;;
+esac

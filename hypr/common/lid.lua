@@ -22,9 +22,15 @@ if f then f:close() end
 -- package.loaded must be cleared first. `require` memoises: calling it a second
 -- time returns the cached module and re-executes NOTHING, so the obvious
 -- version of this handler silently does nothing at all on every hotplug.
+--
+-- Then what `ergon display` set this session, as hypr/hyprland.lua does on
+-- load: a host rule naming an output's scale sets it over the one chosen for
+-- the talk, so plugging the projector in would undo it.
+local rt = os.getenv("XDG_RUNTIME_DIR")
 local function reapply_host_monitors()
   package.loaded["hosts." .. host] = nil
   pcall(require, "hosts." .. host)
+  if rt then pcall(dofile, rt .. "/ergon/display.lua") end
 end
 
 hl.on("monitor.added",   reapply_host_monitors)

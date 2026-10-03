@@ -9,7 +9,7 @@
 # heads-down in a sampler is exactly the message that must still be on screen
 # when you look up.
 
-font=JetBrainsMono Nerd Font 11
+font=JetBrainsMono Nerd Font @TYPE:11@
 background-color=@COOL_BG1@
 text-color=@COOL_FG0@
 border-color=@COOL_BG2@
@@ -81,3 +81,15 @@ default-timeout=0
 # something already drawn in the middle of the screen.
 [app-name=swayosd]
 invisible=1
+
+# Do-not-disturb, for `ergon display present`: notifications still arrive,
+# and none is drawn over the slides. Inert until the mode is set;
+# `ergon display extend` unsets it. Last, so it wins over every block above.
+[mode=do-not-disturb]
+invisible=1
+
+# Except critical, for the header's reason: a talk is a laptop on battery. On
+# its own the block above hid it too -- measured under headless sway, a
+# critical toast in this mode left the screen byte-identical to an empty one.
+[mode=do-not-disturb urgency=critical]
+invisible=0
