@@ -272,6 +272,8 @@ reset_logs; _before=$(cat "$E/gtk/gtk4.css")
 run --gsettings >/dev/null 2>&1
 check "--gsettings sets the active palette's colour scheme (cool: dark)" \
   hasx "$T/log/gsettings" "set org.gnome.desktop.interface color-scheme prefer-dark"
+check "  and the text scale from type.env" \
+  hasx "$T/log/gsettings" "set org.gnome.desktop.interface text-scaling-factor 1.00"
 check "  and does nothing else: no render, no reload, no restart" \
   bash -c '[ ! -e "$1/log/pkill" ] && [ ! -e "$1/log/hyprctl" ] && [ "$(cat "$2")" = "$3" ]' \
   _ "$T" "$E/gtk/gtk4.css" "$_before"
@@ -314,6 +316,19 @@ check "--check --text writes no size: --check only reads" hasx "$T/state/ergon/t
 printf "TEXT_SIZE=16\nFONT_SIZE=12\n" > "$T/state/ergon/type.env"
 run >/dev/null 2>&1
 check "a type.env carrying any other key stops the render" test "$?" != 0
+# ...and stops it before a palette step is remembered, or the bar would name a
+# palette the screen never got.
+_p=$(cat "$T/state/ergon/palette")
+run --next >/dev/null 2>&1
+check "  and --next before it records the next palette" hasx "$T/state/ergon/palette" "$_p"
+# But --gsettings runs at every session start: a broken type.env must cost it
+# the text scale, never the colour scheme (a fresh dark install came up light
+# for exactly that reason, ERGON-73).
+reset_logs
+run --gsettings >/dev/null 2>&1
+check "--gsettings with a broken type.env still exits 0" test "$?" = 0
+check "  and still sets the colour scheme" has "$T/log/gsettings" "color-scheme"
+check "  but no text scale it cannot know" not has "$T/log/gsettings" "text-scaling-factor"
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -6,7 +6,7 @@
 # `ergon` (bare) already lists every command and `ergon --pick` already pops a
 # flat picker of them, but nothing on the desktop opened either one, and a
 # palette or a background could only be STEPPED (SUPER+T, SUPER+SHIFT+B),
-# worst case 9 repaints to compare 9 things. This is the tree that reaches all
+# one repaint per palette to reach the one you want. This is the tree that reaches all
 # of it by name: System, Style, Commands, Help.
 #
 # ERGON-31's own verification found the OLD flat picker (bin/ergon:42-46, the
@@ -44,8 +44,8 @@ in_group() { "$BINDIR/ergon" --group "$1"; }                      # "name   summ
 topics()   { "$BINDIR/ergon-explain" --list | tail -n +3 | awk '{print $1}'; }
 
 # ergon-theme --list and ergon-wallpaper --list both mark the active entry
-# with a fixed 5-column " * "/"   " prefix (bin/ergon-theme:113-127,
-# bin/ergon-wallpaper:199-205) -- stripping it is not re-parsing anything,
+# with a fixed 5-column " * "/"   " prefix (the --list branch of each) --
+# stripping it is not re-parsing anything,
 # it is un-doing formatting the same two commands already applied.
 unmarked() { cut -c6-; }
 

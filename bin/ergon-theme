@@ -153,6 +153,15 @@ if [ "${1:-}" = "--text" ]; then
   mv -f "$TYPE_FILE.new" "$TYPE_FILE"
   shift 2
 fi
+# TYPE: the size in use, read and refused HERE, before --next/--prev or a named
+# palette records anything -- a broken type.env used to stop the render only
+# after the palette was remembered, so the bar named a palette the screen did
+# not show. --gsettings is the exception: it runs at every session start, and a
+# hand-edited type.env must cost it the text scale, not the colour scheme.
+if ! TEXT_SIZE=$(read_type "$(type_src)"); then
+  [ "$GSETTINGS_ONLY" = 1 ] || exit 1
+  TEXT_SIZE=
+fi
 
 # --next / --prev step through theme/*.env in name order, wrapping. This is how
 # a palette is CHOSEN: comparing six of them by editing a name in a command is
@@ -275,16 +284,21 @@ fi
 # numbers was chosen at -- so the surfaces keep their proportions to each other
 # and the default renders exactly the designed numbers. 6..48 covers any font
 # size a template would name; outside it the token is left unexpanded, which
-# the check below refuses. Here, ahead of --gsettings, because TEXT_SCALE is
-# one of the keys it sets.
-TEXT_SIZE=$(read_type "$(type_src)") || exit 1
-for _n in $(seq 6 48); do
-  printf 's|@TYPE:%s@|%s|g\n' "$_n" "$(( (2 * _n * TEXT_SIZE + 11) / 22 ))"
-done >> "$SEDPROG"
-# GTK has no template size to scale: its font is Noto Sans 11 in settings.ini,
-# and GTK3 and GTK4 on Wayland both multiply every size by this key instead.
-_ts=$(( (200 * TEXT_SIZE + 11) / 22 ))
-TEXT_SCALE=$(printf '%d.%02d' $((_ts / 100)) $((_ts % 100)))
+# the check below refuses. TEXT_SIZE was read and validated before anything
+# was recorded (see TYPE above); empty only for --gsettings with a broken
+# type.env. The lines go to a file of their own as well, because gtk-4.0's
+# other-mode block is rendered with a second program that needs them too.
+TYPEPROG="$_tmpd/type"; : > "$TYPEPROG"; TEXT_SCALE=
+if [ -n "$TEXT_SIZE" ]; then
+  for _n in $(seq 6 48); do
+    printf 's|@TYPE:%s@|%s|g\n' "$_n" "$(( (2 * _n * TEXT_SIZE + 11) / 22 ))"
+  done > "$TYPEPROG"
+  # GTK has no template size to scale: its font is Noto Sans 11 in settings.ini,
+  # and GTK3 and GTK4 on Wayland both multiply every size by this key instead.
+  _ts=$(( (200 * TEXT_SIZE + 11) / 22 ))
+  TEXT_SCALE=$(printf '%d.%02d' $((_ts / 100)) $((_ts % 100)))
+fi
+cat "$TYPEPROG" >> "$SEDPROG"
 
 # GTK4 and libadwaita read the theme from gsettings, NOT from settings.ini,
 # so a light palette that only rewrote the ini would leave every GTK4 app
@@ -296,7 +310,8 @@ sync_gsettings() {
   gsettings set org.gnome.desktop.interface color-scheme "$_cs"       2>/dev/null || true
   gsettings set org.gnome.desktop.interface gtk-theme   "$GTK_THEME"  2>/dev/null || true
   gsettings set org.gnome.desktop.interface icon-theme  "$ICON_THEME" 2>/dev/null || true
-  gsettings set org.gnome.desktop.interface text-scaling-factor "$TEXT_SCALE" 2>/dev/null || true
+  [ -z "$TEXT_SCALE" ] \
+    || gsettings set org.gnome.desktop.interface text-scaling-factor "$TEXT_SCALE" 2>/dev/null || true
 }
 if [ "$GSETTINGS_ONLY" = 1 ]; then sync_gsettings; exit 0; fi
 
@@ -336,7 +351,10 @@ if [ -f "$ERGON/gtk/gtk4.css.in" ]; then
   done
   # In a subshell, because sedprog exits on a bad palette -- and a broken
   # remembered palette must cost this one block, not the whole render.
-  if ! ( sedprog "$OTHER" "$_tmpd/prog" ); then
+  if ( sedprog "$OTHER" "$_tmpd/prog" ); then
+    # Sizes are not the palette's: the same lines as the active block gets.
+    cat "$TYPEPROG" >> "$_tmpd/prog"
+  else
     echo "!! $OTHER cannot fill gtk-4.0's $OTHER_MODE block; using $PALETTE" >&2
     cp "$SEDPROG" "$_tmpd/prog"
   fi
