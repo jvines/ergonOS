@@ -4,9 +4,17 @@
 #   ./test-arch-vm.sh --keep      # once, to build the disk
 #   ./test-hypr-session.sh        # then this, repeatedly
 #
-# Separate from test-arch-vm.sh on purpose. It REUSES that disk rather than
-# reinstalling, so it is a few minutes rather than fifteen, and the main suite
-# stays fast. It is also the only test here that needs a GPU.
+# Separate from test-arch-vm.sh on purpose: a few minutes rather than fifteen,
+# and the main suite stays fast. It is also the only test here that needs a
+# GPU.
+#
+# Runs against a qcow2 OVERLAY on that disk, not the disk itself (ERGON-49).
+# Every run discards the overlay and lays a fresh one over test-arch-vm.sh
+# --keep's install, so it starts from the same clean machine every time
+# instead of from whatever the PREVIOUS run left in it -- bundles installed,
+# the docker group added, informant's pacman hook wedging ergon aur --rebuild.
+# Telling that apart from a real failure cost real time in round B's
+# 2026-09-23 diagnosis cycles; a dirty disk should never fail a run on its own.
 #
 # What it covers that nothing else can: --verify-config proves the config is
 # accepted, not that the compositor starts, that the binds register, or that
@@ -34,8 +42,40 @@ ergon_resolve_docker || exit 1
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
-[ -f "$WORK/disk.qcow2" ] || {
+[ -f "$WORK/disk.qcow2" ] || [ -f "$WORK/install.qcow2" ] || {
   echo "no disk at $WORK/disk.qcow2 — run ./bin/test-arch-vm.sh --keep first" >&2; exit 1; }
+
+if [ -f "$WORK/install.qcow2" ]; then
+  # Refuse rather than reset out from under a running VM, but only when there
+  # is a disk.qcow2 to hold open -- a reset that died between the old one and
+  # the new one leaves none, and a missing file is never "in use".
+  if [ -f "$WORK/disk.qcow2" ]; then
+    # bin/hypr-vm defaults to this same $WORK, and qemu takes an image lock on
+    # a drive it has open -- a second opener without --force-share fails
+    # outright, which is exactly the "is anything using disk.qcow2 right now?"
+    # this needs, with no PID-guessing. qemu-img's own message is left on
+    # stderr: a missing image or a damaged disk fails the same way, and a
+    # refusal that always said "in use" would send you looking for a VM that
+    # is not there.
+    "${DOCKER[@]}" run --rm -v "$WORK:/w" "$IMAGE" qemu-img info /w/disk.qcow2 >/dev/null || {
+      echo "cannot open $WORK/disk.qcow2 (above) — if a VM has it (hypr-vm?), stop it and re-run" >&2
+      exit 1
+    }
+  fi
+  # disk.qcow2 and OVMF_VARS.fd are root's -- made inside the fleet-qemu
+  # container, same as test-arch-vm.sh's KEEP promote. A host-side cp onto the
+  # existing root-owned vars file is Permission denied, so the whole reset
+  # runs as root in one container instead.
+  "${DOCKER[@]}" run --rm -v "$WORK:/w" "$IMAGE" bash -euo pipefail -c '
+    rm -f /w/disk.qcow2
+    qemu-img create -f qcow2 -b install.qcow2 -F qcow2 /w/disk.qcow2 >/dev/null
+    cp /w/OVMF_VARS.install.fd /w/OVMF_VARS.fd
+  '
+  say "fresh overlay on the install"
+else
+  echo "   not from a clean install — $WORK/disk.qcow2 may carry whatever an earlier run left in it; ./bin/test-arch-vm.sh --keep makes one"
+fi
+
 # ERGON-35: provision from the Arch day this disk was installed from, which
 # test-arch-vm.sh left beside it. Empty, the guest fails the run rather than
 # test whatever the mirrors have: that is no day vm.yml could record.

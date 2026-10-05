@@ -6,13 +6,14 @@ Framework arrives. Everything below runs in a VM on checo.
 ## The three commands
 
 ```sh
-./bin/test-arch-vm.sh --keep    # ~15 min, once.  Installs Arch from the real
+./bin/test-arch-vm.sh --keep    # ~7 min, once.  Installs Arch from the real
                                 # ISO under OVMF: LUKS, btrfs subvolumes, GRUB,
-                                # snapper. Keeps the disk afterwards.
+                                # snapper. Keeps the install, plus a fresh
+                                # overlay to boot and provision.
 
-./bin/test-hypr-session.sh      # ~12 min, after changing anything that
-                                # provisions or installs. Runs
-                                # provision-arch.sh and install.sh in that disk,
+./bin/test-hypr-session.sh      # ~10 min, after changing anything that
+                                # provisions or installs. Resets the overlay,
+                                # runs provision-arch.sh and install.sh in it,
                                 # starts the real compositor, and asserts.
 
 ./bin/hypr-vm                   # ~1 min.  Boots that disk with a display on
@@ -23,6 +24,16 @@ Framework arrives. Everything below runs in a VM on checo.
 (`test/arch-vm/guest-sync.sh`), so a config change only costs a reboot of the
 VM — not a reinstall. Package or `/etc` changes still need
 `test-hypr-session.sh`, because that is the only thing that runs provisioning.
+
+`test-hypr-session.sh` runs against a qcow2 OVERLAY on the installed disk, not
+the disk itself (ERGON-49). Every run discards the overlay and lays a fresh one
+over the install `test-arch-vm.sh --keep` left, so a diagnosis cycle starts
+from the same clean machine instead of from whatever the previous run left in
+it. `hypr-vm`, `test-boot-guard.sh` and `test-hibernate.sh` all boot that
+overlay afterward — re-running the session suite throws away whatever you did
+in the VM since the last time it ran. A disk kept before ERGON-49, or kept by
+hand, has no install to reset onto: the session suite runs on `disk.qcow2` as
+it is and says so.
 
 A kept disk carries the Arch archive day it was installed from
 (`$WORK/archive-date`, ERGON-35), and every `test-hypr-session.sh` provisions it

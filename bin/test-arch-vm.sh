@@ -3,7 +3,9 @@
 # assert on the result.
 #
 #   ./test-arch-vm.sh            # full run: install, reboot, verify
-#   ./test-arch-vm.sh --keep     # leave the disk image behind for poking at
+#   ./test-arch-vm.sh --keep     # keep the install as install.qcow2, plus a
+#                                # fresh overlay (disk.qcow2) to poke at or
+#                                # hand to test-hypr-session.sh
 #
 # This is the test bin/test-arch-bootstrap.sh CANNOT be. That one runs the
 # installer against a loopback file in a container and proves the disk is laid
@@ -113,7 +115,10 @@ ok "Arch as of $ARCHIVE_DATE, for the install and the provisioning after it"
 
 # ---------------------------------------------------------------------------
 say "disk and firmware"
-rm -f "$WORK/disk.qcow2" "$WORK/OVMF_VARS.fd"
+# install.qcow2 and OVMF_VARS.install.fd are last run's KEEP output (below). A
+# reinstall must not leave an old one behind for test-hypr-session.sh to reset
+# onto -- that would provision THIS run's config onto a stale install.
+rm -f "$WORK/disk.qcow2" "$WORK/OVMF_VARS.fd" "$WORK/install.qcow2" "$WORK/OVMF_VARS.install.fd"
 "${DOCKER[@]}" run --rm -v "$WORK:/w" -v "$ISO:/iso:ro" "$IMAGE" bash -euo pipefail -c "
   qemu-img create -f qcow2 /w/disk.qcow2 ${DISK_GIB}G >/dev/null
   # A WRITABLE copy of the variable store. This is not bookkeeping: the UEFI
@@ -460,8 +465,22 @@ echo "   phase 1: $WORK/phase1.log"
 echo "   phase 2: $WORK/phase2.log"
 
 if [ "$KEEP" = 1 ]; then
-  echo "   disk kept: $WORK/disk.qcow2"
+  # Promote the finished install (ERGON-49): rename it out of the way, then
+  # lay a fresh overlay over it as disk.qcow2. test-hypr-session.sh resets onto
+  # install.qcow2 on every run from here on, instead of reinstalling, so a
+  # diagnosis cycle costs one session run, not an install plus one.
+  # A RELATIVE backing name, so the overlay resolves wherever $WORK is mounted
+  # -- the VMs always see it as /w, but the host path differs between a laptop
+  # and CI. Done in the container: disk.qcow2 and OVMF_VARS.fd are root's, same
+  # as "disk and firmware" above.
+  "${DOCKER[@]}" run --rm -v "$WORK:/w" "$IMAGE" bash -euo pipefail -c '
+    mv /w/disk.qcow2 /w/install.qcow2
+    mv /w/OVMF_VARS.fd /w/OVMF_VARS.install.fd
+    qemu-img create -f qcow2 -b install.qcow2 -F qcow2 /w/disk.qcow2 >/dev/null
+    cp /w/OVMF_VARS.install.fd /w/OVMF_VARS.fd
+  '
+  echo "   kept: $WORK/install.qcow2, fresh overlay $WORK/disk.qcow2"
 else
-  rm -f "$WORK/disk.qcow2" "$WORK/OVMF_VARS.fd"
+  rm -f "$WORK/disk.qcow2" "$WORK/OVMF_VARS.fd" "$WORK/install.qcow2" "$WORK/OVMF_VARS.install.fd"
 fi
 exit $(( FAILED > 0 ))

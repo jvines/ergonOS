@@ -24,6 +24,11 @@
 # were written up as a permanent property of "the VM", when the causes were a
 # qemu image built without qemu-system-gui and a host whose GPU is deliberately
 # unbound. See the GPU block below.
+#
+# disk.qcow2 is an overlay now (ERGON-49), and test-hypr-session.sh resets it
+# on every run so repeated runs are cheap. Re-run that suite while you are
+# using this VM and whatever you changed in it since the last session run is
+# gone.
 set -euo pipefail
 
 CACHE="${CACHE:-$HOME/.cache/fleet-artifacts}"
