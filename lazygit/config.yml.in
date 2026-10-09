@@ -35,20 +35,28 @@ gui:
     defaultFgColor:
       - "@COOL_FG0@"
 
-  # Author initials in the commit list get a colour each. Left to lazygit's
-  # defaults they are arbitrary ANSI; pinned to the ramp they stay inside the
-  # palette and remain distinguishable from one another.
-  authorColors:
-    "*": "@COOL_2@"
+    # Both of these sit under theme since lazygit 0.66.0 (2026-10-06), and
+    # branchColors became branchColorPatterns, keyed by regex; written here in
+    # the exact shape 0.66 migrates the old keys to. Under gui, 0.66 rewrites
+    # this file on every start (ERGON-68's symptom) and fails test-hypr-config.
+    # 0.65.1, the version `ergon update` held machines at on that day, loads this
+    # shape without complaint (measured); whether it applies the two lists was
+    # not, and they are cosmetic either way until the pin moves past 0.66.
+    #
+    # Author initials in the commit list get a colour each. Left to lazygit's
+    # defaults they are arbitrary ANSI; pinned to the ramp they stay inside the
+    # palette and remain distinguishable from one another.
+    authorColors:
+      "*": "@COOL_2@"
 
-  # Branch colours by type. The point is that a long-lived branch and a throwaway
-  # one do not look the same in a list of thirty.
-  branchColors:
-    main: "@COOL_0@"
-    master: "@COOL_0@"
-    develop: "@COOL_1@"
-    feature: "@COOL_3@"
-    fix: "@COOL_4@"
+    # Branch colours by type. The point is that a long-lived branch and a
+    # throwaway one do not look the same in a list of thirty.
+    branchColorPatterns:
+      "^main(/|$)": "@COOL_0@"
+      "^master(/|$)": "@COOL_0@"
+      "^develop(/|$)": "@COOL_1@"
+      "^feature(/|$)": "@COOL_3@"
+      "^fix(/|$)": "@COOL_4@"
 
   nerdFontsVersion: "3"
   showCommandLog: false
