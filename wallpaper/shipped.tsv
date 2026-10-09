@@ -1,0 +1,88 @@
+# The approved backgrounds, as shipped (ERGON-74). One row per field, exactly
+# as wallpaper/ship.py prints it.
+#
+# Fetched by `ergon-wallpaper-gen --fetch` (install.sh runs it) from the
+# backgrounds-1 release on github.com/jvines/ergonOS, and refused unless its
+# sha256 matches this row. Made from the 8K master that was approved on screen:
+# averaged 2x2 to 3840x2400, stored as byte planes (lib.pack_field).
+#
+#   approved_max   today's code colouring the 8K master, against the approved
+#   approved_frac  8K PNG in its palette: the largest difference in any pixel,
+#                  of 255, and the share of pixels more than 2 off. A row is
+#                  here only if that is at most 1 in 100,000, and none more
+#                  than 4 off. All 69 approved masters meet it, in catppuccin,
+#                  the palette every 8K master was rendered in.
+#   shipped_max    this file against the exact 4K average, at four panel sizes
+#   shipped_frac   in two palettes: the largest difference, and the share of
+#                  pixels more than 1/255 off.
+#
+# file	sha256	bytes	dtype	approved	palette	approved_max	approved_frac	shipped_max	shipped_frac
+bifurcation-0-3840x2400.npz	7a3db666c5940ab9b8776c4240a137271932fd397de263b5fe8d97af2b4b53d6	6831597	float32	logistic-8k.png	catppuccin	0	0.000000	2	2.44e-07
+blackhole-0-3840x2400.npz	65eb2bbf1205af0262b024d4513dfac20ee294c849fcc9af4bb84434ef03ba92	9506357	float32	blackhole-luminet-8k.png	catppuccin	2	0.000000	1	0.00e+00
+bogdanov-0-3840x2400.npz	d4feb52979a67402726dce772c49b9ba23dd29f8c75750d4f4bc84cb0cd588fb	8729295	float32	bogdanov-k1.6-8k.png	catppuccin	0	0.000000	1	0.00e+00
+bzreaction-0-3840x2400.npz	4c70f2b410df1b8e4b14ea34ceecba7103388e29fdfe22db22a0956674d15fc6	20451997	float32	bz-spiral-8k.png	catppuccin	0	0.000000	3	1.09e-07
+cardiac-0-3840x2400.npz	38cd982aca7c6202c9c4a28bfe1a9033aca6ce1fac940948239c7ff16f20745c	19406905	float32	heart-fibrillation-8k.png	catppuccin	3	0.000000	3	2.95e-07
+caustics-0-3840x2400.npz	43df5cff551b55bceeedee9b7b8c1a16c0b0b620b23723cb6d039714bd9b95be	13925799	float32	caustics-pool-8k.png	catppuccin	0	0.000000	1	0.00e+00
+chladni-0-3840x2400.npz	8b9a8348da3931659c152fee62a29361612d98acbc206a54e2b1c9a9ece131f6	40091493	float64	chladni-0-8k.png	catppuccin	0	0.000000	0	0.00e+00
+clifford-0-3840x2400.npz	432fbc293965ff4728111d996c9f426014532fae88d41e1d9a0388235316d54b	12627417	float64	clifford-8k.png	catppuccin	0	0.000000	0	0.00e+00
+cosmicweb-0-3840x2400.npz	2a1f28835943d540f20976bb1dc5ea66e844f4bdf6f65bc235d9c64ee6d30930	8908477	float32	cosmicweb-fine-8k.png	catppuccin	0	0.000000	2	2.95e-07
+cyclicspecies-0-3840x2400.npz	c257df3be11a55251d8b7bd1da09602130289ca839099d473262c91933b4dd9f	3025425	float32	rps-pair-8k.png	catppuccin	0	0.000000	1	0.00e+00
+diffraction-0-3840x2400.npz	b8408223188c630972ba85da52c27b9bc39ff0a03763dab36313faabdbd62d00	8103893	float32	diffraction-jwst-8k.png	catppuccin	0	0.000000	2	2.44e-07
+diffraction-1-3840x2400.npz	0adb7f37264f2d8b09bdef49bcb5da7df075a4157e84f2a6142fe73b0ee945f0	8575830	float32	diffraction-penrose-8k.png	catppuccin	0	0.000000	1	0.00e+00
+diffraction-2-3840x2400.npz	18d50b6df79ae36d44d3d34266f15e795a1f1a8a3359f0ecb8cc21e433dad78c	13675899	float32	diffraction-sierpinski-8k.png	catppuccin	0	0.000000	1	0.00e+00
+doublependulum-0-3840x2400.npz	59779869812c1a9f610228b61c031a238b5fdbecdcab83a2cb1687f51d68021f	14818151	float32	doublependulum-8k.png	catppuccin	0	0.000000	1	0.00e+00
+epithelium-0-3840x2400.npz	46b34c299ec84bb640acc1709fe8d39505d680b0299dce5d8b41d158c624e0a0	30230848	float64	tissue-growing-8k.png	catppuccin	0	0.000000	0	0.00e+00
+erosion-0-3840x2400.npz	2afa70ac9bf65cb2ca8d3fc8af848ec7d8d6d0062d18449d48b85de557551f78	10730925	float32	erosion-basins-8k.png	catppuccin	0	0.000000	1	0.00e+00
+flame-0-3840x2400.npz	19c07f2fe3d08e723499738e3b3a574c0bc67661e94c51519f23193725293799	29005312	float32	flame-silk-8k.png	catppuccin	0	0.000000	1	0.00e+00
+foldedtowel-0-3840x2400.npz	2fda7cef467b4694f181eaccd973888590a4b3e1d24f7ae0b83849ff6aa844ac	14920124	float32	towel-arch-8k.png	catppuccin	0	0.000000	2	4.88e-07
+fractaltree-0-3840x2400.npz	e9dde4e8421b81ce9de86ac62b88b8c1e0035c9c9bd3ac1a36fbcfea5522c858	6337990	float32	tree-jacaranda-8k.png	catppuccin	0	0.000000	2	5.89e-07
+galaxycollision-0-3840x2400.npz	0f60f666a4a573c8cba9770c2731876ec18817b73cc4ca74f6a2e2273659cddc	14871711	float32	galaxy-collision-loop-8k.png	catppuccin	0	0.000000	2	4.82e-07
+gaussbif-0-3840x2400.npz	81cd0783e3fba618750c2821e16243fb7274998e3dfeafa3e504feefd57b8dad	11279011	float32	gauss-bubble-8k.png	catppuccin	0	0.000000	1	0.00e+00
+grayscott-0-3840x2400.npz	e0e5568e427aaebc3cea9be4cd7c8054c48c448191fa944fccdccf22976f71b4	22802185	float32	grayscott-maze-8k.png	catppuccin	0	0.000000	3	9.65e-07
+henon-0-3840x2400.npz	8654dacd6604ba283ac92bb0469a81a7123bdf60532d3ee8819b08aa3dcb7f9c	2171714	float16	henon-basin-8k.png	catppuccin	0	0.000000	2	6.19e-06
+henon-1-3840x2400.npz	b3c7a4e5dbd6c791cad9624b4856cb63b068cf8cd069d176d579ebed3f03a0ba	2916086	float32	henon-sheaf-8k.png	catppuccin	0	0.000000	1	0.00e+00
+hydrogen-0-3840x2400.npz	de3e8b92eefbdde36e5b6d33ec8b1c0f9d72bee6f33befdf5f8b8efb361dead4	13761228	float32	hydrogen-stark-fan-8k.png	catppuccin	0	0.000000	3	3.91e-06
+hydrogen-1-3840x2400.npz	5f7a6d63a2559d2cf5496274bc5076999323057c6bad554d7aee1f64eeeda3c0	13948455	float64	hydrogen-10k-orbital-8k.png	catppuccin	0	0.000000	0	0.00e+00
+ikeda-0-3840x2400.npz	946a4e78a4b3c6f0f60e6cd6e90c6325aeb7d0c209982f4b30460a5ed833cc7e	24415292	float32	ikeda-zoom-8k.png	catppuccin	2	0.000000	2	5.89e-07
+instability-0-3840x2400.npz	d61723c1b5009e8c305dddd51294bcc64a96a1252cf91749d129d5564ff18f97	11572070	float32	instability-billows-8k.png	catppuccin	0	0.000000	2	2.44e-07
+instability-1-3840x2400.npz	6735af383912a352b42742b56a3f83cc4b7407273489b5068c6809e74f4f041e	12516549	float32	instability-plumes-8k.png	catppuccin	0	0.000000	2	4.88e-07
+ising-0-3840x2400.npz	eb4477b82a638417a6a95fbefecc771a02a2fe00548d7363c6f3befb7cad8416	15928651	float32	ising-islands-8k.png	catppuccin	0	0.000000	2	2.44e-07
+julia-0-3840x2400.npz	eec5f108e4bad9c234c3f9799b5e3ee1eee19cc9adce1bd82748e02da932de86	6280808	float32	julia-spirals-8k.png	catppuccin	0	0.000000	1	0.00e+00
+julia-1-3840x2400.npz	fe6306a1f3676818073fd26a31c3cbf9e045a3c30a4f17ffbbc2624467caebab	522186	float16	julia-dendrite-8k.png	catppuccin	0	0.000000	2	5.21e-06
+julia-2-3840x2400.npz	4fef7b34e582ba3b8aeb02518e404da5f984bf6e5f61161b834f6546c355530e	853969	float16	julia-rabbit-8k.png	catppuccin	0	0.000000	2	7.96e-06
+koch-0-3840x2400.npz	99dbc24c9853af8c5d1153505752fb4c1c8b61ec598030ce5cdd489bfb8db159	2819379	float32	koch-vortex-offset-8k.png	catppuccin	0	0.000000	1	0.00e+00
+kuramoto-0-3840x2400.npz	20d0c43f08b47b67754e7b390e96fd7637c05ce2d66febce9b96db7c5f83da51	2650937	float32	ks-thicket-8k.png	catppuccin	0	0.000000	1	0.00e+00
+leafvenation-0-3840x2400.npz	71abfb00420fe6c32acf5e43787c7046f78a92b7f925642a1f281ce9389463b8	14316269	float32	leaf-blade-8k.png	catppuccin	0	0.000000	1	0.00e+00
+lensing-0-3840x2400.npz	b5d0635cb55df0069574bea6d16958e5b92b0224cac3aa411455089d7f6052fc	1522792	float32	lensing-ring-8k.png	catppuccin	0	0.000000	1	0.00e+00
+lensing-1-3840x2400.npz	e890ddfb096601798247862f5dbbc200669c5be804cbdb6fc2c51e21cda1905c	3941390	float32	lensing-cluster-8k.png	catppuccin	0	0.000000	1	0.00e+00
+lichtenberg-0-3840x2400.npz	70c14e75d95b3c01a1b6b3bb1d763b0503cb2e48cdfededb8818d07ae875cd3b	7795910	float32	lichtenberg-fan-8k.png	catppuccin	0	0.000000	1	0.00e+00
+lichtenberg-1-3840x2400.npz	b1df7e79c151b0d20929fdda1969dd5b008ccc54febaf45a11e4a108a12b3861	7581894	float32	lichtenberg-forest-8k.png	catppuccin	0	0.000000	1	0.00e+00
+lorenz-0-3840x2400.npz	43db23c01f1ca1d78adf8c347a88472f879acdd787b2ace9cf5b871580ef1e3f	13262940	float32	lorenz-8k.png	catppuccin	2	0.000000	2	4.82e-07
+lorenzviews-0-3840x2400.npz	a5cb5cee59060394a1e75a7f3f72048432c69fe74095fe5a25546969615c069b	5831504	float32	lorenz-view-top-8k.png	catppuccin	2	0.000000	2	2.95e-07
+lorenzviews-1-3840x2400.npz	c60e8100d66344ddf0302f46d667fb94ed2e3bbc452276d6e22fc390daed6727	9044036	float32	lorenz-view-one-wing-8k.png	catppuccin	2	0.000000	1	0.00e+00
+mandelbrot-0-3840x2400.npz	c0413968e8f05549cd6a66c0b42c6684f6c97316b9c4b4842e18c71bb4b4aa4e	1451232	float32	mandelbrot-8k.png	catppuccin	0	0.000000	1	0.00e+00
+mandelbrotdeep-0-3840x2400.npz	917dbb5d08a351f52157a80d7e0423a8c0320e7d9bb3d712851ee5ccea52a418	7157360	float32	mandelbrot-deep-minibrot-8k.png	catppuccin	0	0.000000	1	0.00e+00
+mandelbrotdeep-1-3840x2400.npz	8a8caa4a3250765c22e3f6469eaa9241f7b63495eeea38a21f2c3fdb3e77bfde	4465420	float32	mandelbrot-deep-seahorse-8k.png	catppuccin	0	0.000000	2	4.88e-07
+masscentre-0-3840x2400.npz	ee29dc294b15ee074e54f0da1bbd03aa57ae0f51338ceb1fe72f267eeaa2f4f9	23961478	float32	masscentre-triangle-8k.png	catppuccin	0	0.000000	1	0.00e+00
+multifractal-0-3840x2400.npz	cc0df3e725e4b0452ee2d7008346ed3a086dafb745b594b95dfcf720b6e6f19e	15118147	float32	multifractal-crossing-8k.png	catppuccin	0	0.000000	1	0.00e+00
+murmuration-0-3840x2400.npz	000b615f982e431ec91983f7da431cd9dcdbb9fe0fb44c1e36767f4b798f07f3	12834428	float32	murmuration-figure-8k.png	catppuccin	0	0.000000	2	2.95e-07
+pendulumphase-0-3840x2400.npz	87d12fb0a1d7f3f44e28936b9113d725d7382e179d5a91e7d85663d5aefa30d6	7990160	float32	pendulumphase-8k.png	catppuccin	0	0.000000	2	8.06e-06
+perlin-0-3840x2400.npz	6c0d2213b9fe060639eb90f5bd002406eb4c2b4fea04309e3ec807a5dc2a1085	11325815	float32	perlin-flow-broad-8k.png	catppuccin	0	0.000000	1	0.00e+00
+perlinmap-0-3840x2400.npz	e079e90a7e8443c4d50ba6905778fcbf21bcbb886ab5ffb1de6234cb1c569882	3837656	float16	perlinmap-contours-8k.png	catppuccin	0	0.000000	2	5.43e-06
+phyllotaxis-0-3840x2400.npz	dfbf99fe634e048a887b4f0d3558cdb8669dc6b229499515be1cf78e9cce454a	19026949	float32	phyllotaxis-sunflower-8k.png	catppuccin	3	0.000000	3	4.82e-07
+phylogeny-0-3840x2400.npz	9453aedfef6248614e691ce647ed5c1c8f9ce8629fed8e65762b7c9ad9602376	9298003	float32	tree-of-life-extinctions-8k.png	catppuccin	0	0.000000	1	0.00e+00
+physarum-0-3840x2400.npz	0f41a4d6c4d69f24124d21a5efedce25760242b547c86f1a1c8bf602d8a3d3f9	4966481	float32	slime-network-8k.png	catppuccin	0	0.000000	2	1.09e-07
+quantumscar-0-3840x2400.npz	54cc6d83aad3e1c0b16c86c9d88e5a9cf87df309596c8f8b29d0a8cee7beebec	21130963	float32	quantumscar-bowtie-8k.png	catppuccin	0	0.000000	3	4.34e-07
+resonance-0-3840x2400.npz	60672db4f9580baa15575b35618646086769b65fcbffe05ad5ee6243c71239bb	27588283	float32	resonance-earth-venus-8k.png	catppuccin	0	0.000000	2	4.82e-07
+resonance-1-3840x2400.npz	5c3dadd0514581bdcde3e038821b759814762ec81da1ea50c1d8f123f739be5f	25771619	float32	resonance-jupiter-saturn-8k.png	catppuccin	0	0.000000	1	0.00e+00
+resonance-2-3840x2400.npz	fb644fd966a36ce3ec92e1d994554ee3664e8c7b3b0ee6805aec83e31dd4242c	27963482	float32	resonance-trappist1-8k.png	catppuccin	0	0.000000	2	2.44e-07
+rossler-0-3840x2400.npz	897880336efc1c68576219a3a70a9bc74cd2880d661ad83e8acd5b0b6ef5a8f3	6535229	float32	rossler-sail-8k.png	catppuccin	2	0.000000	2	2.44e-07
+rossler-1-3840x2400.npz	4ce6ffa06c79c716574c35b95e69189e43c5d0c13c498b34f76b84ea3dfc8b3a	7508538	float32	rossler-lattice-8k.png	catppuccin	2	0.000000	1	0.00e+00
+rossler-2-3840x2400.npz	c20c59ec219cf184e638a569e22660581945bcdd71040c0d415ff2c53c0b8a17	7624676	float32	rossler-ring-8k.png	catppuccin	2	0.000000	2	2.95e-07
+snowflake-0-3840x2400.npz	f9c98fbeb05821f4b02da2fca96f8e6c4bced6539259d0ff9a53b647a2086e0f	2666375	float16	snowflake-plate-8k.png	catppuccin	0	0.000000	2	2.71e-06
+spiralgalaxy-0-3840x2400.npz	39eb1462385cba0dbe4d5b9f5b0e94e68d2c156749dd6f4b8d7f02d464510f2f	28494099	float32	spiral-galaxy-8k.png	catppuccin	0	0.000000	4	4.34e-07
+tentbif-0-3840x2400.npz	3f58b6d523fe3aef239d1448dda014cccdbb22f58648742f02ebba627b77f15b	4554477	float32	tent-full-8k.png	catppuccin	0	0.000000	4	2.71e-06
+threebody-0-3840x2400.npz	47eb78c63b07e3e1ababf3a2e96fe70055f17c57c0b80a5cc77819014d21894e	13718465	float32	threebody-8k.png	catppuccin	0	0.000000	3	4.82e-07
+tipvortex-0-3840x2400.npz	978cb3675ec76133fe6ffa80adc86076b6267599c59ff366edd5bc387738dd63	7751172	float32	tipvortex-flap-pair-8k.png	catppuccin	0	0.000000	1	0.00e+00
+tipvortex-1-3840x2400.npz	de506675b6c30e003cc777f1d9924740cb2ea75e8ee324f143d21dfa5ce56488	8050540	float32	tipvortex-wake-8k.png	catppuccin	0	0.000000	2	2.44e-07
+vortexstreet-0-3840x2400.npz	d50202e920f4f32a11d4053411d3d6ec19b3bd7b2ce12e18d78caf457a60474e	5268702	float32	vortex-near-8k.png	catppuccin	0	0.000000	1	0.00e+00

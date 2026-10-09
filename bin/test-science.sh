@@ -57,12 +57,12 @@ T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 export MPLCONFIGDIR="$T/mpl"
 
-echo "== lib/, under uv"
+echo "== lib/ and wallpaper/, under uv"
 # ERGON-58, ERGON-62: pandas and astropy join the gate's own venv -- both are
 # already in packages/python (base pyfleet), so neither is a new dependency.
 run=$(cd "$REPO" && "$UV" run --quiet --no-project \
         --with matplotlib --with pytest --with pandas --with astropy \
-        python -m pytest test/science -q --no-header -p no:cacheprovider 2>&1)
+        python -m pytest test/science test/wallpaper -q --no-header -p no:cacheprovider 2>&1)
 rc=$?
 
 echo "$run" | sed 's/^/   /'

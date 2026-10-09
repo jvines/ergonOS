@@ -69,6 +69,17 @@ anything.
   they diff, and reactive, so there is no stale cell); Jupyter is a bundle
   for anyone who wants `.ipynb` instead, not the thing you have to remove.
 
+## Backgrounds
+
+The backgrounds are computed, not photographs: each is a field from a
+simulation in `wallpaper/`, coloured by whichever palette is active, so a
+palette switch recolours them too. The approved set arrives with the install
+and is coloured at your first login, at your panel's size. `SUPER + SHIFT + B`
+and `SUPER + CTRL + B` step through them. `ergon-wallpaper-gen --fetch` gets
+any that are missing, which the install does on every run anyway, and
+`ergon-wallpaper-gen GENERATOR SEED` computes a new one from scratch. Your own
+images go in `~/.config/ergon/backgrounds/`.
+
 ## Your own settings vs. the generated ones
 
 Every themed desktop surface — the bar, the launcher, the terminal, the Lua

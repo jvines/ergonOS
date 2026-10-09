@@ -483,6 +483,22 @@ if [ "$CHECK" != 1 ]; then
   else
     warn "could not generate the wallpaper — run: ergon wallpaper"
   fi
+
+  # The approved backgrounds (ERGON-74): their fields, from the release the
+  # manifest names, checked against its sha256s. Coloured at the next login,
+  # once a compositor can say the panel's size. Not fatal: without the network
+  # the desktop still has the gradient and every generator, and the next run --
+  # every `ergon sync` is one -- fetches only what is still missing.
+  # ERGON_BACKGROUNDS=0 skips it.
+  if [ "${ERGON_BACKGROUNDS:-1}" != 0 ]; then
+    _bglog=$(mktemp)
+    if "$ERGON/bin/ergon-wallpaper-gen" --fetch >"$_bglog" 2>&1; then
+      ok "$(grep -m1 'approved backgrounds' "$_bglog" | sed 's/^ *//')"
+    else
+      warn "$(grep -m1 'approved backgrounds\|no manifest\|no python' "$_bglog" | sed 's/^ *//') — run: ergon-wallpaper-gen --fetch"
+    fi
+    rm -f "$_bglog"
+  fi
 fi
 
 printf '\n   %s on PATH?  ' "$ERGON/bin"

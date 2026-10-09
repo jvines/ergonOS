@@ -43,6 +43,12 @@ hl.on("hyprland.start", function()
   -- was a flat desktop on every machine, which no assertion here noticed
   -- because the fallback looks deliberate.
   hl.exec_cmd("ergon-wallpaper")
+  -- The approved backgrounds (ERGON-74), coloured for this panel and palette.
+  -- install.sh fetches their fields but cannot colour them: it has no
+  -- compositor to ask the panel's size, and this is the first moment one
+  -- exists. Cheap when nothing is new -- an image already newer than its cache
+  -- entry is skipped -- and niced inside, so it never holds up the session.
+  hl.exec_cmd("ergon-wallpaper-gen --recolour")
   hl.exec_cmd("hypridle")
   hl.exec_cmd("swayosd-server")
 

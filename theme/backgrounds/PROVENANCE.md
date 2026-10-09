@@ -50,6 +50,21 @@ who installs it.
 it is absent and is skipped. Only `wall*.png` is taken: the same directory
 holds `lockdead.png`, which is what hyprlock shows when it has crashed.
 
+## Fetched at install, not in this directory
+
+The approved backgrounds (ERGON-74) are not files here and not in git. Each one
+is a **generated** field: the scalar a script in `wallpaper/` computes, which
+the active palette colours on the machine. `wallpaper/shipped.tsv` is their
+provenance, one row each: the file, its sha256, the generator and seed (in the
+name), the 8K master it was made from, and the two checks `wallpaper/ship.py`
+ran before it was published. The files are assets of the `backgrounds-1`
+release on github.com/jvines/ergonOS, and `ergon-wallpaper-gen --fetch`, run
+by install.sh, refuses any byte that does not match its row.
+
+Made from the masters that were approved on screen, never re-rendered: a
+generator that changed afterwards would draw a sibling of the approved image.
+The masters themselves are the author's, on the author's NAS.
+
 ## Table
 
 | file | source | author | licence | notes |

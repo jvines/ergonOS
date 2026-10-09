@@ -47,7 +47,7 @@ def main():
     # palette only decides how that maps to colour -- so every palette can be
     # served from one simulation.
     ap.add_argument("--from-field", default=None,
-                    help="colour this saved .npy instead of simulating")
+                    help="colour this saved .npy (or a shipped .npz) instead of simulating")
     # And the step after that. A field still has to be downsampled, softened,
     # normalised and de-fringed before a palette can touch it, and 46 of the 61
     # generators ask for SOFTEN and 47 for HUE_SMOOTH -- three Gaussians over a
@@ -110,7 +110,7 @@ def main():
     if args.from_prepared:
         field = None
     elif args.from_field:
-        field = np.load(args.from_field)
+        field = lib.load_field(args.from_field)
         # Downsample the FIELD to the requested size before colouring.
         #
         # Fields are stored at 4K because that is the master, but re-colouring
@@ -121,11 +121,10 @@ def main():
         # session's own shells crawl, which is not an acceptable price for
         # changing a colour.
         #
-        # Area-averaged, and only by a whole number of pixels -- the common case
-        # by construction, since the field was rendered at the panel's aspect.
-        fh, fw = field.shape
-        if (fw, fh) != (w, h) and fw % w == 0 and fh % h == 0 and fw // w == fh // h:
-            field = lib.downsample(field, fw // w)
+        # Area-averaged, and cropped to the panel's aspect first: a field made
+        # here is at the panel's aspect by construction, a shipped one is
+        # 16:10 whatever the panel is (lib.fit_field).
+        field = lib.fit_field(field, w, h)
     else:
         ss = max(1, args.supersample if args.supersample is not None
                  else getattr(mod, "SUPERSAMPLE", 3))

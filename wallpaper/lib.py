@@ -711,6 +711,89 @@ def downsample(field, ss):
     return field[:h * ss, :w * ss].reshape(h, ss, w, ss).mean(axis=(1, 3))
 
 
+def _area_axis(a, n, axis):
+    """Box-average `a` along one axis down to n samples, at any ratio.
+
+    The same filter as downsample(), for a factor that is not whole. The
+    integral of a piecewise-constant signal is piecewise linear, so its value
+    at a fractional position is an exact interpolation of the cumulative sum,
+    and each output sample is the integral over its own interval divided by
+    the interval's length. No kernel and no approximation.
+    """
+    m = a.shape[axis]
+    c = np.cumsum(a, axis=axis, dtype=np.float64)
+    c = np.concatenate([np.zeros_like(np.take(c, [0], axis=axis)), c], axis=axis)
+    p = np.linspace(0.0, m, n + 1)
+    i = np.minimum(np.floor(p).astype(np.int64), m - 1)
+    shape = [1] * a.ndim
+    shape[axis] = n + 1
+    f = (p - i).reshape(shape)
+    lo, hi = np.take(c, i, axis=axis), np.take(c, i + 1, axis=axis)
+    return np.diff(lo + (hi - lo) * f, axis=axis) / (m / n)
+
+
+def fit_field(field, w, h):
+    """A stored field, cut and averaged down to a w x h panel.
+
+    The shipped fields (ERGON-74) are 16:10 at 3840x2400, and panels are not:
+    16:9, 3:2 on the Framework, and 2560x1600, which is 16:10 at 1.5x rather
+    than a whole factor. render.py used to downsample a field only by a whole
+    factor at the same aspect, and coloured anything else at the field's full
+    9.2M pixels -- about fifteen seconds an image, sixty-nine times per palette
+    switch -- for the compositor to crop and scale away.
+
+    Centre-cropped to the panel's aspect first, which is what hyprpaper's
+    cover does to an image anyway, then area-averaged: downsample() itself when
+    the factor is whole, the same box filter when it is not. Never enlarged. A
+    panel bigger than the field gets the cropped field and the compositor
+    scales it, as before.
+    """
+    fh, fw = field.shape[:2]
+    if fw * h > w * fh:
+        cw, ch = int(round(fh * w / h)), fh
+    else:
+        cw, ch = fw, int(round(fw * h / w))
+    x0, y0 = (fw - cw) // 2, (fh - ch) // 2
+    field = field[y0:y0 + ch, x0:x0 + cw]
+    if cw <= w or ch <= h:
+        return field
+    if cw % w == 0 and ch % h == 0 and cw // w == ch // h:
+        return downsample(field, cw // w)
+    return _area_axis(_area_axis(field, h, 0), w, 1)
+
+
+def load_field(path):
+    """A saved field: .npy as render.py --save-field writes it, or .npz as the
+    approved backgrounds ship (ERGON-74).
+
+    A shipped field is float16 wherever that was proven to colour the same
+    image as the master, and float32 where it was not; either way it is
+    widened here, so colouring starts from the dtype it always has.
+
+    Stored as BYTE PLANES (`planes`, `shape`, `dtype`): every value's first
+    byte, then every second byte, and so on, so the exponent bytes sit
+    together and zlib finds them. Lossless, and measured on cardiac-0 it is
+    19.4 MB against 29.1 MB for the plain array -- a third of a download
+    every machine makes. A plain `field` key still reads.
+    """
+    if str(path).endswith(".npz"):
+        with np.load(path) as z:
+            if "planes" in z:
+                dt = np.dtype(str(z["dtype"]))
+                f = z["planes"].T.copy().view(dt).reshape(tuple(z["shape"]))
+            else:
+                f = z["field"]
+            return f.astype(np.float64)
+    return np.load(path)
+
+
+def pack_field(field):
+    """The arrays load_field() reads back as `field`, bit for bit."""
+    f = np.ascontiguousarray(field)
+    planes = f.reshape(-1).view(np.uint8).reshape(-1, f.itemsize).T.copy()
+    return {"planes": planes, "shape": np.array(f.shape), "dtype": np.array(f.dtype.str)}
+
+
 def histogram2d(xs, ys, size, extent=None, pad=0.0, fit="cover", zoom=1.18,
                 ss=1, sigma=0.0, path=False):
     """Bin a trajectory into a (h, w) density, filling the panel.

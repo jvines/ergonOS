@@ -30,6 +30,10 @@ finish() { echo "--- $P passed, $F failed ---"; echo "DESKTOP_RESULT=$F"; exit 0
 echo "--- provisioning ---"
 U=$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)
 H=$(getent passwd "$U" | cut -d: -f6)
+# The one approved background install.sh fetches here (ERGON-74). The whole set
+# is about a gigabyte, and this proves the path -- manifest, release, sha256,
+# the session's recolour -- not GitHub's bandwidth. julia-1: the smallest.
+BG_PROBE=julia-1
 
 # A WRITABLE copy of the repo. The 9p share is read-only, and provision-arch.sh
 # writes into $ERGON -- it scaffolds hosts/<hostname>/ from the template. On a
@@ -949,7 +953,7 @@ fi
 # Run the installer.
 printf 'GRAPHICAL=1\nPROFILE=laptop\n' > "$H/ergonOS/hosts/$(hostname -s)/host.env"
 chown "$U:$U" "$H/ergonOS/hosts/$(hostname -s)/host.env"
-if su - "$U" -c "cd ~/ergonOS && ERGON=\$HOME/ergonOS ./install.sh" >/tmp/install.log 2>&1; then
+if su - "$U" -c "cd ~/ergonOS && ERGON=\$HOME/ergonOS ERGON_BACKGROUNDS_ONLY=$BG_PROBE ./install.sh" >/tmp/install.log 2>&1; then
   ok "install.sh completed"
 else
   bad "install.sh failed"; tail -20 /tmp/install.log | sed 's/^/     /'
@@ -1033,7 +1037,7 @@ fi
 # starts a unit in it, and ask the manager rather than trust install.sh's own
 # "ok".
 if [ -S /run/user/1000/bus ]; then
-  su - "$U" -c "cd ~/ergonOS && ERGON=\$HOME/ergonOS ./install.sh" >/tmp/install-relink.log 2>&1
+  su - "$U" -c "cd ~/ergonOS && ERGON=\$HOME/ergonOS ERGON_BACKGROUNDS_ONLY=$BG_PROBE ./install.sh" >/tmp/install-relink.log 2>&1
   _reap=$(su - "$U" -c 'XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active ergon-reap.timer' 2>/dev/null)
   _batt=$(su - "$U" -c 'XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active ergon-battery.timer' 2>/dev/null)
   if [ "$_reap" = active ] && [ "$_batt" = active ]; then
@@ -1975,6 +1979,34 @@ else
   sleep 1
   hq layers | awk '/Layer level 0/{b=1;next} /Layer level 1/{b=0} b' | sed 's/^/     after: /'
   echo "     --- end ---"
+fi
+
+# --- the approved backgrounds (ERGON-74) -----------------------------------
+# install.sh fetched one field (BG_PROBE, at the top) and could not colour it:
+# no compositor, so no panel size. The session's autostart does that, niced,
+# so this polls. The size is the claim as much as the file: a field shipped at
+# 3840x2400 and coloured at that size on a smaller panel is a palette switch
+# that colours 9.2M pixels per image, which is what lib.fit_field ended.
+echo "--- the approved backgrounds ---"
+_fld="$H/.local/share/ergon/fields/$BG_PROBE-3840x2400.npz"
+if [ -s "$_fld" ]; then
+  ok "install.sh fetched the approved field $BG_PROBE, sha256 and all"
+else
+  bad "no $_fld — the fetch did not land it"
+  grep -iE 'approved backgrounds|wallpaper-gen' /tmp/install.log | tail -3 | sed 's/^/     /'
+fi
+_pal=$(basename "$(cat "$H/.local/state/ergon/palette" 2>/dev/null || echo cool)" .env)
+_png="$H/.local/share/ergon/backgrounds/$_pal/$BG_PROBE.png"
+for _ in $(seq 90); do [ -s "$_png" ] && break; sleep 2; done
+# PNG's IHDR: width and height, big-endian, at bytes 16 and 20.
+png_size() { local x; x=$(od -An -tx1 -j16 -N8 "$1" | tr -d ' \n'); printf '%dx%d' "0x${x:0:8}" "0x${x:8:8}"; }
+_panel=$(hq monitors -j 2>/dev/null | jq -r '.[0] | "\(.width)x\(.height)"')
+if [ ! -s "$_png" ]; then
+  bad "the session never coloured $BG_PROBE for $_pal ($_png)"
+elif [ "$(png_size "$_png")" = "$_panel" ]; then
+  ok "the session coloured it for $_pal at the panel's own $_panel"
+else
+  bad "$BG_PROBE was coloured at $(png_size "$_png"), not the panel's $_panel"
 fi
 
 # --- a runaway job must not take the session with it (ERGON-19) ------------

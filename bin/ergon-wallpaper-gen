@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Compute wallpapers from simulations, in the active palette
 # ergon:group=theme
-# ergon:args=[--list | --all | --recolour | GENERATOR [SEED]]
+# ergon:args=[--list | --all | --recolour | --fetch | GENERATOR [SEED]]
 #
 # Wallpapers this machine computes for itself, rather than photographs it is
 # not licensed to redistribute.
@@ -227,7 +227,7 @@ _recolour_once() {
   local first="" want
   want=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/background" 2>/dev/null || true)
   case "$want" in */*) want=$(basename "$want" .png) ;; *) want="" ;; esac
-  [ -n "$want" ] && first=$(ls "$FIELDDIR"/"$want"-*.npy 2>/dev/null | head -1)
+  [ -n "$want" ] && first=$(ls "$FIELDDIR"/"$want"-*.np[yz] 2>/dev/null | head -1)
 
   # The PREPARED cache: lib.prepare()'s output, which is everything about an
   # image that the palette has nothing to do with.
@@ -247,9 +247,9 @@ _recolour_once() {
 
   # Bake anything not cached yet, from the field, once ever. This is the only
   # step that still reads a field, and after it a palette switch never does.
-  for f in $(ls "$FIELDDIR"/*.npy 2>/dev/null); do
+  for f in $(ls "$FIELDDIR"/*.np[yz] 2>/dev/null); do
     [ -e "$f" ] || continue
-    base=$(basename "$f" .npy)              # <gen>-<seed>-<WxH>
+    base=$(basename "$f"); base=${base%.*}   # <gen>-<seed>-<WxH>; .npy made here, .npz shipped
     gen=${base%-*-*}; seed=${base#"$gen"-}; seed=${seed%-*}
     _generators | grep -qx "$gen" || continue
     [ -s "$PREPDIR/$gen-$seed.npz" ] && continue
@@ -343,9 +343,68 @@ _recolour_once() {
   fi
 }
 
+# The APPROVED backgrounds, fetched as fields (ERGON-74).
+#
+# Sixty-nine looks were approved on screen and exist as 8K masters on the
+# author's NAS, and until this nothing put any of them on an installed machine:
+# a fresh install showed the gradient. They ship as 4K fields made from those
+# masters, listed with their sha256 in wallpaper/shipped.tsv, as assets of a
+# release on the public mirror -- not in git, where ~0.6 GB would ride along in
+# every clone and every `ergon sync` forever. A field rather than a PNG because
+# a field is palette-independent: once here, _recolour() colours it like any
+# field this machine made itself.
+#
+# Idempotent: a file already here whose sha256 matches is left alone, so
+# install.sh can call this on every run. A download that fails, or arrives as
+# anything but the bytes listed, never lands under its real name. Colouring
+# waits for a compositor that can say what size to colour at. install.sh has
+# none, and a prepared cache baked at the fallback 4K would make every later
+# palette switch colour 9.2M pixels to show a laptop's 3.4M.
+#
+# ERGON_BACKGROUNDS_ONLY="julia-0 ..." limits it to those, which is how the VM
+# suite proves the path without pulling 0.6 GB into every run.
+MANIFEST="$GENDIR/shipped.tsv"
+BACKGROUNDS_URL="${ERGON_BACKGROUNDS_URL:-https://github.com/jvines/ergonOS/releases/download/backgrounds-1}"
+_fetch() {
+  [ -f "$MANIFEST" ] || { echo "no manifest at $MANIFEST" >&2; return 1; }
+  mkdir -p "$FIELDDIR"
+  local file sha _rest stem part have=0 got=0 bad=0
+  while IFS=$'\t' read -r file sha _rest; do
+    case "$file" in ''|'#'*) continue ;; esac
+    stem=${file%-*}                          # julia-1-3840x2400.npz -> julia-1
+    if [ -n "${ERGON_BACKGROUNDS_ONLY:-}" ]; then
+      case " $ERGON_BACKGROUNDS_ONLY " in *" $stem "*) ;; *) continue ;; esac
+    fi
+    if [ -f "$FIELDDIR/$file" ] \
+       && printf '%s  %s\n' "$sha" "$FIELDDIR/$file" | sha256sum -c --status - 2>/dev/null; then
+      have=$((have + 1)); continue
+    fi
+    # A dot-name while it downloads: the bake loop globs *.npz, and must never
+    # see half a file, or a whole one that has not been checked yet.
+    part="$FIELDDIR/.$file.part"
+    if curl -fsSL --retry 3 --connect-timeout 20 -o "$part" "$BACKGROUNDS_URL/$file" \
+       && printf '%s  %s\n' "$sha" "$part" | sha256sum -c --status - 2>/dev/null; then
+      mv -f "$part" "$FIELDDIR/$file"; got=$((got + 1))
+    else
+      rm -f "$part"; bad=$((bad + 1))
+      echo "  $file: the download failed or was not the file listed" >&2
+    fi
+  done < "$MANIFEST"
+  echo "  approved backgrounds: $got fetched, $have already here, $bad failed"
+  if [ -n "$PANEL" ]; then
+    _recolour
+  elif [ "$got" -gt 0 ]; then
+    echo "  coloured at the next login, at the panel's size"
+  fi
+  [ "$bad" -eq 0 ]
+}
+
 case "${1:---list}" in
   --recolour|--recolor)
     _recolour
+    ;;
+  --fetch)
+    _fetch
     ;;
   --list)
     echo "  generators (palette: $PAL_NAME, size: $SIZE)"
