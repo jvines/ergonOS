@@ -2622,7 +2622,8 @@ if [ -n "$_mgr" ]; then
   _failed=$(su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user --failed --no-legend --plain" 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
   note "failed user units: ${_failed:-none}"
   for _u in $_failed; do
-    su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u $_u -n 4 --no-pager -o cat" 2>/dev/null | sed "s/^/     $_u: /"
+    su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 journalctl --user -u $_u -n 60 --no-pager -o cat" 2>/dev/null \
+      | grep -v "^$_u:" | grep -v "^Failed to start" | tail -6 | sed "s/^/     $_u: /"
   done
 else
   note "ERGON-70: no user manager for $U to probe"
