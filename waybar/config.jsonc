@@ -17,6 +17,7 @@
   "modules-left":   ["custom/menu", "hyprland/workspaces", "hyprland/submap"],
   "modules-center": ["hyprland/window"],
   "modules-right":  [
+    "custom/status",
     "custom/temperature", "cpu", "memory",
     "wireplumber", "backlight",
     "network", "bluetooth", "battery", "power-profiles-daemon",
@@ -27,7 +28,8 @@
   // and Help (bin/ergon-menu, ERGON-31; SUPER+ALT+SPACE, hypr/common/binds.lua).
   // Leftmost, because that is the one spot modules-left had nothing in --
   // workspaces and the submap -- and because a keybind is not reachable from
-  // every seat, the same reason custom/palette and custom/session are clickable.
+  // every seat (see custom/session). With the palette label gone (ERGON-80),
+  // this is also the only way to pick a palette with the pointer alone.
   "custom/menu": {
     "format": "󰍜",
     "tooltip": true,
@@ -57,6 +59,20 @@
       "(.*) - Discord": "󰙯  $1",
       "^(.*)\\s*$": "$1"
     }
+  },
+
+  // The modes this session is in, and only while each is on (ERGON-32): a
+  // recording, do-not-disturb, a night-light tint, `ergon watch` runs, pending
+  // updates or unread news. Each one fails silently when forgotten, which is
+  // the case for drawing it. Empty text when none is on, so the module hides.
+  // A click stops a recording, else ends do-not-disturb. See bin/ergon-status.
+  "custom/status": {
+    "exec": "ergon-status --waybar",
+    "return-type": "json",
+    "interval": 3,
+    "format": "{}",
+    "on-click": "ergon-status --click",
+    "tooltip": true
   },
 
   // k10temp's hwmon number is not stable across boots, so this is a script that
@@ -156,10 +172,15 @@
 
   // UTC on hover: every timestamp the fleet writes is UTC, and doing the
   // arithmetic in your head at 2am is how you misread a log.
+  //
+  // The comment above was a promise the tooltip did not keep: it showed only the
+  // calendar (ERGON-32). "timezones" lists local first, so the bar itself is
+  // unchanged, and {tz_list} prints every zone in the list under it.
   "clock": {
     "interval": 30,
     "format": "{:%a %d %b  %H:%M}",
-    "tooltip-format": "<tt>{calendar}</tt>",
+    "timezones": ["", "Etc/UTC"],
+    "tooltip-format": "<tt>{calendar}</tt>\n\n<tt>{tz_list}</tt>",
     "calendar": {
       "mode": "month",
       "format": { "today": "<b><u>{}</u></b>" }

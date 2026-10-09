@@ -256,3 +256,8 @@ bind("SUPER + SHIFT + ALT + R", "Record region (toggle)", "ergon-record region")
 bind("SUPER + SHIFT + D",     "Dismiss notification",     "makoctl dismiss")
 bind("SUPER + SHIFT + CTRL + D", "Dismiss all",           "makoctl dismiss --all")
 bind("SUPER + SHIFT + A",     "Restore notification",     "makoctl restore")
+-- Do-not-disturb on its own (ERGON-32). The mode already existed for `ergon
+-- display`'s presentation, which sets it; this is the toggle for everything
+-- else -- observing, a talk on someone else's screen. Toasts are still kept in
+-- history while it is on, and the bar shows the mode until it is off.
+bind("SUPER + CTRL + D",      "Do not disturb (toggle)",  "makoctl mode -t do-not-disturb")

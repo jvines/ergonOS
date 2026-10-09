@@ -1483,6 +1483,33 @@ else
   tail -12 /tmp/waybar.log 2>/dev/null | sed 's/^/     /'
 fi
 
+# ERGON-32: the bar's mode module, against the real mako and hyprsunset rather
+# than test-status.sh's stubs. Idle it emits empty text, so the module hides;
+# do-not-disturb on, it shows; a tint away from 6500K shows -- which is also the
+# check that hyprsunset's IPC answers `temperature` the way the stub assumes.
+_st() { usr "ergon-status --waybar" 2>/dev/null; }
+if jq -e . >/dev/null 2>&1 <<<"$(_st)"; then
+  ok "ergon-status emits JSON waybar can read"
+else
+  bad "ergon-status --waybar is not JSON: $(_st | head -c 200)"
+fi
+usr "makoctl mode -a do-not-disturb" >/dev/null 2>&1
+grep -q '"dnd"' <<<"$(_st)" && ok "do-not-disturb shows on the bar while it is on" \
+  || bad "do-not-disturb is on and ergon-status does not say so: $(_st)"
+usr "makoctl mode -r do-not-disturb" >/dev/null 2>&1
+grep -q '"dnd"' <<<"$(_st)" && bad "do-not-disturb is off and the bar still shows it" \
+  || ok "  and leaves it when it is off"
+hq hyprsunset temperature 3500 >/dev/null 2>&1; sleep 1
+_tq=$(hq hyprsunset temperature 2>&1 | head -1)
+if grep -q '"tint"' <<<"$(_st)"; then
+  ok "a 3500K night light shows (hyprsunset answers: $_tq)"
+else
+  bad "a 3500K night light does not show; hyprsunset's temperature query answered: $_tq"
+fi
+hq hyprsunset temperature 6500 >/dev/null 2>&1; sleep 1
+grep -q '"tint"' <<<"$(_st)" && bad "back at 6500K the bar still shows a tint" \
+  || ok "  and 6500K reads as neutral"
+
 # ergon-doctor is the bug-report format for a public distro, so it has to work
 # on a machine it has never seen. Assert it RUNS and that its JSON parses --
 # a health check that dies is worse than none, because it dies exactly when

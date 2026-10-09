@@ -93,6 +93,7 @@ window#waybar.hidden { opacity: 0.0; }
 window#waybar.empty #window { background: transparent; }
 
 /* -- right-hand group ---------------------------------------------------- */
+#custom-status,
 #custom-temperature,
 #cpu, #memory, #wireplumber, #backlight,
 #network, #bluetooth, #battery, #power-profiles-daemon,
@@ -113,6 +114,13 @@ window#waybar.empty #window { background: transparent; }
   margin-left: 2px;
   padding-left: 10px;
 }
+
+/* The active modes (ERGON-32). Only ever drawn while one is on, so its colour
+ * can be loud without being permanent noise. A recording is the one that costs
+ * most to forget, and takes the urgent colour; the others are states you chose
+ * and only need reminding of. */
+#custom-status            { color: @COOL_WARN@; }
+#custom-status.recording  { color: @COOL_URGENT@; }
 
 /* The load trio reads as one unit, tinted along the ramp so you can tell them
  * apart at a glance without labels. */

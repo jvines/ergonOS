@@ -165,6 +165,12 @@ jobs:
       - name: The background follows the palette
         run: cd "$CI_DIR" && ./bin/test-wallpaper.sh
 
+      # ERGON-32: the bar module that shows a recording, do-not-disturb, a
+      # night-light tint, ergon watch runs and pending updates -- each only while
+      # it is on. Stubs every probe; the VM suite owns the module rendering.
+      - name: The bar shows the modes the session is in
+        run: cd "$CI_DIR" && ./bin/test-status.sh
+
       # lib/ -- the science tooling, which until now was the only part of this
       # repo with no gate at all. Every step above this line tests the desktop,
       # the installer or the system; none of them imports a single line of the
