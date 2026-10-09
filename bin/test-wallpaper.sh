@@ -370,6 +370,45 @@ _none=$(ERGON_HYPR_WALLPAPERS="$T/nowhere" HOME=$T/home XDG_RUNTIME_DIR=$T ERGON
         "$E/bin/ergon-wallpaper" --list 2>&1)
 check "a machine without hyprland is unaffected" test "$(grep -c 'wall[0-9]' <<<"$_none")" -eq 0
 
+# --- the approved backgrounds arrive whole, or not at all (ERGON-74) ------------
+# A release asset is bytes from the internet, and the manifest's sha256 is the
+# only thing that says they are the bytes that were approved. file:// stands in
+# for the release: curl takes the same path through -f and -o for it.
+echo
+echo "== the approved backgrounds: fetched, checked, and only once"
+REL=$T/release; mkdir -p "$REL" "$E/wallpaper"
+A=alpha-0-3840x2400.npz; B=beta-1-3840x2400.npz
+printf 'field a\n' > "$REL/$A"; printf 'field b\n' > "$REL/$B"
+{ printf '# file\tsha256\tbytes\n'
+  printf '%s\t%s\t8\n' "$A" "$(sha256sum < "$REL/$A" | cut -d' ' -f1)"
+  printf '%s\t%s\t8\n' "$B" "$(sha256sum < "$REL/$B" | cut -d' ' -f1)"
+} > "$E/wallpaper/shipped.tsv"
+printf 'not field b\n' > "$REL/$B"         # what arrives is not what was listed
+fetch() { env -u ERGON_PALETTE ERGON="$E" ERGON_BACKGROUNDS_URL="file://$REL" "$@" \
+            "$E/bin/ergon-wallpaper-gen" --fetch 2>&1; }
+pal cool
+_out=$(fetch); _rc=$?
+check "bytes that are not the listed ones fail the run"   test "$_rc" -ne 0
+check "  and never land under the real name"              test ! -e "$FIELDS/$B"
+check "  nor as a partial a bake could pick up"           test -z "$(find "$FIELDS" -name '.*part')"
+check "the one that matched landed, byte for byte"        cmp -s "$REL/$A" "$FIELDS/$A"
+check "  and the run counts both"                         grep -q "1 fetched, 0 already here, 1 failed" <<<"$_out"
+check "  without colouring, having no panel to size for"  grep -q "next login" <<<"$_out"
+printf 'field b\n' > "$REL/$B"
+_out=$(fetch); _rc=$?
+check "a second run fetches only what is missing"         grep -q "1 fetched, 1 already here, 0 failed" <<<"$_out"
+check "  and succeeds"                                    test "$_rc" -eq 0
+_out=$(fetch)
+check "a third fetches nothing"                           grep -q "0 fetched, 2 already here" <<<"$_out"
+printf 'edited\n' > "$FIELDS/$A"
+_out=$(fetch)
+check "a local copy that no longer matches is replaced"   cmp -s "$REL/$A" "$FIELDS/$A"
+rm -f "$FIELDS/$B"
+_out=$(fetch ERGON_BACKGROUNDS_ONLY=alpha-0)
+check "ERGON_BACKGROUNDS_ONLY takes only the ones named"  test ! -e "$FIELDS/$B"
+check "  and counts only those"                           grep -q "0 fetched, 1 already here, 0 failed" <<<"$_out"
+rm -f "$FIELDS/$A" "$FIELDS/$B"
+
 # --- negative control --------------------------------------------------------
 # Everything above is a string comparison against a palette file, and a bug in
 # hex()/want() would make every one of them compare "" with "" and pass. Prove
