@@ -109,6 +109,16 @@ necessarily sent on whichever network this machine is on right now. A
 unicast query straight at this host's own address on 5353 still hits the
 drop policy this section opened with.
 
+Except from a virtual interface (ERGON-69): a docker, podman or libvirt bridge,
+a container's veth, a VM's tap and a VPN tunnel are each a local segment of
+their own, so the destination alone admitted mDNS from them too. They are
+excluded by interface **kind** (`meta iifkind`), not by name. A list of names
+misses every runtime nobody thought of, while the kind is what the kernel calls
+the device whoever created it. A physical NIC has no kind, so the exclusion
+never matches it. What is not restricted is avahi itself: it still announces
+this machine's services on those interfaces, outbound, which is a container
+learning the hostname it could read anyway.
+
 ### The ruleset must never flush the whole ruleset
 
 Docker's rules reach the kernel through iptables-nft, which is the **same**
