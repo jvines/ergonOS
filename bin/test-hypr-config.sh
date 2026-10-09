@@ -29,7 +29,13 @@ out=$("${DOCKER[@]}" run --rm --label cl.jvines.owner=ergon-test-hypr-config -v 
   # by the engine that will actually read it, which is the whole idea of this
   # file. They also cannot share a process: one python may load one Gtk
   # typelib, so the two checks below are two interpreters.
-  pacman -Sy --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot \
+  #
+  # -Syu, not -Sy. archlinux:latest is a snapshot, and -Sy installs current
+  # packages over the libraries of that snapshot: a partial upgrade, which Arch
+  # does not support. It held until 2026-10-09, when the current gtk4 wanted a
+  # newer glib2 than the image had ("undefined symbol: g_timeout_source_new_ns"),
+  # and both CSS checks failed on a stylesheet nobody had touched.
+  pacman -Syu --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot \
     python-gobject gtk3 gtk4 uwsm wezterm newsboat lazygit lazydocker >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
