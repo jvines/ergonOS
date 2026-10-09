@@ -130,8 +130,15 @@ check "  and there is no bare accept a unicast query on 5353 could hit" \
 # Counting every rule line that mentions the port closes that: the two checks
 # above already pin what those two lines must say, so a third match of any
 # shape is a widened rule this suite has not approved.
-check "  and 5353 appears in exactly those two rules, nowhere else" \
-  test "$(grep -cE '5353' "$T/rules")" = 2
+check "  and 5353 appears in exactly those two rules and the drop below, nowhere else" \
+  test "$(grep -cE '5353' "$T/rules")" = 3
+# ERGON-69: not from a container or VM bridge, a veth or a tunnel. By interface
+# KIND -- a physical NIC has none, so the drop never matches it -- and BEFORE
+# the accepts, or it would never be reached.
+check "mDNS from a virtual interface kind is dropped" \
+  has "$T/rules" '^[[:space:]]*meta iifkind \{ "bridge", "veth", "tun", .*\} udp dport 5353 drop$'
+check "  ahead of the two accepts" \
+  test "$(grep -nE '5353' "$T/rules" | head -1 | grep -c 'iifkind')" = 1
 check "and the card that opened it is named" has "$T/nftables.conf" 'ERGON-40'
 
 # Docker's DNAT delivers a published port through FORWARD. A forward chain here

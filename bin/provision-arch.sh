@@ -366,6 +366,18 @@ table inet ergon {
 		# `udp dport 5353 accept` would not have that property -- a unicast
 		# query straight at this host's own address still hits the policy
 		# below and is dropped.
+		#
+		# Except from a virtual interface (ERGON-69). A docker, podman or
+		# libvirt bridge, a container's veth, a VM's tap and a VPN tunnel are
+		# each a local segment of their own, and the groups above are as
+		# reachable from them as from the LAN -- the card said "from the LAN
+		# only". Matched by interface KIND, not name: a list of names (docker0,
+		# br-*) misses every runtime it did not think of, while a kind is what
+		# the kernel calls the device whoever made it. A physical NIC has no
+		# kind, so this rule never matches it and the accepts below still do --
+		# measured with real packets in a netns, 2026-10-09: over lo (no kind)
+		# the accept counted and this rule did not; over a veth, the reverse.
+		meta iifkind { "bridge", "veth", "tun", "macvlan", "macvtap", "ipvlan", "vxlan", "wireguard" } udp dport 5353 drop
 		udp dport 5353 ip daddr 224.0.0.251 accept
 		udp dport 5353 ip6 daddr ff02::fb accept
 
