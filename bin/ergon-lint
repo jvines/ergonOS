@@ -128,6 +128,57 @@ fi
 # Every check sets rc rather than exiting, so one failure does not hide another.
 
 # ---------------------------------------------------------------------------
+# ERGON-48: an external command piped into grep -q, under pipefail.
+#
+# grep -q leaves at its first match. If the producer still has output to write,
+# it takes SIGPIPE, and with pipefail the whole pipeline reports 141: a match,
+# read as a miss. `nft list chain ... | grep -q 'policy drop'` did exactly that
+# in round B -- provisioning warned "NOTHING filters inbound" about a chain that
+# had policy drop the whole time, and a 45-minute VM run agreed with it. A stub
+# cannot catch it: a stub's output fits in one write and is gone before grep
+# exits, so only the real producer, on a real machine, ever fails.
+#
+# Capture instead, which reads the producer to the end:
+#     grep -q PATTERN <<<"$(producer)"
+# Flagged when the stage before the grep is an external command. A shell
+# function, printf or echo is the shell's own and cannot be signalled this way.
+_sigpipe=0
+while IFS= read -r f; do
+  grep -q 'pipefail' "$f" || continue
+  awk -v F="${f#"$ERGON"/}" '
+    FNR == 1 { while ((getline l < FILENAME) > 0)
+                 if (match(l, /^[[:space:]]*[A-Za-z_][A-Za-z0-9_-]*[[:space:]]*\(\)/)) {
+                   n = substr(l, RSTART, RLENGTH); gsub(/[[:space:]()]/, "", n); fn[n] = 1 }
+               close(FILENAME) }
+    { line = $0
+      if (cont) { joined = joined " " line } else { joined = line; start = FNR }
+      cont = (line ~ /(\\|\|)[[:space:]]*$/)
+      if (cont) next
+      if (joined ~ /^[[:space:]]*#/) next
+      s = joined
+      while (match(s, /\|[[:space:]]*grep[[:space:]]+-[A-Za-z]*q/)) {
+        pre = substr(s, 1, RSTART - 1); s = substr(s, RSTART + RLENGTH)
+        gsub(/\|\||&&|\$\(|;/, "\001", pre); gsub(/\|/, "\001", pre)
+        k = split(pre, st, "\001"); stage = st[k]
+        sub(/^[[:space:]'"'"'"\\]+/, "", stage)
+        while (stage ~ /^(if|then|do|elif|while|until|!|\{|\()[[:space:]]/ || stage ~ /^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]/)
+          sub(/^[^[:space:]]+[[:space:]]+/, "", stage)
+        split(stage, w, /[[:space:]]+/); cmd = w[1]
+        if (cmd !~ /^[A-Za-z0-9_.\/-]+$/ || cmd ~ /^(printf|echo|_.*)$/ || (cmd in fn)) continue
+        printf "  %s:%d: %s | grep -q under pipefail -- capture: grep -q ... <<<\"$(%s ...)\"\n", F, start, cmd, cmd
+        bad = 1
+      }
+    }
+    END { exit bad }' "$f" || _sigpipe=1
+done < <(find -L "$ERGON/bin" "$ERGON/lib" -maxdepth 1 -type f ! -name 'erg-*' ! -name '*.py' | sort; echo "$ERGON/install.sh")
+if [ "$_sigpipe" = 1 ]; then
+  echo "  FAIL a producer piped into grep -q above can SIGPIPE under pipefail (ERGON-48)" >&2
+  rc=1
+else
+  echo "  ok   no external command piped into grep -q under pipefail"
+fi
+
+# ---------------------------------------------------------------------------
 # Every command must be executable.
 #
 # `ergon` finds commands by scanning bin/ for executables, and provisioning runs
@@ -169,7 +220,7 @@ done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
 # than at the moment someone types --help and gets nothing useful.
 help_bad=0
 while IFS= read -r f; do
-  head -20 "$f" | grep -qE '^# ergon:(help=native|args=)' || {
+  grep -qE '^# ergon:(help=native|args=)' <<<"$(head -20 "$f")" || {
     report "${f#"$ERGON"/}" 1 \
       "no # ergon:help=native and no # ergon:args= -- bin/ergon cannot build --help for this command"
     help_bad=$((help_bad + 1))

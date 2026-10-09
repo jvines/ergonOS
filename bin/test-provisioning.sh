@@ -314,10 +314,10 @@ done
 
 # --- and about the packages themselves --------------------------------------
 stamp "$HEAD_SHA"
-MISSING="tmux" doctor base-packages | grep -q '"state":"warn"' \
+grep -q '"state":"warn"' <<<"$(MISSING=tmux doctor base-packages)" \
   && ok "a package from packages/pacman that pacman does not have is reported" \
   || bad "a missing base package was not reported: $(MISSING=tmux doctor base-packages)"
-doctor base-packages | grep -q '"state":"ok"' \
+grep -q '"state":"ok"' <<<"$(doctor base-packages)" \
   && ok "nothing missing reads as ok" \
   || bad "with nothing missing, doctor said: $(doctor base-packages)"
 

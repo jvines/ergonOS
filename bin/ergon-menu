@@ -65,7 +65,7 @@ pick() { fuzzel --dmenu --prompt "$1  " ${2:+--width "$2"}; }
 # reuses that exact probe rather than assuming uwsm-app is even there.
 launch() {
   if command -v uwsm-app >/dev/null 2>&1 \
-     && systemctl --user list-units --state=active --no-legend 'wayland-wm@*.service' 2>/dev/null | grep -q .; then
+     && grep -q . <<<"$(systemctl --user list-units --state=active --no-legend 'wayland-wm@*.service' 2>/dev/null)"; then
     exec uwsm-app -- "$@"
   fi
   exec "$@"

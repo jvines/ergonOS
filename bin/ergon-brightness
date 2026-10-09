@@ -21,7 +21,7 @@ if [ "$MODE" = "--external" ]; then
   command -v ddcutil >/dev/null || { echo "ddcutil not installed" >&2; exit 1; }
   # i2c-dev is not autoloaded; without it ddcutil reports "no displays found"
   # rather than a permissions error, which sends you looking in the wrong place.
-  lsmod | grep -q '^i2c_dev' || sudo modprobe i2c-dev
+  grep -q '^i2c_dev' <<<"$(lsmod)" || sudo modprobe i2c-dev
   case "$VAL" in
     +*) ddcutil setvcp 10 + "${VAL#+}" ;;
     -*) ddcutil setvcp 10 - "${VAL#-}" ;;

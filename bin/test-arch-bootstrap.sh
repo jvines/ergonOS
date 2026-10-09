@@ -82,15 +82,15 @@ echo '=== ASSERTIONS ==='
 fail=0
 chk() { if eval \"\$2\" >/dev/null 2>&1; then echo \"   ok   \$1\"; else echo \"   FAIL \$1\"; fail=1; fi; }
 
-chk 'ESP is vfat'              'blkid -s TYPE -o value \${LOOP}p1 | grep -qx vfat'
-chk 'p2 is LUKS2'              'cryptsetup luksDump \${LOOP}p2 | grep -q \"Version:.*2\"'
-chk 'btrfs on the mapper'      'blkid -s TYPE -o value /dev/mapper/crypttest | grep -qx btrfs'
+chk 'ESP is vfat'              'grep -qx vfat <<<\"\$(blkid -s TYPE -o value \${LOOP}p1)\"'
+chk 'p2 is LUKS2'              'grep -q \"Version:.*2\" <<<\"\$(cryptsetup luksDump \${LOOP}p2)\"'
+chk 'btrfs on the mapper'      'grep -qx btrfs <<<\"\$(blkid -s TYPE -o value /dev/mapper/crypttest)\"'
 for sv in @ @home @snapshots @var_log @var_cache_pacman_pkg @var_lib_docker @swap; do
-  chk \"subvolume \$sv exists\"   \"btrfs subvolume list /mnt | grep -qw '\$sv'\"
+  chk \"subvolume \$sv exists\"   \"grep -qw '\$sv' <<<\\\"\\\$(btrfs subvolume list /mnt)\\\"\"
 done
 chk 'root fstab: no subvol'    '! grep -E \"^[^#].*\\s/\\s.*subvol\" /mnt/etc/fstab'
 chk '/home keeps its subvol'   'grep -qE \"\\s/home\\s.*subvol=/?@home\" /mnt/etc/fstab'
-chk 'swapfile is NOCOW'        'lsattr /mnt/swap/swapfile 2>/dev/null | grep -q C'
+chk 'swapfile is NOCOW'        'grep -q C <<<\"\$(lsattr /mnt/swap/swapfile 2>/dev/null)\"'
 chk 'swapfile sized right'     'test \$(stat -c%s /mnt/swap/swapfile) -eq \$((1024*1024*1024))'
 chk 'pacstrap put a kernel in' 'test -f /mnt/boot/vmlinuz-linux'
 chk 'lts kernel present too'   'test -f /mnt/boot/vmlinuz-linux-lts'
