@@ -34,7 +34,7 @@ if ! fprintd-list "$USER" >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! fprintd-list "$USER" 2>/dev/null | grep -q 'Fingerprints'; then
+if ! grep -q 'Fingerprints' <<<"$(fprintd-list "$USER" 2>/dev/null)"; then
   echo "no fingerprints enrolled yet"
 fi
 

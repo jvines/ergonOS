@@ -735,7 +735,7 @@ done
 #             brightness keys do nothing and report no error at all.
 #   input  -- swayosd's libinput backend reads /dev/input for caps-lock state.
 for g in video input; do
-  groups | grep -qw "$g" || { sudo usermod -aG "$g" "$USER"; ok "added $USER to $g (re-login required)"; }
+  grep -qw "$g" <<<"$(groups)" || { sudo usermod -aG "$g" "$USER"; ok "added $USER to $g (re-login required)"; }
 done
 
 # Caps-lock / num-lock OSD. A SYSTEM service (it reads /dev/input), unlike
@@ -908,13 +908,13 @@ HOSTENV="$ERGON/hosts/$HOST/host.env"
 # reason bin/ergon-doctor's docker-group check does.
 ME="$(id -un)"
 if [ "${DOCKER_GROUP:-0}" = 1 ]; then
-  groups "$ME" | grep -qw docker || { sudo usermod -aG docker "$ME"; ok "added $ME to docker (re-login required) -- DOCKER_GROUP=1 in $HOSTENV"; }
+  grep -qw docker <<<"$(groups "$ME")" || { sudo usermod -aG docker "$ME"; ok "added $ME to docker (re-login required) -- DOCKER_GROUP=1 in $HOSTENV"; }
 else
   # Never REMOVE membership: a reprovision that silently drops your own
   # session's docker access is a worse surprise than the one this knob fixes.
   # If it is 0 and you are in the group anyway, that is ergon doctor's
   # business to report, not this script's to undo.
-  groups "$ME" | grep -qw docker && skip "in the docker group despite DOCKER_GROUP=0 -- ergon doctor" \
+  grep -qw docker <<<"$(groups "$ME")" && skip "in the docker group despite DOCKER_GROUP=0 -- ergon doctor" \
                                   || skip "DOCKER_GROUP=0 -- docker needs sudo"
 fi
 

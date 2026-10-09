@@ -57,7 +57,7 @@ set -- ergon-term --class "$class" "$cmd" "$@"
 # of the compositor. Losing the scope is a much smaller problem than losing the
 # window.
 if command -v uwsm-app >/dev/null \
-   && systemctl --user list-units --state=active --no-legend 'wayland-wm@*.service' 2>/dev/null | grep -q .; then
+   && grep -q . <<<"$(systemctl --user list-units --state=active --no-legend 'wayland-wm@*.service' 2>/dev/null)"; then
   exec uwsm-app -- "$@"
 fi
 exec "$@"

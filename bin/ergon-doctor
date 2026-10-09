@@ -156,7 +156,7 @@ fi
 # user can become root without a password. The one row that exists to catch
 # that, saying the opposite, under the invocation doctor itself suggests.
 WHO="${SUDO_USER:-$(id -un)}"
-if groups "$WHO" | grep -qw docker; then
+if grep -qw docker <<<"$(groups "$WHO")"; then
   if [ "$DG" = 1 ]; then
     rec warn "docker-group" "any process in this session can become root -- the trade-off DOCKER_GROUP=1 chose for this host"
   else
@@ -426,7 +426,7 @@ fi
 # NAME is fine and expected; the thing that breaks it is a pin by numeric
 # subvolid, because the replacement @ has a different id and the machine would
 # boot the old one.
-if command -v findmnt >/dev/null 2>&1 && findmnt -no FSTYPE / 2>/dev/null | grep -q btrfs; then
+if command -v findmnt >/dev/null 2>&1 && grep -q btrfs <<<"$(findmnt -no FSTYPE / 2>/dev/null)"; then
   why=""
   grep -qE '^[^#].*[[:space:]]/[[:space:]].*subvolid=' /etc/fstab 2>/dev/null && why="fstab pins a numeric subvolid"
   grep -q 'rootflags=subvolid=' /proc/cmdline 2>/dev/null && why="${why:+$why; }kernel cmdline pins a numeric subvolid"

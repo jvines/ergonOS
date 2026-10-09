@@ -250,7 +250,7 @@ done
 SUBVOLID_AT=$(btrfs subvolume list "/mnt" 2>/dev/null | awk '$NF == "@" { print $2 }')
 [ -n "$SUBVOLID_AT" ] || { echo "could not find the subvolid of @" >&2; exit 1; }
 btrfs subvolume set-default "$SUBVOLID_AT" "/mnt"
-btrfs subvolume get-default "/mnt" | grep -q "path @$" \
+grep -q "path @$" <<<"$(btrfs subvolume get-default "/mnt")" \
   || { echo "default subvolume did not take" >&2; exit 1; }
 ok "default subvolume -> @ (id $SUBVOLID_AT)"
 umount /mnt

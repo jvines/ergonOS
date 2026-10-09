@@ -112,7 +112,7 @@ fi
 # that reports space in df can still be out of METADATA, which fails in a way
 # that looks nothing like a full disk.
 if [ "$(findmnt -no FSTYPE /)" = btrfs ]; then
-  if btrfs filesystem usage / 2>/dev/null | grep -qE 'Metadata.*Free.*0\.00'; then
+  if grep -qE 'Metadata.*Free.*0\.00' <<<"$(btrfs filesystem usage / 2>/dev/null)"; then
     gate "btrfs metadata" "btrfs metadata is exhausted on / — run 'sudo btrfs balance start -m /' first"
   else
     ok "btrfs metadata has headroom"

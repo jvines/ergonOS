@@ -237,8 +237,8 @@ check "  the same way it reaches GTK's" \
 # Asserted per BLOCK, through the one define every palette renders exactly once
 # per copy of gtk.css.in; a whole-file grep would pass with the two swapped.
 bg() { sed -n 's/^COOL_BG0=\(#[0-9A-Fa-f]*\).*/\1/p' "$E/theme/$1.env" | head -1; }
-blk() { awk -v m="prefers-color-scheme: $1)" '/^@media /{ on = index($0, m) > 0 } on' "$E/gtk/gtk4.css" \
-          | grep -qF "@define-color window_bg_color ${2:-<unset>};"; }
+blk() { grep -qF "@define-color window_bg_color ${2:-<unset>};" \
+          <<<"$(awk -v m="prefers-color-scheme: $1)" '/^@media /{ on = index($0, m) > 0 } on' "$E/gtk/gtk4.css")"; }
 check "gtk-4.0's light block is the active light palette" blk light "$(bg gruvbox-light)"
 check "  and its dark block the last dark palette used"   blk dark  "$(bg gruvbox)"
 check "gtk-3.0 keeps the active palette alone: GTK3 cannot parse @media" \
