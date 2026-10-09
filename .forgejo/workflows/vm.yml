@@ -63,6 +63,7 @@ on:
       # new date to GitHub.
       - '!packages/tested-date'
       - 'lib/archive-pin.sh'
+      - 'lib/fleet-qemu.sh'
       - 'test/arch-vm/**'
       - '.forgejo/workflows/vm.yml'
 

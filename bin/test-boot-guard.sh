@@ -31,6 +31,9 @@ USERNAME="${USERNAME:-jayvains}"
 ERGON="$(cd "${ERGON:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
 . "$ERGON/lib/docker-cmd.sh"
 ergon_resolve_docker || exit 1
+# shellcheck source=../lib/fleet-qemu.sh
+. "$ERGON/lib/fleet-qemu.sh"
+fleet_qemu_image "${IMAGE:-fleet-qemu}"
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
