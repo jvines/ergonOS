@@ -2593,5 +2593,33 @@ grep -q 'ergon explain' "$H/.codex/AGENTS.md" 2>/dev/null \
 # shellcheck source=guest-backup.sh
 . "$SHARE/test/arch-vm/guest-backup.sh"
 
+# ERGON-70, measured rather than asserted: does a user manager that has made a
+# tmux pane scope spin when a unit directory changes under it with no reload,
+# and a second pane is asked for? Seen at ~90% CPU in a container (systemd 262,
+# tmux 3.7c); unknown on an installed machine, which is what this is. LAST and
+# note-only on purpose: if it reproduces, the manager it leaves wedged must
+# cost nothing above, and an unproven bug must not turn the suite red.
+echo "--- ergon-70 probe ---"
+_mgr=$(pgrep -u "$U" -x systemd | head -1)
+_hz=$(getconf CLK_TCK)
+_cpu() { local a b; a=$(awk '{print $14+$15}' "/proc/$_mgr/stat"); sleep 5
+         b=$(awk '{print $14+$15}' "/proc/$_mgr/stat"); echo $(( (b - a) * 100 / (5 * _hz) )); }
+if [ -n "$_mgr" ]; then
+  _idle=$(_cpu)
+  usr "tmux -L e70 new-session -d -s e70 'sleep 600'"; sleep 2
+  # The precondition, counted: without a pane scope this tests nothing.
+  _scopes=$(grep -c . <<<"$(su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user list-units --no-legend 'tmux-spawn-*'" 2>/dev/null)")
+  mkdir -p /etc/systemd/user/e70-probe.service.d
+  usr "tmux -L e70 new-window -t e70 'sleep 600'"; sleep 3
+  _after=$(_cpu)
+  _state=$(timeout 5 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-system-running" 2>&1) || true
+  note "ERGON-70: user manager at ${_idle}% CPU idle, ${_after}% after a no-reload unit-dir change and a new tmux pane; pane scopes before the change: $_scopes; manager says: ${_state:-nothing, within 5s} ($(systemctl --version | awk 'NR==1{print $2}'), tmux $(tmux -V | awk '{print $2}'))"
+  rmdir /etc/systemd/user/e70-probe.service.d
+  timeout 15 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user daemon-reload" >/dev/null 2>&1
+  usr "tmux -L e70 kill-server" >/dev/null 2>&1
+else
+  note "ERGON-70: no user manager for $U to probe"
+fi
+
 [ "$F" -gt 0 ] && dump_log
 finish
