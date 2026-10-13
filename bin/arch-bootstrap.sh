@@ -69,8 +69,12 @@ _detect_keymap() {
 KEYMAP="${KEYMAP:-$(_detect_keymap)}"
 # Prompted if empty, like the hostname. It used to default to this author's
 # name without asking, so every install made /home/jayvains (ERGON-39).
-# Unattended runs pass it: bin/test-arch-vm.sh does.
-USERNAME="${USERNAME:-}"
+# Unattended runs pass USERNAME_NEW, as bin/test-arch-vm.sh does: _NEW for the
+# reason HOSTNAME_NEW has it. The ISO's root shell is zsh, where USERNAME is
+# the current user's name, so `USERNAME=me bash arch-bootstrap.sh` arrives as
+# USERNAME=root -- measured, the first VM install after this change ended in
+# "useradd: user 'root' already exists".
+USERNAME="${USERNAME_NEW:-}"
 
 # The wifi regulatory domain. Not a preference: transmit power and which
 # channels exist are legally determined by where the machine is, and getting it
@@ -102,8 +106,9 @@ KERNELS="linux linux-lts"
 #
 #   ARCH_BOOTSTRAP_UNATTENDED=1
 #       Take every answer from the environment instead of prompting
-#       (HOSTNAME_NEW, LUKS_PASSPHRASE, USER_PASSWORD) and skip the type-the-
-#       disk-name confirmation. Says nothing about where it is running.
+#       (HOSTNAME_NEW, USERNAME_NEW, LUKS_PASSPHRASE, USER_PASSWORD) and skip
+#       the type-the-disk-name confirmation. Says nothing about where it is
+#       running.
 #
 #   ARCH_BOOTSTRAP_TEST=1
 #       "I am in a container, not on real hardware." Relaxes the live-ISO and
@@ -165,6 +170,7 @@ fi
 # already pacstrapped and no user to log in as.
 [[ $USERNAME =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
   || { echo "username required: lowercase letters, digits, _ and -, starting with a letter or _" >&2; exit 1; }
+[ "$USERNAME" != root ] || { echo "the username cannot be root: this is the account you log in with" >&2; exit 1; }
 
 # Locale, timezone and keymap, the way every installer asks. The defaults are
 # this author's, and a distro that silently gives a stranger America/Santiago
