@@ -1722,10 +1722,26 @@ else
     # left edge of the bar rather than hard-coding a pixel that is right on one
     # machine only. Starting workspace is 1; ANY button but the first must
     # change it.
+    #
+    # The menu button (ERGON-31) sits left of them, and a click on it opens
+    # ergon-menu, whose picker is fuzzel and takes the pointer while it is up:
+    # the scan below found "nothing across the whole left edge" on 2026-10-13
+    # because its first click opened the menu and every later one landed in
+    # it. So the button is clicked first, on purpose, and asserted; and a scan
+    # click that opens the menu again closes it and moves on, at any font width.
+    usr "pkill -x fuzzel" >/dev/null 2>&1 || true
+    click_at 6 15
+    if pgrep -x fuzzel >/dev/null; then
+      ok "clicking the bar's menu button opens the ergon menu"
+    else
+      bad "clicking the bar's leftmost button (x=6) opened no menu"
+    fi
+    pkill -x fuzzel 2>/dev/null; sleep 0.5
     hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1; sleep 1
     HIT=""
     for x in 6 18 30 42 54 66 78 90 102 114 126 138 150; do
       click_at "$x" 15
+      if pgrep -x fuzzel >/dev/null; then pkill -x fuzzel; sleep 0.5; continue; fi
       ws=$(hq activeworkspace -j 2>/dev/null | jq -r '.id // empty')
       [ -n "$ws" ] && [ "$ws" != 1 ] && { HIT="x=$x switched to workspace $ws"; break; }
     done
