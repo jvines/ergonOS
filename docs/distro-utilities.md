@@ -149,7 +149,9 @@ zram is still parked — it changes what hibernation resumes from, and that need
   productised: point a fresh install at your git remote and it is *your*
   machine, bundles included, because host.env already records them
 
-**Out.** visidata — Columna is baked in instead.
+**Out.** visidata — Columna is baked in instead. Parquet already prefers
+Columna wherever it is installed (ERGON-75). visidata leaves the base once
+Columna has a public package.
 
 - **LSP wired to the project venv.** `ergon-new` writes the config pointing the
   language server at `.venv`, so imports resolve and go-to-definition works

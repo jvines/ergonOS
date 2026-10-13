@@ -164,6 +164,13 @@ else
   # reader (uk.ac.starlink.parquet) but no HDF5 or NumPy one, so those get no
   # default because nothing installed by any bundle opens them.
   #
+  # Parquet opens in Columna (ERGON-75), the same list-with-fallback shape:
+  # Columna's installer puts com.columna.Columna.desktop in
+  # ~/.local/share/applications, and until it is there topcat answers as
+  # before. The Linux port is tested (feature/linux-port e1b53c9) but has no
+  # public package yet, so nothing here installs it and visidata stays in
+  # packages/pacman until one exists.
+  #
   # An idempotent key-set, not a symlink: mimeapps.list is user-editable the
   # same way btop.conf is -- but unlike btop.conf, the key here can be the
   # USER's own choice, and Added/Removed Associations are separate sections a
@@ -200,9 +207,9 @@ else
     }
     _mimedefault image/fits "cl.jvines.theia.desktop;ds9.desktop" ds9.desktop
     _mimedefault application/fits "cl.jvines.theia.desktop;topcat.desktop"
-    _mimedefault application/vnd.apache.parquet topcat.desktop
+    _mimedefault application/vnd.apache.parquet "com.columna.Columna.desktop;topcat.desktop" topcat.desktop
     unset -f _mimedefault
-    ok "mimeapps.list: FITS -> Theia (then ds9 / topcat), parquet -> topcat (ignored where not installed)"
+    ok "mimeapps.list: FITS -> Theia (then ds9 / topcat), parquet -> Columna (then topcat) (ignored where not installed)"
   fi
 
   # bat's theme has to be COMPILED into its cache before it is selectable, so

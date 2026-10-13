@@ -24,7 +24,7 @@ yazi                # file manager
 btop                # system monitor
 lnav                # log viewer
 jless               # JSON viewer
-visidata            # tabular data
+visidata            # tabular data, until Columna has a public package (ERGON-75)
 lazygit
 lazydocker
 dive                # container layers
