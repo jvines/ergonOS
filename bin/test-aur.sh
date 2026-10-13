@@ -20,7 +20,10 @@
 # the first build left behind; --outdated never turning a reply it did not get
 # into "everything is current"; and the two ergon-doctor rows, which must answer
 # from this machine, must not reach for the network to do it, and must not call
-# a package nothing here ever built "ok".
+# a package nothing here ever built "ok". ERGON-79: a package whose PKGBUILD is
+# in packages/pkgbuild -- built from a copy of it, refused when its _commit and
+# its pin disagree, measured against upstream by --outdated -- and the shipped
+# recipes agreeing with packages/aur.
 #
 # DOES NOT COVER: a real makepkg, a real pacman transaction, or the real AUR.
 set -uo pipefail
@@ -75,7 +78,13 @@ if [ -e "$pkgfile" ] && [[ " $* " != *" --force "* && " $* " != *" -f "* ]]; the
   exit 1
 fi
 : > "$pkgfile"
-git rev-parse HEAD >> "$TEST_ROOT/log/built-from"
+# A packages/pkgbuild recipe is no clone; what it builds is the upstream commit
+# its source line pins, which real makepkg checks out or fails on.
+if grep -q '^_commit=' PKGBUILD; then
+  sed -n 's/^_commit=\([0-9a-f]*\).*/\1/p' PKGBUILD >> "$TEST_ROOT/log/built-from"
+else
+  git rev-parse HEAD >> "$TEST_ROOT/log/built-from"
+fi
 EOF
 # Enough of pacman's vercmp for a test: equal, else lexicographic.
 cat > "$T/stub/vercmp" <<'EOF'
@@ -286,6 +295,83 @@ check "  once -- the provision after that builds nothing" test ! -e "$L/makepkg"
 pinfile
 run -- demo-git
 check "an unpinned installed package is still left alone" test ! -e "$L/makepkg"
+
+echo "== a package with no AUR repository: its PKGBUILD lives in the repo (ERGON-79)"
+# fcitx5-omacento's shape. The pin is an UPSTREAM commit and the PKGBUILD names
+# it again as _commit; the two have to agree, the recipe is copied out of the
+# checkout rather than cloned from aur.archlinux.org, and --outdated asks the
+# clone makepkg keeps of upstream instead of the AUR.
+UP=$T/upstream/demo
+git init -q -b main "$UP"
+printf 'one\n' > "$UP/f"; git -C "$UP" add f; git -C "$UP" commit -qm one
+U1=$(git -C "$UP" rev-parse HEAD)
+printf 'two\n' > "$UP/f"; git -C "$UP" commit -qam two
+U2=$(git -C "$UP" rev-parse HEAD)
+LP="$ERGON/packages/pkgbuild/demo-local"
+mkdir -p "$LP"
+localpkg() {  # localpkg <_commit> [pin] -- the PKGBUILD and its packages/aur line
+  printf 'pkgname=demo-local\n_commit=%s  # a comment, as the real one has\npkgver=1\nsource=("demo::git+file://%s#commit=$_commit")\n' \
+    "$1" "$UP" > "$LP/PKGBUILD"
+  printf 'demo-local%s\n' "${2:+          # pin=$2}" > "$ERGON/packages/aur"
+}
+sed_out() { sed -n "$1" "$T/out"; }
+
+localpkg "$U1" "$U1"
+run -- --rebuild demo-local
+check "it builds" hasx "$L/makepkg" "-si --noconfirm --force"
+check "  from a copy of the repo's own PKGBUILD" cmp -s "$LP/PKGBUILD" "$AURDIR/demo-local/PKGBUILD"
+check "  and the AUR was never cloned for it" test ! -e "$AURDIR/demo-local/.git"
+check "  the record is the upstream commit the pin names" hasx "$BUILT" "demo-local $U1"
+check "  and says where the recipe came from" has "$T/out" "packages/pkgbuild/demo-local"
+
+localpkg "$U2" "$U1"
+run -- --rebuild demo-local
+check "a PKGBUILD whose _commit is not the pin is refused" test "$?" -eq 4
+check "  and builds nothing" test ! -e "$L/makepkg"
+check "  naming both, since either could be the stale one" \
+  has "$T/out" "pins demo-local at '$U1', but packages/pkgbuild/demo-local/PKGBUILD builds '$U2'"
+localpkg "$U1"
+run -- --rebuild demo-local
+check "so is one with no pin at all" test "$?" -eq 4
+check "  and builds nothing" test ! -e "$L/makepkg"
+
+localpkg "$U1" "$U1"; echo demo-local >> "$T/pacdb"
+run -- demo-local
+check "installed and built from its pin: the plain form builds nothing" test ! -e "$L/makepkg"
+printf 'demo-local 1-1\n' > "$T/foreign"
+check "  and doctor's aur-pins row is green" has <(doctor aur-pins) '"state":"ok"'
+localpkg "$U2" "$U2"
+run -- demo-local
+check "both moved forward together: the plain form rebuilds" hasx "$BUILT" "demo-local $U2"
+check "  and doctor agrees" has <(doctor aur-pins) '"state":"ok"'
+
+# makepkg keeps a bare --mirror clone of a git source beside the PKGBUILD. The
+# stub makepkg makes none, so make the one a real build would have left.
+git clone -q --mirror "$UP" "$AURDIR/demo-local/demo"
+printf '{"type":"multiinfo","resultcount":0,"results":[]}\n' > "$T/rpc.json"
+localpkg "$U1" "$U1"
+run -- --outdated
+check "--outdated measures it against upstream, not the AUR" has "$T/out" "1 newer upstream commit"
+check "  with the log of exactly those commits" has "$T/out" "log --oneline ${U1:0:7}..HEAD"
+check "  and both places the commit has to change" has "$T/out" "packages/pkgbuild/demo-local/PKGBUILD"
+check "  and never as 'not in the AUR', which is true and beside the point" not has "$T/out" "is not in the AUR"
+localpkg "$U2" "$U2"
+run -- --outdated
+check "at upstream's head it is reported current" has "$T/out" "upstream has nothing newer"
+
+echo "== the repo's own packages/pkgbuild recipes agree with packages/aur"
+# Everything above is a fixture. This is the shipped pair: a pin moved in one
+# file and not the other is refused at build time -- on a machine, during a
+# provision, as a warning in a log. Here it is a red line before that.
+for d in "$REPO"/packages/pkgbuild/*/; do
+  [ -f "$d/PKGBUILD" ] || continue
+  p=$(basename "$d")
+  _c=$(sed -n "s/^_commit=['\"]\{0,1\}\([0-9a-f]\{7,40\}\).*/\1/p" "$d/PKGBUILD" | head -1)
+  _p=$(awk -v p="$p" '$1 == p && match($0, /pin=[0-9a-f]{7,40}/) { print substr($0, RSTART + 4, RLENGTH - 4) }' \
+         "$REPO/packages/aur")
+  check "$p: _commit is a full commit" test "${#_c}" -eq 40
+  check "  and is exactly the pin packages/aur records for it" test -n "$_p" -a "$_c" = "$_p"
+done
 
 echo
 check "no stub saw a command it did not expect" test ! -e "$L/violations"

@@ -27,6 +27,12 @@
 # The name must stay the first token on its own line and everything else must
 # stay inside the comment — _aurlist() in bin/provision-arch.sh reads the first
 # field, and _list() in bin/ergon-bundle reads up to the first "#".
+#
+# A package the AUR does not carry at all keeps its PKGBUILD in this repo, at
+# packages/pkgbuild/<name>/, and is listed here like any other. Its pin is the
+# UPSTREAM commit (the recipe's own history is this repo's), the PKGBUILD names
+# the same commit as _commit, and ergon-aur builds nothing while the two
+# disagree. See the header of bin/ergon-aur.
 
 claude-code       # native Bun binary from downloads.claude.ai. depends=bash only,
                   # no node. Note its wrapper sets DISABLE_UPDATES=1, so hotfixes

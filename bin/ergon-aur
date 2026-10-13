@@ -49,6 +49,36 @@ _pin() {  # _pin <pkgname>
       "$ERGON/packages/aur" 2>/dev/null || true
 }
 
+# A package the AUR has no repository for at all carries its PKGBUILD in this
+# repo, under packages/pkgbuild/<name>/ (ERGON-79: fcitx5-omacento). It is
+# still listed in packages/aur and still goes through everything below --
+# makepkg -si, the conflict handling, the record of what it was built from,
+# --rebuild after a soname bump, doctor's pin row. Three things differ, and
+# only three:
+#
+#   * the recipe is copied out of the checkout instead of cloned from the AUR,
+#     so nothing about it can change without a commit here;
+#   * its pin is the UPSTREAM commit, since the PKGBUILD's own history is this
+#     repo's. The PKGBUILD names it too (_commit=, which its source line
+#     builds), and the two must agree or nothing is built: a pin that said one
+#     commit while makepkg checked out another would be the claim-without-proof
+#     a pin exists to prevent;
+#   * --outdated asks upstream, through the bare clone makepkg keeps beside
+#     the PKGBUILD, rather than the AUR.
+LOCALPKG="$ERGON/packages/pkgbuild"
+_local() { [ -f "$LOCALPKG/$1/PKGBUILD" ]; }
+_commit_of() {  # _commit_of <pkgname> -> the _commit= its PKGBUILD builds
+  sed -n "s/^_commit=['\"]\{0,1\}\([0-9a-f]\{7,40\}\).*/\1/p" "$LOCALPKG/$1/PKGBUILD" | head -1
+}
+# The bare clone makepkg keeps for a git source, named by the part of its
+# source= entry before "::". makepkg clones it --mirror, so its HEAD is
+# upstream's default branch as of the last fetch.
+_mirror_of() {  # _mirror_of <pkgname> -> path, or nothing
+  local n
+  n=$(sed -n 's/^source=([^A-Za-z0-9_]*\([A-Za-z0-9_.+-]*\)::git+.*/\1/p' "$LOCALPKG/$1/PKGBUILD" | head -1)
+  [ -z "$n" ] || printf '%s\n' "$AURDIR/$1/$n"
+}
+
 MODE=install
 case "${1:-}" in
   --outdated) MODE=outdated ;;
@@ -84,17 +114,27 @@ if [ "$MODE" = outdated ]; then
       # the commit packages/aur records, not from whatever the packager last
       # pushed. What can be out of date is the PIN -- so print the two commands
       # that move it, because a pin nobody can advance gets deleted instead.
-      [ ! -d "$d" ] || timeout 20 git -C "$d" fetch -q origin 2>/dev/null || true
-      ahead=$(git -C "$d" rev-list --count "$pin..origin/master" 2>/dev/null || true)
+      #
+      # A packages/pkgbuild one has no AUR repository to ask; its pin is an
+      # upstream commit, so the same question goes to upstream's default
+      # branch, in the clone makepkg made of it.
+      ref=origin/master; what=PKGBUILD; where="the AUR"
+      fix="put that commit in packages/aur"
+      if _local "$name"; then
+        d=$(_mirror_of "$name"); ref=HEAD; what=upstream; where=upstream
+        fix="put that commit in packages/aur AND as _commit in packages/pkgbuild/$name/PKGBUILD"
+      fi
+      [ -z "$d" ] || [ ! -d "$d" ] || timeout 20 git -C "$d" fetch -q origin 2>/dev/null || true
+      ahead=""; [ -z "$d" ] || ahead=$(git -C "$d" rev-list --count "$pin..$ref" 2>/dev/null || true)
       if [ -z "$ahead" ]; then
         printf '   ·    %s %s, pinned at %s — no clone under %s to compare against\n' \
           "$name" "$have" "${pin:0:7}" "$AURDIR"
       elif [ "$ahead" = 0 ]; then
-        printf '   ok   %s %s, pinned at %s — the AUR has nothing newer\n' "$name" "$have" "${pin:0:7}"
+        printf '   ok   %s %s, pinned at %s — %s has nothing newer\n' "$name" "$have" "${pin:0:7}" "$where"
       else
-        printf '   ·    %s %s, pinned at %s — %s newer PKGBUILD commit(s)\n' "$name" "$have" "${pin:0:7}" "$ahead"
-        printf '        review: git -C %s log --oneline %s..origin/master\n' "$d" "${pin:0:7}"
-        printf '        then put that commit in packages/aur and: ergon aur --rebuild %s\n' "$name"
+        printf '   ·    %s %s, pinned at %s — %s newer %s commit(s)\n' "$name" "$have" "${pin:0:7}" "$ahead" "$what"
+        printf '        review: git -C %s log --oneline %s..%s\n' "$d" "${pin:0:7}" "$ref"
+        printf '        then %s and: ergon aur --rebuild %s\n' "$fix" "$name"
       fi
     elif [ -z "${avail[$name]:-}" ]; then
       printf '   !!   %s %s is not in the AUR — nothing will ever update it\n' "$name" "$have"
@@ -133,26 +173,41 @@ if [ "$MODE" = install ] && pacman -Qi -- "$pkg" >/dev/null 2>&1; then
   printf '   ·   %s is installed, but not from the commit packages/aur pins; rebuilding\n' "$pkg"
 fi
 
-[ -d "$AURDIR/$pkg" ] || git clone -q -- "https://aur.archlinux.org/$pkg.git" "$AURDIR/$pkg"
-cd "$AURDIR/$pkg"
-if [ -n "$pin" ]; then
-  # Fetch first: a pin is moved FORWARD by hand, so the commit named in
-  # packages/aur is routinely one this clone has never seen. A checkout that
-  # cannot find it is fatal -- building the previous pin instead would be
-  # building a PKGBUILD nobody asked for while reporting success.
-  timeout 60 git fetch -q origin 2>/dev/null || true
-  git checkout -q --detach "$pin" 2>/dev/null \
-    || { echo "ergon-aur: packages/aur pins $pkg at $pin, which is not in its AUR history" >&2; exit 4; }
+if _local "$pkg"; then
+  want=$(_commit_of "$pkg")
+  if [ -z "$pin" ] || [ "$want" != "$pin" ]; then
+    echo "ergon-aur: packages/aur pins $pkg at '${pin:-nothing}', but packages/pkgbuild/$pkg/PKGBUILD builds '${want:-no _commit}' -- they must name the same full commit" >&2
+    exit 4
+  fi
+  # Copied, not built in place: makepkg writes src/, pkg/, the package and a
+  # clone of the source into the directory it runs in, and that must not be
+  # the checkout. Over whatever the last build left, so the clone is reused.
+  mkdir -p "$AURDIR/$pkg"
+  cp -f -- "$LOCALPKG/$pkg"/* "$AURDIR/$pkg/"
+  cd "$AURDIR/$pkg"
+  printf '   building %s from %s/PKGBUILD, upstream %s\n' "$pkg" "$LOCALPKG/$pkg" "${pin:0:12}"
 else
-  # A package that WAS pinned and no longer is leaves this clone on a detached
-  # HEAD, where `git pull --ff-only` fails quietly and every later build is
-  # still the old pin.
-  git symbolic-ref -q HEAD >/dev/null || git checkout -q master 2>/dev/null || true
-  git pull -q --ff-only 2>/dev/null || true
+  [ -d "$AURDIR/$pkg" ] || git clone -q -- "https://aur.archlinux.org/$pkg.git" "$AURDIR/$pkg"
+  cd "$AURDIR/$pkg"
+  if [ -n "$pin" ]; then
+    # Fetch first: a pin is moved FORWARD by hand, so the commit named in
+    # packages/aur is routinely one this clone has never seen. A checkout that
+    # cannot find it is fatal -- building the previous pin instead would be
+    # building a PKGBUILD nobody asked for while reporting success.
+    timeout 60 git fetch -q origin 2>/dev/null || true
+    git checkout -q --detach "$pin" 2>/dev/null \
+      || { echo "ergon-aur: packages/aur pins $pkg at $pin, which is not in its AUR history" >&2; exit 4; }
+  else
+    # A package that WAS pinned and no longer is leaves this clone on a detached
+    # HEAD, where `git pull --ff-only` fails quietly and every later build is
+    # still the old pin.
+    git symbolic-ref -q HEAD >/dev/null || git checkout -q master 2>/dev/null || true
+    git pull -q --ff-only 2>/dev/null || true
+  fi
+  # Not paused for review: provisioning is non-interactive. Saying "review before
+  # continuing" and then continuing was a promise this never kept.
+  printf '   building %s from %s/PKGBUILD (read it there)\n' "$pkg" "$AURDIR/$pkg"
 fi
-# Not paused for review: provisioning is non-interactive. Saying "review before
-# continuing" and then continuing was a promise this never kept.
-printf '   building %s from %s/PKGBUILD (read it there)\n' "$pkg" "$AURDIR/$pkg"
 
 # An AUR package that REPLACES a repo one cannot be installed by
 # `makepkg -si --noconfirm` alone. pacman prompts
@@ -193,7 +248,14 @@ makepkg -si --noconfirm --force
 # What this build actually came from. `ergon doctor` compares it against the pin
 # in packages/aur, which is how moving a pin forward becomes a visible "rebuild
 # this" rather than an edit to a file nobody re-reads.
+#
+# For a packages/pkgbuild package that is the _commit its source line names:
+# makepkg checks out exactly that commit or fails above, and it was refused
+# unless it equals the pin. NOT `git rev-parse HEAD` here, which in a directory
+# that is no repository answers for whatever repository encloses it -- a $HOME
+# kept in git would have been recorded as the build.
+if _local "$pkg"; then from=$(_commit_of "$pkg"); else from=$(git rev-parse HEAD); fi
 mkdir -p "$(dirname "$BUILT")"
 { awk -v p="$pkg" '$1 != p' "$BUILT" 2>/dev/null || true
-  printf '%s %s\n' "$pkg" "$(git rev-parse HEAD)"; } | LC_ALL=C sort > "$BUILT.new"
+  printf '%s %s\n' "$pkg" "$from"; } | LC_ALL=C sort > "$BUILT.new"
 mv -- "$BUILT.new" "$BUILT"
