@@ -1800,8 +1800,13 @@ done
 _kc=$(fq "GetConfig fcitx://config/addon/keyboard")
 for k in "Hint Trigger" "One Time Hint Trigger"; do grep -qF "'$k': <''>" <<<"$_kc" || _miss="$_miss '$k'"; done
 grep -qF "'EnableLongPress': <'False'>" <<<"$_kc" || _miss="$_miss EnableLongPress"
+# Captured, not piped into grep -q: the call this expects FAILS (a disabled
+# addon has no config to give), gdbus exits 1, and under pipefail that failed
+# the whole pipeline with the match in hand -- reported, on 2026-10-13, as all
+# three addons "loaded" while none was.
 for a in clipboard quickphrase unicode; do
-  fq "GetConfig fcitx://config/addon/$a" | grep -q 'Failed to get addon config' || _miss="$_miss $a(loaded)"
+  _ac=$(fq "GetConfig fcitx://config/addon/$a")
+  grep -qF 'Failed to get addon config' <<<"$_ac" || _miss="$_miss $a(loaded)"
 done
 [ -z "$_miss" ] && ok "  claiming none of fcitx5's default chords, and its own long press off" \
                 || bad "  fcitx5 still claims:$_miss"
@@ -1814,11 +1819,11 @@ grep -qF "('Default', 'keyboard-us', 'us'" <<<"$(fq 'FullInputMethodGroupInfo De
 
 # The feature, driven for real. wtype types through the virtual-keyboard
 # PROTOCOL -- a Wayland client asking the compositor -- not through /dev/uinput,
-# and Hyprland hands a virtual keyboard's keys to an input method's grab exactly
-# as it does a physical one's, binds first (InputManager::onKeyboardKey). foot
-# is the client: it speaks text-input-v3, the protocol GTK3/4 and Firefox use
-# on Wayland too, and it writes whatever it is given to a pty, where cat keeps
-# it. A held key that came back as itself, or as the letter followed by the
+# and Hyprland routes a virtual keyboard's keys into an input method's grab the
+# same way it routes a physical one's (InputManager::onKeyboardKey). foot is the
+# client: it speaks text-input-v3, the protocol GTK3/4 and Firefox use on
+# Wayland too, and it writes whatever it is given to a pty, where cat keeps it.
+# A held key that came back as itself, or as the letter followed by the
 # accent, would be in that file.
 #
 # Only the commit is proved, not the popup's pixels: this VM has no GPU, so
@@ -1826,13 +1831,20 @@ grep -qF "('Default', 'keyboard-us', 'us'" <<<"$(fq 'FullInputMethodGroupInfo De
 # proves the picker was open -- omacento commits a variant from no other state.
 # Qt (fcitx5-qt over D-Bus) and Chromium (text-input-v1 or -v3, with the flag)
 # take other routes into fcitx5 and are NOT exercised here.
+#
+# Nor is "a compositor bind still fires while fcitx5 holds the keyboard", and
+# not for want of trying: Hyprland 0.56.2 matches binds by KEYCODE through the
+# configured layout (KeybindManager::onKeyEvent, m_xkbTranslationState unless
+# resolve_binds_by_sym), and wtype's keycodes belong to a private keymap it
+# uploads itself, so which bind -- if any -- a wtype chord lands on is a
+# coincidence of keycode numbering. Measured: SUPER + Tab sent that way left
+# the workspace alone. That binds are matched before an input method is handed
+# the key is read off the same function, not shown here.
 pacman -S --needed --noconfirm wtype >/dev/null 2>&1 || bad "could not install wtype (harness)"
 ACC_OUT=/tmp/ergon-accent.out
 rm -f "$ACC_OUT"
 printf '#!/bin/sh\nexec cat > %s\n' "$ACC_OUT" > /tmp/ergon-accent-cat.sh
 chmod 755 /tmp/ergon-accent-cat.sh
-# Workspace 3 then 1, so that SUPER + TAB ("Last workspace") has somewhere to go.
-hq "dispatch 'hl.dsp.focus({workspace = 3})'" >/dev/null 2>&1
 hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1
 hq "dispatch 'hl.dsp.exec_cmd(\"foot --app-id=ergon-accent /tmp/ergon-accent-cat.sh\")'" >/dev/null 2>&1
 APID=""
@@ -1840,15 +1852,6 @@ for _ in $(seq 1 20); do
   APID=$(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-accent") | .pid' 2>/dev/null | head -1)
   [ -n "$APID" ] && break; sleep 0.5
 done
-acc_focus() {  # focus the probe and wait for fcitx5 to hold an input context for it
-  hq "dispatch 'hl.dsp.exec_raw(\"focuswindow class:ergon-accent\")'" >/dev/null 2>&1
-  for _ in $(seq 1 20); do
-    _ic=$(fq DebugInfo | grep -o 'IC \[[0-9a-f]*\] program:[^ ]* frontend:[^ ]* cap:[0-9a-f]* focus:1' | head -1)
-    [ -n "$_ic" ] && return 0
-    sleep 0.5
-  done
-  return 1
-}
 if [ -z "$APID" ]; then
   bad "foot, started by the compositor, never mapped a window: nothing to type into"
 else
@@ -1859,7 +1862,15 @@ else
   else
     bad "a client the compositor starts has: $(grep -E '^(XMODIFIERS|QT_IM_MODULE|GTK_IM_MODULE)=' <<<"$_cenv" | tr '\n' ' ')"
   fi
-  if ! acc_focus; then
+  # Focused, and fcitx5 holding an input context for it: foot enabled
+  # text-input-v3, the compositor relayed it, fcitx5 took the keyboard grab.
+  hq "dispatch 'hl.dsp.exec_raw(\"focuswindow class:ergon-accent\")'" >/dev/null 2>&1
+  _ic=""
+  for _ in $(seq 1 20); do
+    _ic=$(fq DebugInfo | grep -o 'IC \[[0-9a-f]*\] program:[^ ]* frontend:[^ ]* cap:[0-9a-f]* focus:1' | head -1)
+    [ -n "$_ic" ] && break; sleep 0.5
+  done
+  if [ -z "$_ic" ]; then
     bad "fcitx5 never held a focused input context for foot: the text-input relay did not reach it"
     fq DebugInfo | head -c 600 | sed 's/^/     /'; echo
   else
@@ -1867,9 +1878,11 @@ else
     # A tap of e, then holds of e n ? ? u E, each picked by a digit after the
     # key is released -- the popup outlives the release. Expected, in order:
     # e (the tap, handed back as the key), é ñ ¿ ¡ ü, and É from the uppercase
-    # half omacento derives. wtype's own keymap puts every keysym on a level
-    # of its own, so ? and E arrive without a Shift.
-    _w=$(usr "wtype -k e -s 200 -P e -s 900 -p e -s 300 -k 1 -s 200 -P n -s 900 -p n -s 300 -k 1 -s 200 -P question -s 900 -p question -s 300 -k 1 -s 200 -P question -s 900 -p question -s 300 -k 2 -s 200 -P u -s 900 -p u -s 300 -k 2 -s 200 -P E -s 900 -p E -s 300 -k 1 -s 200 -k Return" 2>&1)
+    # half omacento derives. E is named U0045 because wtype looks key names
+    # up case-INSENSITIVELY and "E" comes back as e (measured: é, not É).
+    # wtype's own keymap puts each keysym on a level of its own, so ? and E
+    # arrive without a Shift.
+    _w=$(usr "wtype -k e -s 200 -P e -s 900 -p e -s 300 -k 1 -s 200 -P n -s 900 -p n -s 300 -k 1 -s 200 -P question -s 900 -p question -s 300 -k 1 -s 200 -P question -s 900 -p question -s 300 -k 2 -s 200 -P u -s 900 -p u -s 300 -k 2 -s 200 -P U0045 -s 900 -p U0045 -s 300 -k 1 -s 200 -k Return" 2>&1)
     sleep 1
     _got=$(cat "$ACC_OUT" 2>/dev/null)
     if [ "$_got" = "eéñ¿¡üÉ" ]; then
@@ -1879,20 +1892,9 @@ else
       printf '%s' "$_got" | od -c | head -4 | sed 's/^/     /'
       [ -z "$_w" ] || echo "     wtype said: $_w"
     fi
-    # A compositor bind still fires while fcitx5 holds the keyboard grab: the
-    # compositor matches its binds before an input method is handed the key.
-    if acc_focus; then
-      usr "wtype -M logo -k Tab -m logo" >/dev/null 2>&1; sleep 0.6
-      _ws=$(hq activeworkspace -j 2>/dev/null | jq -r '.id // empty')
-      [ "$_ws" = 3 ] && ok "SUPER + TAB still switches workspace with fcitx5 holding the keyboard" \
-                     || bad "SUPER + TAB with fcitx5 holding the keyboard left the workspace at '$_ws', want 3"
-    else
-      bad "could not put foot back in focus to try SUPER + TAB"
-    fi
   fi
   kill "$APID" 2>/dev/null
 fi
-hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1
 
 # Only dump the log when something actually failed. An unconditional dump makes
 # a passing run look like a failing one and buries the next real failure.
