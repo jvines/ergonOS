@@ -227,8 +227,10 @@ which link is missing, in this order:
   keybind, not from the launcher); a Qt app needs `QT_IM_MODULE=fcitx`, which
   only a session started through Hyprland's own environment has. Password
   fields are left out on purpose.
-- **focus:1, and still nothing.** The window's class is in `Blocklist` in
-  `fcitx5/conf/omacento.conf`, or `Enabled` is off there.
+- **focus:1, and still nothing.** `ergon accents` says whether it is off, or
+  this window's class is skipped, and whether the running fcitx5 holds what
+  it says (`fcitx5 -d --replace` if not). `ergon accents unskip` in the
+  window itself, or `ergon accents on`.
 
 The popup is fcitx5's to draw, positioned by the compositor; the accent is
 committed whether or not you could see it, so a digit after a hold types the

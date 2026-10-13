@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# ergon:summary=Press-and-hold accents: show, turn off or on, skip an app, set the hold
+# ergon:group=hardware
+# ergon:args=[on | off | skip [CLASS...] | unskip [CLASS...] | hold MS]
+#
+# Hold a letter, get a numbered popup of its accents (ERGON-79). On in every
+# application by default, terminals included -- the operator's call -- and this
+# is the supported way to change that without touching a file the repository
+# owns:
+#
+#   ergon accents               what is in effect, and whether fcitx5 has it
+#   ergon accents off | on      the whole feature
+#   ergon accents skip [CLASS]  never in that window class; a held key there
+#                               repeats, as it would with no accents at all
+#   ergon accents unskip [CLASS]
+#   ergon accents hold MS       how long a hold is, 100 to 1000 ms
+#
+# skip and unskip with no CLASS mean the FOCUSED window, which when typed into
+# a terminal is that terminal -- the case this was asked for: vim's held u, n
+# and e repeating again. The class is Hyprland's initialClass, falling back to
+# class, which on Wayland is the name fcitx5 matches (it reports a foot
+# window's app id as its `program`; measured, 2026-10-13). A Qt app that talks
+# to fcitx5 over D-Bus reports its program name instead, which need not match.
+#
+# The choices live in ~/.config/ergon/accents; lib/accents.sh writes that file
+# and renders fcitx5's from it, and is the only thing that does either. A
+# change is reported "applied" only when the running fcitx5 has re-read it and
+# reports exactly these settings back.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# shellcheck source=../lib/accents.sh
+. "$ERGON/lib/accents.sh"
+
+die() { printf 'ergon accents: %s\n' "$*" >&2; exit 2; }
+
+# The focused window's class, for skip/unskip with nothing named.
+focused_class() {
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  hyprctl activewindow -j 2>/dev/null \
+    | jq -r '(.initialClass // "") as $i | if $i != "" then $i else (.class // "") end' 2>/dev/null \
+    || true
+}
+
+status() {
+  local on hold skips cfg live
+  on=$(ergon_accents_enabled); hold=$(ergon_accents_hold)
+  skips=$(ergon_accents_skips | paste -sd' ' -)
+  printf '   accents   %s, after a %s ms hold\n' "$on" "$hold"
+  printf '   skipped   %s\n' "${skips:-nowhere: every application}"
+  if ! pgrep -u "$(id -u)" -x fcitx5 >/dev/null 2>&1; then
+    live="not running; it reads these when it starts"
+  elif cfg=$(_ergon_accents_call GetConfig fcitx://config/addon/omacento) \
+       && ergon_accents_live_matches "$cfg"; then
+    live="running, with exactly these"
+  else
+    live="running with OTHER settings -- any change here applies them"
+  fi
+  printf '   fcitx5    %s\n' "$live"
+}
+
+# Render, then apply, then say which of the three things happened. Exit 0 for
+# applied or saved-for-later, 1 when the running fcitx5 did not take it, 3
+# when the file fcitx5 reads is someone else's and was left alone.
+commit() {  # <what changed, for the message>
+  local rc=0
+  ergon_accents_render || rc=$?
+  [ "$rc" = 0 ] || exit "$rc"
+  [ "$ERGON_ACCENTS_DID" != replaced-link ] \
+    || printf '   (%s was a link into the checkout; it is a rendered file now)\n' "$(ergon_accents_live)"
+  rc=0; ergon_accents_apply || rc=$?
+  case "$rc" in
+    0) printf '%s -- applied\n' "$1" ;;
+    1) printf '%s -- saved; fcitx5 is not running, so it takes effect when it starts\n' "$1" ;;
+    *) printf '%s -- saved, but the running fcitx5 did not take it; restart it: fcitx5 -d --replace\n' "$1" >&2
+       exit 1 ;;
+  esac
+}
+
+case "${1:-}" in
+  ''|status)
+    status ;;
+  on|off)
+    ergon_accents_set enabled "$1"
+    commit "accents $1" ;;
+  skip|unskip)
+    verb=$1; shift
+    if [ "$#" -eq 0 ]; then
+      c=$(focused_class)
+      [ -n "$c" ] || die "$verb what? Name a window class, or run this with that window focused (Hyprland reports no focused window)"
+      set -- "$c"
+    fi
+    # Every name checked before any is written: a bad second one must not
+    # leave the first half-applied.
+    for c in "$@"; do
+      ergon_accents_valid_class "$c" \
+        || die "'$c' is not a window class fcitx5 can match (no quotes, backslashes, control characters, or blanks at either end)"
+    done
+    cls=("$@")
+    have=" $(ergon_accents_skips | paste -sd' ' -) "
+    for c in "${cls[@]}"; do
+      if [ "$verb" = skip ]; then
+        ergon_accents_skip_add "$c"
+      else
+        case "$have" in *" $c "*) ;; *) printf '   %s was not skipped\n' "$c" ;; esac
+        ergon_accents_skip_del "$c"
+      fi
+    done
+    if [ "$verb" = skip ]; then
+      commit "skipping ${cls[*]}: a held key repeats there"
+    else
+      commit "accents back in ${cls[*]}"
+    fi ;;
+  hold)
+    ms=${2:-}
+    ergon_accents_valid_hold "$ms" || die "hold takes milliseconds from 100 to 1000, not '${ms}'"
+    ergon_accents_set hold "$((10#$ms))"
+    commit "a $((10#$ms)) ms hold opens the popup" ;;
+  *)
+    die "unknown: $1 (ergon accents [on | off | skip [CLASS...] | unskip [CLASS...] | hold MS])" ;;
+esac

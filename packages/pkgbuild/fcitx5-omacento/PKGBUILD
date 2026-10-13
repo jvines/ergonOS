@@ -16,8 +16,9 @@
 # widget (QML, theme hooks, an omarchy-fcitx5.service drop-in that points
 # FCITX_ADDON_DIRS at ~/.local) and none of it applies here: installed by
 # pacman, the .so sits in /usr/lib/fcitx5, which is the only directory fcitx5
-# searches for addons anyway, and its settings come from fcitx5/conf in this
-# repo (install.sh links them).
+# searches for addons anyway, and its settings are fcitx5/omacento.conf in
+# this repo plus the person's `ergon accents` choices, rendered by
+# lib/accents.sh.
 pkgname=fcitx5-omacento
 _commit=265f1ecc4326def8d64961d76ba4bdc8fa0eef2a  # v1.1.1, 2026-09-30
 pkgver=1.1.1

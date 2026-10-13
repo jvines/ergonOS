@@ -240,7 +240,8 @@ done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
 # into the GENERATED hyprlock.conf, and every render ate it.
 #
 # lib/user-config.sh and lib/ergon_arxiv.py are the exceptions, and both may
-# only CREATE a file that is absent -- never write one that exists. Four of these surfaces
+# only CREATE a file that is absent -- never write one that exists (and
+# lib/accents.sh, below, for one file of its own). Four of these surfaces
 # (waybar, mako, fuzzel, foot) do not start at all if their include target is
 # missing, so something has to create them; keeping that in one auditable file
 # is the point of this rule.
@@ -258,7 +259,14 @@ while IFS= read -r f; do
   # ergon_arxiv.py has done this for arxiv.toml since long before the rule --
   # the first version of this check named user-config.sh as the ONLY exception,
   # which was a claim the repo already contradicted.
-  case "$rel" in lib/user-config.sh|lib/ergon_arxiv.py) continue ;; esac
+  #
+  # lib/accents.sh is the third, and the one that REWRITES a file there
+  # (ERGON-79). ~/.config/ergon/accents is not an include stub a renderer
+  # depends on; it is the settings file of `ergon accents`, written only when
+  # the person runs that command, one key at a time, in place, with every
+  # other line -- their comments and hand edits -- kept. That is the same
+  # promise in a different shape, so it lives in lib/ and is named here.
+  case "$rel" in lib/user-config.sh|lib/ergon_arxiv.py|lib/accents.sh) continue ;; esac
   while IFS=: read -r ln _; do
     [ -n "$ln" ] || continue
     report "$rel" "$ln" \

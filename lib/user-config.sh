@@ -15,7 +15,9 @@
 # whole mechanism exists to stop the renderer from doing. bin/ergon-lint
 # enforces that nothing outside lib/ writes under this directory; this file and
 # lib/ergon_arxiv.py (which has created arxiv.toml the same way since long
-# before the rule) are the two it allows. Keep the writes here.
+# before the rule) are the two it allows to create one. Keep the writes here.
+# (lib/accents.sh writes ~/.config/ergon/accents, the settings file of `ergon
+# accents`, and only when that command is run -- see its header.)
 #
 # What happens when one of these is MISSING, measured against the real parsers
 # rather than assumed (Arch containers, 2026-09-23):

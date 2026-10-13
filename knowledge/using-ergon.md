@@ -94,10 +94,22 @@ It is an input method doing it — fcitx5 with the omacento addon — so it work
 wherever an application takes text from one: GTK and Qt apps, Firefox,
 terminals, and Chromium or Electron apps started with `--enable-wayland-ime`
 (Discord from its keybind, VS Code and other apps on Arch's electron through
-`~/.config/electron-flags.conf`). It never changes your keyboard layout. The
-table, the hold time and a per-window opt-out (`Blocklist`, by window class)
-are in `fcitx5/conf/omacento.conf`; when it does not happen at all,
-`ergon explain troubleshooting`.
+`~/.config/electron-flags.conf`). It never changes your keyboard layout.
+
+It is on everywhere, terminals included, until you say otherwise:
+
+    ergon accents                 what is in effect, and whether fcitx5 has it
+    ergon accents skip            not in the focused window: a held key repeats
+    ergon accents unskip          ...and back
+    ergon accents off | on        the whole thing
+    ergon accents hold 400        a longer hold before the popup (100 to 1000 ms)
+
+`skip` with nothing after it means the window you are typing in, so running
+it in a terminal gives that terminal its key repeat back — vim's held `u`,
+`n` and `e`. It takes window classes too (`ergon accents skip foot`). Your
+choices are kept in `~/.config/ergon/accents` and survive every sync; the
+table itself is the repo's, in `fcitx5/omacento.conf`, so a change to it still
+reaches you. When it does not happen at all, `ergon explain troubleshooting`.
 
 ## Your own settings vs. the generated ones
 
@@ -109,7 +121,9 @@ each surface that has somewhere to put one, created once if it does not
 already exist and never touched again by anything shipped here —
 `lib/user-config.sh` and `lib/ergon_arxiv.py` are the only two writers, both
 create-if-absent, and `ergon-lint` holds everything else in the repo to that
-rule. That is where a hand-written waybar rule, your own Hyprland binds, or an
+rule. (One file there is a command's own: `~/.config/ergon/accents`, which
+`ergon accents` changes when you run it, a key at a time, keeping the rest.)
+That is where a hand-written waybar rule, your own Hyprland binds, or an
 enrolled fingerprint block belongs. Not every surface has this escape hatch —
 the exact set, and what breaks on each one if its file goes missing, is
 `ergon explain desktop-config`.

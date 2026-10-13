@@ -360,6 +360,90 @@ FQ
   su t -c "XDG_RUNTIME_DIR=/tmp/rt dbus-run-session -- bash /tmp/fcitx5q.sh" 2>&1 \
     | sed -n "s/^FINDING //p"
 
+  # ERGON-79, `ergon accents`: lib/accents.sh renders the omacento.conf fcitx5
+  # reads from the repo defaults (fcitx5/omacento.conf) and the person choices,
+  # and makes the running fcitx5 re-read it. Only the addon can read its own
+  # settings back, so it is built here from packages/pkgbuild by makepkg, the
+  # way a machine builds it (--nocheck: the VM suite runs its check()).
+  #
+  # Three things are proved against a real fcitx5, every run:
+  #   * a render reaches it: off, 400 ms and two skipped classes, then back;
+  #   * `fcitx5-remote -r` does NOT reload an addon (it is ReloadConfig, the
+  #     global config only) and ReloadAddonConfig does -- the lib cites this;
+  #   * the read-back that decides "applied" is not vacuous: a render with
+  #     Enabled under [Table], where it is read as a table row and the
+  #     setting stays at its default, reads back as NOT applied.
+  echo "@@accents"
+  pacman -S --noconfirm --needed base-devel git >/dev/null 2>&1
+  install -d -o t -g t /tmp/omacento-build
+  install -o t -g t -m 644 /tmp/repo/packages/pkgbuild/fcitx5-omacento/PKGBUILD /tmp/omacento-build/
+  if ! su t -c "cd /tmp/omacento-build && makepkg --nocheck --noconfirm >/tmp/omacento-build.log 2>&1"; then
+    echo "omacento did not build from packages/pkgbuild:"; tail -5 /tmp/omacento-build.log
+  elif ! pacman -U --noconfirm /tmp/omacento-build/fcitx5-omacento-[0-9]*.pkg.tar.zst >/dev/null 2>&1; then
+    echo "the fcitx5-omacento makepkg built would not install"
+  else
+    cat > /tmp/accentsq.sh <<"AQ"
+export ERGON=/tmp/repo HOME=/home/t XDG_CONFIG_HOME=/home/t/.config
+. /tmp/repo/lib/accents.sh
+F() { echo "FINDING $*"; }
+g() { gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller \
+        --method org.fcitx.Fcitx.Controller1."$@" 2>&1; }
+om() { g GetConfig fcitx://config/addon/omacento | tr "\047" "~"; }
+# What install.sh does before any fcitx5 exists: render the defaults.
+ergon_accents_render || F "the render of the defaults failed"
+[ "$(head -1 "$(ergon_accents_live)")" = "$ERGON_ACCENTS_MARK" ] || F "the render does not open with its own marker"
+# The fcitx5 the @@fcitx5 check started by activation belonged to another
+# bus; this one is started the way autostart.lua starts it, and waited for by
+# NAME, since a call before it owns one would start a second by activation.
+pkill -x fcitx5; sleep 0.5
+fcitx5 -d --replace >/dev/null 2>&1
+for _ in $(seq 1 40); do
+  case "$(gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+            --method org.freedesktop.DBus.NameHasOwner org.fcitx.Fcitx5 2>/dev/null)" in
+    *true*) break ;;
+  esac
+  sleep 0.25
+done
+ergon_accents_apply; rc=$?
+[ "$rc" = 0 ] || F "the defaults: apply returned $rc, not applied"
+ergon_accents_set enabled off; ergon_accents_set hold 400
+ergon_accents_skip_add foot; ergon_accents_skip_add org.wezfurlong.wezterm
+ergon_accents_render; ergon_accents_apply; rc=$?
+[ "$rc" = 0 ] || F "off, 400 ms, two skips: apply returned $rc, not applied"
+cfg=$(om)
+case "$cfg" in *"~Enabled~: <~False~>"*) ;; *) F "off did not reach omacento as Enabled False" ;; esac
+case "$cfg" in *"~HoldTime~: <~400~>"*) ;; *) F "400 ms did not reach omacento as HoldTime 400" ;; esac
+case "$cfg" in *"~Blocklist~: <{~0~: <~foot~>, ~1~: <~org.wezfurlong.wezterm~>}>"*) ;;
+  *) F "the skips did not reach omacento as Blocklist foot, org.wezfurlong.wezterm" ;; esac
+case "$cfg" in *"~5~: <~n ñ ń~>"*) ;; *) F "the repo table did not survive the render" ;; esac
+ergon_accents_skip_del foot; ergon_accents_set enabled on
+ergon_accents_render; ergon_accents_apply; rc=$?
+[ "$rc" = 0 ] || F "unskip foot, on: apply returned $rc, not applied"
+cfg=$(om)
+case "$cfg" in *"~Enabled~: <~True~>"*) ;; *) F "on did not reach omacento as Enabled True" ;; esac
+case "$cfg" in *"~Blocklist~: <{~0~: <~org.wezfurlong.wezterm~>}>"*) ;; *) F "unskip did not take foot off the Blocklist" ;; esac
+ergon_accents_set hold 777; ergon_accents_render
+fcitx5-remote -r >/dev/null 2>&1; sleep 0.5
+case "$(om)" in *"~HoldTime~: <~777~>"*) F "fcitx5-remote -r DID reload omacento; lib/accents.sh says it does not" ;; esac
+ergon_accents_apply || F "ReloadAddonConfig did not bring HoldTime 777 in"
+ergon_accents_set enabled off; ergon_accents_render
+live=$(ergon_accents_live)
+awk "/^Enabled=/ { e = \$0; next } { print } /^\[Table\]/ { print e }" "$live" > /tmp/malformed \
+  && cat /tmp/malformed > "$live"
+g ReloadAddonConfig omacento >/dev/null
+ergon_accents_live_matches "$(g GetConfig fcitx://config/addon/omacento)" \
+  && F "a render with Enabled under [Table] reads back as applied: the read-back cannot see a malformed render"
+pkill -x fcitx5
+echo "ACCENTS_REACHED_END"
+AQ
+    # Silence is "no findings" to the reader below, so a script that never ran
+    # -- or died on its second line -- would pass. It has to reach its end.
+    aout=$(su t -c "XDG_RUNTIME_DIR=/tmp/rt dbus-run-session -- bash /tmp/accentsq.sh" 2>&1) || true
+    sed -n "s/^FINDING //p" <<<"$aout"
+    grep -qx ACCENTS_REACHED_END <<<"$aout" \
+      || echo "the accents round trip never reached its end: $(tail -3 <<<"$aout" | tr "\n" " ")"
+  fi
+
   echo "@@end"
 ' 2>&1) || true
 
@@ -371,7 +455,7 @@ grep -qx '@@end' <<<"$out" || {
   printf '   FAIL the container script stopped before the end; last lines:\n'
   printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
 for tool in hyprland hyprland-degraded hyprland-nvidia-env fuzzel foot wezterm waybar-css swayosd-css gtk-css \
-  lazygit-config lazydocker-config mako hypridle hyprlock newsboat uwsm-env fcitx5; do
+  lazygit-config lazydocker-config mako hypridle hyprlock newsboat uwsm-env fcitx5 accents; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"

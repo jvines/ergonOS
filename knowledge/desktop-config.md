@@ -167,8 +167,10 @@ fcitx5's files (`fcitx5/`, not themed) get the same treatment by a different
 route, because fcitx5 has no parse error to give: a key it does not know, or
 one that landed under the wrong `[section]`, is dropped and the default kept.
 So the same script loads them into a real fcitx5 and asks it over D-Bus what
-it ended up holding. `fcitx5/conf/omacento.conf` is read back that way in the
-VM suite instead, where its addon is actually built.
+it ended up holding. The accent picker's file is rendered rather than linked
+(`ergon accents`), and the same script builds the addon from
+`packages/pkgbuild` to read that render back through it: off, a longer hold,
+skipped classes, and back again.
 
 `wezterm` is an AUR git build present on no machine this repo tests on, so the
 container installs Arch `[extra]`'s released wezterm instead — an OLDER one
@@ -228,7 +230,11 @@ validate selectors — `#worksaces` parses perfectly.
 
 Each surface that *can* include another file includes one from there, and
 nothing in this repo ever writes those files — `ergon-lint` enforces that, and
-`lib/user-config.sh` is the only code allowed to create one.
+`lib/user-config.sh` is the only code allowed to create one. The directory
+also holds `accents`, which is not an include but the settings file of
+`ergon accents`: `lib/accents.sh` changes it when that command runs, and
+renders `~/.config/fcitx5/conf/omacento.conf` from it and the repo's
+`fcitx5/omacento.conf`.
 
 | your file | included by | if it is missing |
 |---|---|---|

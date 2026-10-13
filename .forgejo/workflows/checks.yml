@@ -119,6 +119,11 @@ jobs:
       - name: AUR builds the reviewed commit, and says so honestly
         run: cd "$CI_DIR" && ./bin/test-aur.sh
 
+      # ERGON-79. The command half, stubbed and in seconds; the real fcitx5
+      # reading the render back is test-hypr-config.sh's @@accents, below.
+      - name: ergon accents keeps the person's choices and claims nothing it did not do
+        run: cd "$CI_DIR" && ./bin/test-accents.sh
+
       # ERGON-51: this runner reaches the socket directly (DOCKER_GROUP=1,
       # same as every existing machine), so nothing else in this file ever
       # exercises the sudo or refusal branches lib/docker-cmd.sh added for a
@@ -211,7 +216,9 @@ jobs:
       # packages, so it costs minutes where the rest of this job costs seconds,
       # and it can fail on an Arch mirror rather than on the commit. That is
       # the price of checking the desktop at all without a VM; move it to
-      # vm.yml if the gate stops feeling fast.
+      # vm.yml if the gate stops feeling fast. Since ERGON-79 it also builds
+      # the omacento addon from packages/pkgbuild (base-devel, and a clone from
+      # GitHub) to read `ergon accents`' render back through it.
       - name: Desktop configs parse, by their own parsers
         run: cd "$CI_DIR" && ./bin/test-hypr-config.sh
 

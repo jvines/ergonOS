@@ -449,13 +449,27 @@ grep -qxF '   would link  .config/uwsm/env-hyprland.d/ergon-keyring -> uwsm/env-
 # rather than linked (fcitx5 renames a new one over it on every exit), and
 # Electron apps get --enable-wayland-ime through electron-flags.conf.
 cp -r "$REPO/fcitx5" "$T/inst/"
+mkdir -p "$T/inst/lib" && cp "$REPO/lib/accents.sh" "$T/inst/lib/"
 out=$("$T/inst/install.sh" --check 2>/dev/null)
 _missing=""
-for _f in config conf/omacento.conf conf/keyboard.conf conf/xcb.conf conf/classicui.conf; do
+for _f in config conf/keyboard.conf conf/xcb.conf conf/classicui.conf; do
   grep -qxF "   would link  .config/fcitx5/$_f -> fcitx5/$_f" <<<"$out" || _missing="$_missing $_f"
 done
 [ -z "$_missing" ] && ok "install.sh links fcitx5's config and every conf/*.conf into ~/.config/fcitx5" \
   || bad "install.sh --check does not plan the fcitx5 link(s):$_missing"
+# ERGON-79, `ergon accents`: the accent picker's settings are rendered, never
+# linked -- a link made turning the popup off an edit to the checkout.
+grep -qxF '   would render  .config/fcitx5/conf/omacento.conf from fcitx5/omacento.conf and ~/.config/ergon/accents' <<<"$out" \
+  && ! grep -q 'would link  .config/fcitx5/conf/omacento.conf' <<<"$out" \
+  && ok "  and RENDERS omacento.conf rather than linking it" \
+  || bad "install.sh --check does not plan omacento.conf as a render: $(grep omacento <<<"$out")"
+mkdir -p "$HOME/.config/fcitx5/conf"
+ln -s "$T/inst/fcitx5/omacento.conf" "$HOME/.config/fcitx5/conf/omacento.conf"
+_lout=$("$T/inst/install.sh" --check 2>/dev/null)
+grep -qxF '   would render  .config/fcitx5/conf/omacento.conf over the link into the checkout' <<<"$_lout" \
+  && ok "  and says it will replace the link an earlier install made" \
+  || bad "install.sh --check does not say it replaces the old omacento.conf link: $(grep omacento <<<"$_lout")"
+rm -rf "$HOME/.config/fcitx5"
 grep -qxF '   would seed  .config/fcitx5/profile from fcitx5/profile' <<<"$out" \
   && ! grep -q 'would link  .config/fcitx5/profile' <<<"$out" \
   && ok "  and seeds the profile instead of linking it" \

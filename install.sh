@@ -280,6 +280,47 @@ else
     [ -e "$_f" ] || continue
     link "fcitx5/conf/${_f##*/}" ".config/fcitx5/conf/${_f##*/}"
   done
+  # Except the accent picker's, which is RENDERED (lib/accents.sh): the repo's
+  # defaults in fcitx5/omacento.conf plus what `ergon accents` was told, kept
+  # in ~/.config/ergon/accents. A link made turning the popup off an edit to
+  # the checkout. Rendered here on every sync, so a change to the table still
+  # arrives and a person's choices are never undone by one -- and the link an
+  # earlier install made is replaced the first time, with a line saying so.
+  # shellcheck source=lib/accents.sh
+  if [ ! -f "$ERGON/lib/accents.sh" ] || [ ! -f "$ERGON/fcitx5/omacento.conf" ]; then
+    warn "missing in the repo: lib/accents.sh or fcitx5/omacento.conf -- accents not rendered"
+  elif ! . "$ERGON/lib/accents.sh"; then
+    warn "lib/accents.sh did not load -- accents not rendered"
+  elif [ "$CHECK" = 1 ]; then
+    _acc=$(mktemp)
+    ergon_accents_compose > "$_acc" 2>/dev/null || true
+    if [ -L "$(ergon_accents_live)" ]; then
+      printf '   would render  .config/fcitx5/conf/omacento.conf over the link into the checkout\n'
+    elif ! cmp -s "$_acc" "$(ergon_accents_live)"; then
+      printf '   would render  .config/fcitx5/conf/omacento.conf from fcitx5/omacento.conf and ~/.config/ergon/accents\n'
+    fi
+    rm -f "$_acc"
+  else
+    _rc=0; ergon_accents_render || _rc=$?
+    case "$_rc/${ERGON_ACCENTS_DID:-}" in
+      0/replaced-link) ok ".config/fcitx5/conf/omacento.conf is rendered now, not a link: accent choices go in ~/.config/ergon/accents (ergon accents)" ;;
+      0/written)       ok ".config/fcitx5/conf/omacento.conf rendered from fcitx5/omacento.conf and ~/.config/ergon/accents" ;;
+      0/unchanged)     ;;
+      3/*)             warn ".config/fcitx5/conf/omacento.conf is not a render of ours; left alone. Move it aside, then: ergon accents" ;;
+      *)               warn "could not render .config/fcitx5/conf/omacento.conf (above)" ;;
+    esac
+    # A running fcitx5 keeps what it read until it is told to read again; with
+    # none running (a fresh install, a sync over ssh) there is nothing to tell,
+    # and asking would START one by D-Bus activation, outside the session.
+    if [ "$_rc" = 0 ] && [ "${ERGON_ACCENTS_DID:-}" != unchanged ]; then
+      _rc=0; ergon_accents_apply || _rc=$?
+      case "$_rc" in
+        0) ok "  and the running fcitx5 has re-read it" ;;
+        1) ;;
+        *) warn "  the running fcitx5 did not take it; restart it: fcitx5 -d --replace" ;;
+      esac
+    fi
+  fi
   # The profile is the exception: fcitx5 rewrites it on every exit and every
   # half-hour autosave (Instance::save), by renaming a new file over it. A link
   # there is a real file after the first logout, and install.sh then warns
