@@ -142,7 +142,21 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   _rc=0; ergon_pin_apply "$PIN" || _rc=$?
   [ "$_rc" -lt 2 ] || { warn "could not point pacman at $ERGON_PIN_LIST"; exit 1; }
   _sync=-Syu; ! ergon_pin_owed || _sync=-Syyu
-  sudo "${ERGON_TXN[@]}" pacman "$_sync" --needed --noconfirm "${PKGS[@]}"
+  # Everything is downloaded before anything is installed, and only the
+  # download is retried. archive.archlinux.org is the one server
+  # (lib/archive-pin.sh), and pacman stops asking a server after a few stalled
+  # files and fails the whole transaction. On 2026-10-13 two VM runs in a row
+  # lost provisioning that way, 3 minutes into a download that the same VM
+  # finished in 23 s that morning. A failed download keeps what did arrive in
+  # the cache, so a retry fetches only the rest. The install runs once, from
+  # the cache, against the databases the download just synced.
+  _try=1
+  until sudo pacman "${_sync}w" --needed --noconfirm "${PKGS[@]}"; do
+    [ "$_try" -lt 4 ] || { warn "the packages would not download after $_try tries — nothing was installed; provision again"; exit 1; }
+    warn "the download failed (try $_try of 4) — trying again in 30 s; what arrived is kept"
+    _try=$((_try + 1)); sleep 30
+  done
+  sudo "${ERGON_TXN[@]}" pacman -Su --needed --noconfirm "${PKGS[@]}"
   [ "$_sync" = -Syu ] || sudo bash -c "$(ergon_pin_synced_cmd)"
   ok "${#PKGS[@]} packages"
 else
