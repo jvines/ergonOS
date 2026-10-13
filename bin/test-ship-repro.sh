@@ -25,6 +25,7 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS + 1)); printf '   ok   %s\n' "$*"; }
 bad() { FAIL=$((FAIL + 1)); printf '   FAIL %s\n' "$*"; }
 check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi; }
+not()  { ! "$@"; }
 
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
@@ -111,6 +112,36 @@ P=$(mkproj ship-ok)
 RC=$?
 check "a successful run exits 0" test "$RC" -eq 0
 check "  and fetches too" grep -q "results/" "$T/log/rsync"
+check "  and no command line sent to the far side mentions curl (ERGON-77)" \
+  not grep -q curl "$T/log/ssh"
+
+# A far side WITHOUT uv. The host running this may have a real uv somewhere on
+# PATH, so the remote command runs on a PATH built from symlinks: the stubs
+# minus uv, plus the handful of system tools ship and the stubs call.
+NOUV="$T/nouv"; mkdir -p "$NOUV"
+for s in ssh rsync curl; do ln -s "$T/stub/$s" "$NOUV/$s"; done
+for c in bash basename dirname readlink mkdir sed grep cp rm cat chmod; do
+  ln -s "$(PATH="${PATH#"$T/stub:"}" command -v "$c")" "$NOUV/$c"
+done
+reset_logs
+P=$(mkproj ship-nouv)
+( cd "$P" && PATH="$NOUV" "$SHIP" kira -- 'exit 0' ) >"$T/out" 2>&1
+RC=$?
+check "a far side without uv fails (got $RC) instead of installing one" test "$RC" -eq 127
+check "  saying uv is what is missing, and where" \
+  bash -c "grep -q 'uv is not installed on kira' '$T/out' && grep -q 'docs.astral.sh/uv' '$T/out'"
+check "  and never runs curl" not grep -q "curl called" "$T/out"
+check "  and never gets as far as running the command" not grep -q "running" "$T/out"
+
+# uv's own installer puts it in ~/.local/bin, which a non-interactive ssh
+# shell often lacks on PATH. That uv must still be found.
+reset_logs
+mkdir -p "$HOME/.local/bin" && cp "$T/stub/uv" "$HOME/.local/bin/uv"
+P=$(mkproj ship-localbin)
+( cd "$P" && PATH="$NOUV" "$SHIP" kira -- 'exit 0' ) >"$T/out" 2>&1
+RC=$?
+check "a uv only in ~/.local/bin, off PATH, is still found (got $RC)" test "$RC" -eq 0
+rm -f "$HOME/.local/bin/uv"
 
 echo "== ergon ship: container backend"
 reset_logs

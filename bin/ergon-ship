@@ -90,10 +90,20 @@ case "$BACKEND" in
   ssh)
     send
     printf '   ·   reproducing the environment there\n'
+    # uv is the one thing the far side must already have (the header says so).
+    # A missing uv used to be met with astral.sh's installer piped into sh: an
+    # unread remote script run on someone else's machine, the pattern Omarchy
+    # is still criticised for (ERGON-77). Now it says what is missing.
+    # ~/.local/bin is tried by hand because uv's own installer puts it there,
+    # and a non-interactive ssh shell often lacks that directory on PATH.
     # shellcheck disable=SC2086
-    ssh $SSH_OPTS "$TARGET" "cd $REMOTE_DIR && (command -v uv >/dev/null || \
-      curl -LsSf https://astral.sh/uv/install.sh | sh) && ~/.local/bin/uv sync --frozen --quiet \
-      || uv sync --frozen --quiet"
+    ssh $SSH_OPTS "$TARGET" "cd $REMOTE_DIR || exit; \
+      UV=\$(command -v uv || command -v ~/.local/bin/uv); \
+      if [ -z \"\$UV\" ]; then \
+        echo 'ergon-ship: uv is not installed on $TARGET. Install it there (its package manager, or https://docs.astral.sh/uv/) and ship again.' >&2; \
+        exit 127; \
+      fi; \
+      \"\$UV\" sync --frozen --quiet"
     printf '   ·   running\n'
     # RC=0; ssh ... || RC=$? -- not `RC=$?` on the line after, which under
     # set -euo pipefail never runs at all. errexit fires on the ssh command's
