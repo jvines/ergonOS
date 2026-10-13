@@ -197,8 +197,25 @@ else
 fi
 # Flip it for the ERGON-22 re-provision below, which is about to happen anyway
 # -- proving the other half (1 DOES add the group) without a fourth full
+# --- ERGON-39: what every install used to get, and is now asked for -------
+# Nothing answered the Tailscale question here (no terminal, no
+# ERGON_TAILSCALE), so the scaffolded host.env says 0 and no tailscaled runs.
+# Discord and Moonlight are bundles, and this run chose only notebooks.
+_he="$H/ergonOS/hosts/$(hostname -s)/host.env"
+if grep -qx 'TAILSCALE=0' "$_he" && ! systemctl is-enabled --quiet tailscaled 2>/dev/null; then
+  ok "TAILSCALE=0 (unanswered): tailscaled is not enabled"
+else
+  bad "tailscaled is enabled, or host.env does not say TAILSCALE=0: $(grep TAILSCALE "$_he" 2>&1), $(systemctl is-enabled tailscaled 2>&1)"
+fi
+if ! pacman -Q discord >/dev/null 2>&1 && ! pacman -Q moonlight-qt >/dev/null 2>&1; then
+  ok "neither discord nor moonlight-qt came with the base"
+else
+  bad "the base installed $(pacman -Qq discord moonlight-qt 2>/dev/null | tr '\n' ' ')-- they are bundles now"
+fi
 # provisioning run just for this knob.
 sed -i 's/^DOCKER_GROUP=0/DOCKER_GROUP=1/' "$H/ergonOS/hosts/$(hostname -s)/host.env"
+# And TAILSCALE, for the same re-provision: the other half, 1 enables it.
+sed -i 's/^TAILSCALE=0$/TAILSCALE=1/' "$_he"
 
 # --- ERGON-22: a system change reaching a machine already installed --------
 # provision-arch.sh is the only thing that writes system-level state, and
@@ -349,6 +366,11 @@ then
     ok "DOCKER_GROUP=1: the re-provision above added $U to the docker group"
   else
     bad "DOCKER_GROUP=1 but $U is not in the docker group after re-provisioning"
+  fi
+  if systemctl is-enabled --quiet tailscaled 2>/dev/null; then
+    ok "TAILSCALE=1: the re-provision above enabled tailscaled"
+  else
+    bad "TAILSCALE=1 but tailscaled is not enabled after re-provisioning: $(systemctl is-enabled tailscaled 2>&1)"
   fi
 else
   bad "could not stage a commit ahead of the guest's repo (harness)"
@@ -1037,6 +1059,29 @@ grep -qxF -- --enable-wayland-ime "$H/.config/electron-flags.conf" 2>/dev/null \
   && ok "install.sh gave Electron apps --enable-wayland-ime (electron-flags.conf)" \
   || bad "~/.config/electron-flags.conf has no --enable-wayland-ime line"
 
+# ERGON-39: Discord's flag moved from SUPER+D to its launcher entry, linked
+# with or without the bundle (TryExec hides it until Discord is installed).
+_dd="$H/.local/share/applications/discord.desktop"
+[ -L "$_dd" ] && grep -q '^Exec=/usr/bin/discord --enable-wayland-ime ' "$_dd" \
+  && ok "install.sh linked Discord's launcher entry, with --enable-wayland-ime" \
+  || bad "no discord.desktop link carrying the flag: $(ls -l "$_dd" 2>&1 | cut -c1-120)"
+# ERGON-39: screenshots. No SCREENSHOT_DIR (host.env above has none), so no
+# session file and the default folder; then a real install.sh with one set
+# must write it for the session. Removed again before the compositor starts,
+# so every screenshot check below sees the default.
+_ssf="$H/.config/environment.d/50-ergon-screenshots.conf"
+[ ! -e "$_ssf" ] && ok "no SCREENSHOT_DIR: no session override, screenshots go to ~/Pictures/Screenshots" \
+  || bad "install.sh wrote $_ssf with SCREENSHOT_DIR unset: $(cat "$_ssf")"
+printf 'SCREENSHOT_DIR=%s/screenshots-outgoing\n' "$H" >> "$H/ergonOS/hosts/$(hostname -s)/host.env"
+if su - "$U" -c "cd ~/ergonOS && ERGON=\$HOME/ergonOS ERGON_BACKGROUNDS_ONLY=$BG_PROBE ./install.sh" >/tmp/install-ss.log 2>&1 \
+   && grep -qx "ERGON_SCREENSHOT_DIR=$H/screenshots-outgoing" "$_ssf" 2>/dev/null; then
+  ok "SCREENSHOT_DIR=$H/screenshots-outgoing reaches the session (environment.d)"
+else
+  bad "SCREENSHOT_DIR was not handed to the session: $(cat "$_ssf" 2>&1 | tail -1)"
+  tail -5 /tmp/install-ss.log | sed 's/^/     /'
+fi
+sed -i '/^SCREENSHOT_DIR=/d' "$H/ergonOS/hosts/$(hostname -s)/host.env"; rm -f "$_ssf"
+
 # The user must be in `video` to open /dev/dri/card*, which are root:video 0660.
 # Without it Hyprland dies with "CBackend::create() failed!" and nothing else --
 # no permission error, no mention of DRM. provision-arch.sh does this on a real
@@ -1394,6 +1439,11 @@ fi
 # nothing class ergon explain desktop-config warns about, and the one failure
 # this block exists to catch.
 _binds=$(hq binds -j 2>/dev/null)
+# ERGON-39: the base binds no key to an app it does not install. By
+# description, the field every bind here carries and hyprctl reports for Lua.
+_appbinds=$(printf '%s' "$_binds" | jq -r '.[] | (.description // "") | select(test("discord|moonlight"; "i"))' 2>/dev/null)
+[ -z "$_appbinds" ] && ok "no live bind launches Discord or Moonlight (bundles now, ERGON-39)" \
+  || bad "the base still binds: $_appbinds"
 _e_bind=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Session menu" and ((.key // "") | ascii_downcase) == "e")] | .[0] // empty' 2>/dev/null)
 _pwr_bind=$(printf '%s' "$_binds" | jq -c '[.[] | select((.description // "") == "Session menu" and ((.key // "") | ascii_downcase) == "xf86poweroff")] | .[0] // empty' 2>/dev/null)
 
@@ -1797,6 +1847,27 @@ else
         fi
       done
       set_layout "${KB0:-us}" "${KV0:-}" || bad "could not restore the layout to '${KB0:-us}'"
+
+      # ERGON-39: where a screenshot lands, pressed rather than read off the
+      # config. SUPER+SHIFT+CTRL+S is the whole-screen one, so no slurp waits
+      # for a drag. With no SCREENSHOT_DIR it must be ~/Pictures/Screenshots,
+      # and never the old ~/screenshots-outgoing. evdev: LEFTMETA 125,
+      # LEFTSHIFT 42, LEFTCTRL 29, S 31.
+      _sdir="$H/Pictures/Screenshots"
+      _n0=$(find "$_sdir" -name '*.png' 2>/dev/null | wc -l)
+      usr "YDOTOOL_SOCKET=$YSOCK ydotool key 125:1 42:1 29:1 31:1 31:0 29:0 42:0 125:0" >/tmp/ydotool.out 2>&1
+      for _ in $(seq 1 10); do
+        [ "$(find "$_sdir" -name '*.png' 2>/dev/null | wc -l)" -gt "$_n0" ] && break
+        sleep 1
+      done
+      if [ "$(find "$_sdir" -name '*.png' 2>/dev/null | wc -l)" -gt "$_n0" ] && [ ! -d "$H/screenshots-outgoing" ]; then
+        ok "SUPER+SHIFT+CTRL+S writes the screenshot to ~/Pictures/Screenshots"
+      elif grep -q "createImageFromDmaBufs failed" /run/user/1000/hypr/*/hyprland.log 2>/dev/null; then
+        note "screenshot key not checked: grim cannot capture without a dmabuf path in this VM"
+      else
+        bad "SUPER+SHIFT+CTRL+S left nothing in $_sdir$( [ -d "$H/screenshots-outgoing" ] && echo ', and wrote to the old ~/screenshots-outgoing')"
+        echo "     ydotool said: $(cat /tmp/ydotool.out 2>/dev/null)"
+      fi
     fi
 
     # A module whose on-click is a shell command. ergon-launch-tui is the one every

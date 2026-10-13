@@ -182,6 +182,29 @@ PYEOF
     echo "its marker line: an NVIDIA machine would get none of its session env."
     printf "%s\n" "$nout" | tail -4; }
 
+  # ERGON-39. Apps that left the base for a bundle took their keys with them,
+  # and their bundle NOTE (ergon bundle info) gives the Lua line to bind one in
+  # hosts/<host>/hyprland.lua. People paste those, so they are run through the
+  # same parser: every NOTE line after "hyprland.lua: ", split on " and ",
+  # appended to binds.lua, then a marker that only shows when execution got
+  # past them. Anything else the verify says is the pasted line failing.
+  echo "@@bundle-notes"
+  cp -r /home/t/.config/hypr /tmp/notes
+  for m in /tmp/repo/packages/bundles/*/meta; do
+    sed -n "s/^NOTE=\".*hyprland\.lua: \(.*\)\.\"\$/\1/p" "$m" | sed "s/) and hl\./)\nhl./g"
+  done > /tmp/notes/snips.lua
+  if [ ! -s /tmp/notes/snips.lua ]; then
+    echo "no bundle NOTE carries a hyprland.lua line any more; this check reads nothing"
+  else
+    { cat /tmp/notes/snips.lua; printf "hl.config({ general = { ergon_notes_reached = 1 } })\n"; } >> /tmp/notes/common/binds.lua
+    chown -R t:t /tmp/notes
+    sout=$(run "Hyprland --verify-config -c /tmp/notes/hyprland.lua") || true
+    printf "%s\n" "$sout" | grep -q "ergon_notes_reached" \
+      || { echo "execution did not get past the bundle NOTE lines:"; cat /tmp/notes/snips.lua; }
+    printf "%s\n" "$sout" | sed -n "/======== Config parsing result:/,\$p" \
+      | grep -vE "^=+ Config parsing result:|^[[:space:]]*$|^config ok$|ergon_notes_reached" || true
+  fi
+
   echo "@@fuzzel"
   run "fuzzel --config /tmp/repo/fuzzel/fuzzel.ini --check-config" || true
 
@@ -454,7 +477,7 @@ rc=0
 grep -qx '@@end' <<<"$out" || {
   printf '   FAIL the container script stopped before the end; last lines:\n'
   printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
-for tool in hyprland hyprland-degraded hyprland-nvidia-env fuzzel foot wezterm waybar-css swayosd-css gtk-css \
+for tool in hyprland hyprland-degraded hyprland-nvidia-env bundle-notes fuzzel foot wezterm waybar-css swayosd-css gtk-css \
   lazygit-config lazydocker-config mako hypridle hyprlock newsboat uwsm-env fcitx5 accents; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then

@@ -261,6 +261,29 @@ else
   # Theia answers ds9's XPA names, on loopback only (ERGON-73; the file says
   # why both variables are needed).
   link environment.d/60-theia.conf .config/environment.d/60-theia.conf
+  # ERGON-39: where screenshots go, from SCREENSHOT_DIR in host.env; empty is
+  # ~/Pictures/Screenshots (hypr/common/screenshot.lua). Written, not linked:
+  # the value is this host's. hypr/common/screenshot.lua puts it into a shell
+  # pipeline unquoted, so only a plain absolute path is passed on.
+  _sd="$HOME/.config/environment.d/50-ergon-screenshots.conf"
+  if [ -z "${SCREENSHOT_DIR:-}" ]; then
+    if [ -e "$_sd" ]; then
+      if [ "$CHECK" = 1 ]; then printf '   would remove  .config/environment.d/50-ergon-screenshots.conf\n'
+      else rm -f "$_sd"; ok "screenshots: ~/Pictures/Screenshots again (SCREENSHOT_DIR is empty)"; fi
+    fi
+  elif [[ ! $SCREENSHOT_DIR =~ ^/[A-Za-z0-9._/-]+$ ]]; then
+    warn "SCREENSHOT_DIR=$SCREENSHOT_DIR in $HOSTENV ignored: an absolute path of letters, digits, . _ - and / only"
+  else
+    _want=$(printf '# Written by install.sh from SCREENSHOT_DIR in hosts/%s/host.env (ERGON-39).\nERGON_SCREENSHOT_DIR=%s\n' "$HOST" "$SCREENSHOT_DIR")
+    if [ "$(cat "$_sd" 2>/dev/null)" != "$_want" ]; then
+      if [ "$CHECK" = 1 ]; then printf '   would write  .config/environment.d/50-ergon-screenshots.conf (%s)\n' "$SCREENSHOT_DIR"
+      else
+        mkdir -p "$(dirname "$_sd")"
+        printf '%s\n' "$_want" > "$_sd"
+        ok "screenshots: $SCREENSHOT_DIR, from the next login"
+      fi
+    fi
+  fi
   # ERGON-64: what makes Electron apps keep their key in the keyring rather than
   # in plaintext. uwsm's own env, because environment.d drops the empty value it
   # needs (the file says why). A drop-in uwsm reads after env-hyprland, and not
@@ -343,7 +366,7 @@ else
   # electronNN-flags.conf exists, which then wins; read off electron42's
   # launcher, 2026-10-13). A line added, not a link: that file is where people
   # put their own flags. Discord bundles its own Chromium and reads no such
-  # file; its flag is in hypr/common/binds.lua.
+  # file; its flag is in its launcher entry, linked just below.
   _ef="$HOME/.config/electron-flags.conf"
   if ! grep -qxF -- --enable-wayland-ime "$_ef" 2>/dev/null; then
     if [ "$CHECK" = 1 ]; then
@@ -356,6 +379,10 @@ else
       ok ".config/electron-flags.conf: --enable-wayland-ime (Electron apps reach the input method)"
     fi
   fi
+  # Discord's entry with the same flag (applications/discord.desktop says why).
+  # Linked whether or not the discord bundle is installed: TryExec hides it
+  # until it is, so adding the bundle later needs no second sync.
+  link applications/discord.desktop .local/share/applications/discord.desktop
 
   if [ "$CHECK" != 1 ]; then
     # ERGON-72: `su -`/`sudo -u` (provisioning, the VM harness) open no

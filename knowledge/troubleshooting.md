@@ -224,7 +224,7 @@ which link is missing, in this order:
 - **Loaded, but this window is not focus:1.** The application is not talking
   to an input method. A Chromium or Electron app needs
   `--enable-wayland-ime` on its command line (Discord gets it from its
-  keybind, not from the launcher); a Qt app needs `QT_IM_MODULE=fcitx`, which
+  launcher entry, `~/.local/share/applications/discord.desktop`); a Qt app needs `QT_IM_MODULE=fcitx`, which
   only a session started through Hyprland's own environment has. Password
   fields are left out on purpose.
 - **focus:1, and still nothing.** `ergon accents` says whether it is off, or

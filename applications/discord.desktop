@@ -1,0 +1,21 @@
+# Discord's own entry (discord 1:1.0.161) with --enable-wayland-ime added, so it
+# reaches the input method and press-and-hold accents work in it (ERGON-79).
+# On the command line because nothing else reaches it: /usr/bin/discord execs
+# the self-updating client in ~/.config/discord with "$@" and reads no flags
+# file. This was SUPER+D's job until ERGON-39 moved Discord into a bundle and
+# the key out of the base; an entry also covers the launcher and discord://
+# links, which the key never did. TryExec hides it where Discord is not
+# installed. Linked to ~/.local/share/applications by install.sh, where a file
+# with the package's name shadows the package's.
+[Desktop Entry]
+Name=Discord
+StartupWMClass=discord
+Comment=All-in-one voice and text chat for gamers that's free, secure, and works on both your desktop and phone.
+GenericName=Internet Messenger
+TryExec=/usr/bin/discord
+Exec=/usr/bin/discord --enable-wayland-ime --url -- %u
+Icon=discord
+Type=Application
+Categories=Network;InstantMessaging;
+MimeType=x-scheme-handler/discord;
+Path=/usr/bin

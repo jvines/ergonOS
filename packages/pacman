@@ -87,7 +87,7 @@ xdg-desktop-portal-hyprland
 xdg-desktop-portal-gtk      # the file chooser every GTK app opens
 xdg-user-dirs
 qt5-wayland
-qt6-wayland                 # moonlight-qt is Qt6
+qt6-wayland                 # native Wayland for Qt6 apps (Qt5's is above)
 
 # --- login -----------------------------------------------------------------
 greetd
@@ -234,8 +234,6 @@ foot                # NOT the daily terminal -- wezterm is, for its tmux -CC
                     # open a terminal to fix it. 1 MB, official repo, bound
                     # to SUPER+SHIFT+ALT+RETURN and otherwise never used.
 firefox
-discord
-moonlight-qt        # game/desktop streaming
 zathura             # PDF; vim keys, opens papers in a tenth of a second
 zathura-pdf-mupdf
 imv                 # images

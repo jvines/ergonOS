@@ -572,7 +572,11 @@ say "services"
 # avahi-daemon (ERGON-40) is here and NOT socket-activated like cups below: it
 # has to be listening for the 5353 traffic the firewall now admits, whether or
 # not anyone has ever opened a print dialog.
-for u in NetworkManager docker tailscaled bluetooth fwupd power-profiles-daemon avahi-daemon; do
+#
+# tailscaled is not in this list any more: whether it runs is TAILSCALE in
+# hosts/<host>/host.env (ERGON-39), applied in "tailscale" below, once that
+# file exists to be read.
+for u in NetworkManager docker bluetooth fwupd power-profiles-daemon avahi-daemon; do
   if systemctl list-unit-files "$u.service" >/dev/null 2>&1; then
     sudo systemctl enable --now "$u" >/dev/null 2>&1 && ok "$u" || skip "$u (not installed)"
   fi
@@ -869,6 +873,17 @@ else
   mkdir -p "$ERGON/hosts/$HOST"
   sed -e 's/^GRAPHICAL=0/GRAPHICAL=1/' -e 's/^PROFILE=server/PROFILE=laptop/' \
       "$ERGON/hosts/_template/host.env" > "$ERGON/hosts/$HOST/host.env"
+  # The one machine question asked here, while the file is new (ERGON-39):
+  # whether to run tailscaled. ERGON_TAILSCALE=1 or 0 answers it unattended;
+  # with neither a terminal nor an answer it stays 0. Asked once, like the
+  # bundles below: later it is a line in host.env, not a prompt.
+  _ts=${ERGON_TAILSCALE:-}
+  if [ -z "$_ts" ] && [ -t 0 ]; then
+    printf '   Run Tailscale on this machine, to join a tailnet? [y/N] '
+    read -r _a
+    case "$_a" in [yY]|[yY][eE][sS]) _ts=1 ;; esac
+  fi
+  [ "$_ts" = 1 ] && sed -i 's/^TAILSCALE=0$/TAILSCALE=1/' "$ERGON/hosts/$HOST/host.env"
   # The keyboard layout the installer was told about. hypr/common/looknfeel.lua
   # used to hardcode kb_layout = "us", which silently gave every non-US user a
   # US graphical layout no matter what they answered at install -- and unlike a
@@ -925,6 +940,7 @@ say "docker group"
 # first stage that can ask, because the file did not necessarily exist until
 # the "per-host directory" stage just above scaffolded it.
 DOCKER_GROUP=0
+TAILSCALE=0     # read by "tailscale" below, from the same file
 HOSTENV="$ERGON/hosts/$HOST/host.env"
 # shellcheck disable=SC1090
 [ -f "$HOSTENV" ] && . "$HOSTENV"
@@ -945,9 +961,28 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+say "tailscale"
+# ERGON-39. tailscaled used to be enabled on every machine, in "services"
+# above, so every install ran a VPN daemon most of them will never log in to.
+# Per host now, read from host.env like DOCKER_GROUP and with the same rule:
+# only ever enabled here, never stopped. A reprovision that drops a machine
+# off its tailnet, or off the ssh session running this, is worse than a
+# daemon left running that `systemctl disable --now tailscaled` ends.
+if [ "${TAILSCALE:-0}" = 1 ]; then
+  sudo systemctl enable --now tailscaled >/dev/null 2>&1 \
+    && ok "tailscaled (TAILSCALE=1) -- join with: sudo tailscale up" \
+    || warn "tailscaled would not enable"
+elif systemctl is-enabled --quiet tailscaled 2>/dev/null; then
+  skip "tailscaled is enabled although TAILSCALE=0 -- left running; stop it with: sudo systemctl disable --now tailscaled"
+else
+  skip "TAILSCALE=0 -- no tailscaled (set TAILSCALE=1 in $HOSTENV to join a tailnet)"
+fi
+
+# ---------------------------------------------------------------------------
 say "bundles"
-# Optional package groups: inference, astronomy, ml, gpu, julia, latex,
-# notebooks. See packages/bundles/README.md.
+# Optional package groups, offered here rather than installed for everyone:
+# `ergon-bundle list` prints them all, apps like discord and moonlight among
+# them since ERGON-39. See packages/bundles/README.md.
 #
 # The choice is ASKED once and RECORDED in hosts/<host>/host.env, so
 # reprovisioning reproduces the machine and `ergon-bundle add` works the same way

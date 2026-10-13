@@ -225,15 +225,9 @@ bind("SUPER + SHIFT + code:49", "Send to scratchpad", hl.dsp.window.move({ works
 -- that is already open.
 bind("SUPER + B", "Browser",    launch .. "firefox")
 bind("SUPER + E", "Files",      launch .. term .. " yazi")
--- --enable-wayland-ime is how a Chromium app agrees to talk to an input method
--- on Wayland, and without one there are no press-and-hold accents in it
--- (ERGON-79). On the command line because nothing else reaches Discord:
--- /usr/bin/discord is a shell script that execs the self-updating client in
--- ~/.config/discord with "$@" and reads no flags file (discord 1:1.0.161,
--- 2026-10-13). Started from the launcher, by its .desktop entry, it gets no
--- flag -- whether its Chromium already does this by default was not measured.
-bind("SUPER + D", "Discord",    launch .. "discord --enable-wayland-ime")
-bind("SUPER + M", "Moonlight",  launch .. "moonlight")
+-- Discord and Moonlight had SUPER+D and SUPER+M here. They are bundles now
+-- (ERGON-39), so the base binds no key to an app it does not install; each
+-- bundle's NOTE (ergon bundle info) gives the line for hosts/<host>/hyprland.lua.
 bind("SUPER + N", "Notes",      launch .. term .. " emacs -nw")
 
 -- ---------------------------------------------------------------------------

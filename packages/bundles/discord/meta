@@ -1,0 +1,6 @@
+# SIZE_MB: discord 6.5 MiB installed (pacman -Si at 1:1.0.161-1), and 3.9 MiB
+# of downloads on top of packages/pacman. It fetches the rest of itself into
+# ~/.config/discord on first start, which no pacman figure includes.
+DESCRIPTION="Discord, chat"
+SIZE_MB=10
+NOTE="Out of the base since ERGON-39: a chat client is a choice, not part of the machine. Its launcher entry carries --enable-wayland-ime, so press-and-hold accents reach it. No key is bound and no workspace assigned. For either, in hosts/<host>/hyprland.lua: hl.bind('SUPER + D', hl.dsp.exec_cmd('uwsm-app -- discord --enable-wayland-ime'), { description = 'Discord' }) and hl.window_rule({ match = { class = '^(discord)' }, workspace = '9 silent' })."

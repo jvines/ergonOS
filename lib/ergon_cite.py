@@ -27,7 +27,27 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = "ergon-cite (https://github.com/jvines; mailto:jose.vines.l@gmail.com)"
+
+def _contact() -> str:
+    """The "; mailto:ADDRESS" end of a User-Agent, or "" with nobody to name.
+
+    The API terms ask for a way to reach whoever runs the tool. That was this
+    author's address, hard-coded, so every machine sent it (ERGON-39). Now it
+    is the user's own: ERGON_CONTACT_EMAIL, else git's user.email, else none,
+    which the API accepts and only costs the courtesy.
+    """
+    e = os.environ.get("ERGON_CONTACT_EMAIL", "").strip()
+    if not e:
+        import subprocess
+        try:
+            e = subprocess.run(["git", "config", "--get", "user.email"],
+                               capture_output=True, text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            e = ""
+    return f"; mailto:{e}" if re.fullmatch(r"[^@\s;()]+@[^@\s;()]+", e) else ""
+
+
+UA = f"ergon-cite (https://github.com/jvines/ergonOS{_contact()})"
 TIMEOUT = 25
 
 # Curated, and honest about being curated. There is no machine-readable "how do

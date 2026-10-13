@@ -24,6 +24,26 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+
+def _contact() -> str:
+    """The "; mailto:ADDRESS" end of a User-Agent, or "" with nobody to name.
+
+    The API terms ask for a way to reach whoever runs the tool. That was this
+    author's address, hard-coded, so every machine sent it (ERGON-39). Now it
+    is the user's own: ERGON_CONTACT_EMAIL, else git's user.email, else none,
+    which the API accepts and only costs the courtesy.
+    """
+    e = os.environ.get("ERGON_CONTACT_EMAIL", "").strip()
+    if not e:
+        import subprocess
+        try:
+            e = subprocess.run(["git", "config", "--get", "user.email"],
+                               capture_output=True, text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            e = ""
+    return f"; mailto:{e}" if re.fullmatch(r"[^@\s;()]+@[^@\s;()]+", e) else ""
+
+
 ATOM = "{http://www.w3.org/2005/Atom}"
 CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME",
                                    os.path.expanduser("~/.config")), "ergon", "arxiv.toml")
@@ -88,7 +108,7 @@ def fetch(categories, days, limit=200, ttl=3600):
         return ET.fromstring(open(cache, "rb").read())
 
     req = urllib.request.Request(url, headers={
-        "User-Agent": "ergon-arxiv/1.0 (+https://github.com/jvines; mailto:jose.vines.l@gmail.com)"})
+        "User-Agent": f"ergon-arxiv/1.0 (+https://github.com/jvines/ergonOS{_contact()})"})
     last = None
     for attempt in range(3):
         try:

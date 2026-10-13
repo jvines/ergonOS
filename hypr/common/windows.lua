@@ -69,10 +69,10 @@ win("^(com.moonlight_stream.Moonlight)$",   { immediate = true })
 -- ---------------------------------------------------------------------------
 -- The named apps
 --
--- Workspace assignments are deliberately few. 9 is the "away" workspace: chat
--- and anything else that is allowed to want attention but must never appear on
--- top of what you are reading.
-win("^(discord)$",       { workspace = "9 silent" })
+-- No workspace assignments. Discord used to open silently on 9, this author's
+-- "away" workspace, which is a habit and not a default: a stranger who adds the
+-- discord bundle should see the window they asked for (ERGON-39). The bundle's
+-- NOTE gives the rule for hosts/<host>/hyprland.lua.
 win("^(zathura)$",       { opacity = "1 1" })   -- never dim a paper you are reading
 win("^(firefox)$",       { opacity = "1 1" })
 

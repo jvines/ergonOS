@@ -63,7 +63,7 @@ truncate -s $IMG_SIZE /tmp/disk.img
 LOOP=\$(losetup --find --show --partscan /tmp/disk.img)
 echo \"   loop device: \$LOOP\"
 
-export CRYPTNAME=crypttest ARCH_BOOTSTRAP_TEST=1 HOSTNAME_NEW=testbox LUKS_PASSPHRASE=testpassphrase SWAP_GIB=1 HIBERNATE=0
+export CRYPTNAME=crypttest ARCH_BOOTSTRAP_TEST=1 HOSTNAME_NEW=testbox USERNAME=testuser LUKS_PASSPHRASE=testpassphrase SWAP_GIB=1 HIBERNATE=0
 # The chroot stage needs a tty for passwd; skip it here and assert on the disk
 # layout, which is the part that cannot be changed after November.
 # Delete the chroot invocation AND its heredoc body as one range. Replacing

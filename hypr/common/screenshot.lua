@@ -1,11 +1,13 @@
 -- Screenshots. Ported from the old hypr/screenshot.conf; the SHELL PIPELINE IS
 -- UNCHANGED, byte for byte, and must stay that way.
 --
--- The point of writing to ~/screenshots-outgoing rather than the usual place is
--- the systemd .path unit watching it (screenshot-sync.path): every capture is
--- mirrored to checo automatically, so anything running there can read it.
--- Changing the output directory, or switching to hyprshot or the XDPH
--- screenshot portal, silently bypasses that watcher.
+-- Captures go to ~/Pictures/Screenshots, or to SCREENSHOT_DIR from
+-- hosts/<host>/host.env, which install.sh hands to the session as
+-- ERGON_SCREENSHOT_DIR (ERGON-39). That knob exists for a host where something
+-- watches the folder: this author's machines mirror every capture to another
+-- box through a systemd .path unit on ~/screenshots-outgoing, which used to be
+-- every machine's directory. Switching to hyprshot or the XDPH screenshot
+-- portal would bypass such a watcher silently.
 --
 -- grim writes the file; wl-copy puts it on the clipboard in the same pipeline,
 -- because the sync script's clipboard step is a fallback for tools that do not
@@ -14,7 +16,10 @@
 --
 -- Needs: grim slurp wl-clipboard jq satty
 
-local shotdir = os.getenv("HOME") .. "/screenshots-outgoing"
+local shotdir = os.getenv("ERGON_SCREENSHOT_DIR")
+if shotdir == nil or shotdir == "" then
+  shotdir = os.getenv("HOME") .. "/Pictures/Screenshots"
+end
 local stamp   = "$(date +%Y%m%d-%H%M%S).png"
 
 local function shot(grab)
@@ -29,9 +34,8 @@ end
 -- `satty --man` (0.22.0): NOTHING here duplicates grim's write the way `shot`
 -- duplicates into wl-copy, because until the shot is actually saved there is
 -- nothing to duplicate. Pointed at the SAME shotdir and stamp as every other
--- bind here for exactly the reason the header above gives: the sync watcher
--- only knows to look there, and ERGON-39 is where that directory becomes
--- configurable, not this card.
+-- bind here for the reason the header gives: a watcher on that folder only
+-- knows to look there.
 local function annotate(grab)
   return "mkdir -p " .. shotdir .. " && grim " .. grab ..
          "- | satty -f - -o " .. shotdir .. "/" .. stamp

@@ -52,12 +52,10 @@ anything.
 
 ## Where things land
 
-- **Screenshots** go to `~/screenshots-outgoing` and the clipboard, in one
-  pipeline (`hypr/common/screenshot.lua`). That directory name is a leftover
-  of the author's own setup, where a separate script — not part of ergonOS —
-  watches it and mirrors captures elsewhere; a stock install ships no such
-  watcher, so the files simply accumulate there until ERGON-39 makes the
-  destination a real per-host setting.
+- **Screenshots** go to `~/Pictures/Screenshots` and the clipboard, in one
+  pipeline (`hypr/common/screenshot.lua`). To put them elsewhere, set
+  `SCREENSHOT_DIR` in `hosts/<host>/host.env` (a plain absolute path), run
+  `ergon sync`, and log in again.
 - **Recordings** go to `~/recordings` (`ergon record`, `$ERGON_RECORD_DIR` to
   move it).
 - **Figures** get their provenance stamped automatically by the shared Python
@@ -93,8 +91,8 @@ longer repeats.
 It is an input method doing it — fcitx5 with the omacento addon — so it works
 wherever an application takes text from one: GTK and Qt apps, Firefox,
 terminals, and Chromium or Electron apps started with `--enable-wayland-ime`
-(Discord from its keybind, VS Code and other apps on Arch's electron through
-`~/.config/electron-flags.conf`). It never changes your keyboard layout.
+(Discord through its launcher entry, VS Code and other apps on Arch's electron
+through `~/.config/electron-flags.conf`). It never changes your keyboard layout.
 
 It is on everywhere, terminals included, until you say otherwise:
 

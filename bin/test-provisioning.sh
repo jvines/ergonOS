@@ -485,5 +485,43 @@ out=$("$T/inst/install.sh" --check 2>/dev/null)
   || bad "install.sh --check would touch an existing profile or re-add the flag: $(grep 'fcitx5/profile\|electron-flags' <<<"$out")"
 rm -rf "$HOME/.config/fcitx5" "$HOME/.config/electron-flags.conf"
 
+# ERGON-39: Discord is a bundle now and SUPER+D is gone, so its input-method
+# flag rides on a launcher entry, linked whether or not Discord is installed
+# (TryExec hides it until it is).
+cp -r "$REPO/applications" "$T/inst/"
+out=$("$T/inst/install.sh" --check 2>/dev/null)
+grep -qxF '   would link  .local/share/applications/discord.desktop -> applications/discord.desktop' <<<"$out" \
+  && ok "install.sh links Discord's launcher entry, which carries --enable-wayland-ime" \
+  || bad "install.sh --check does not plan the discord.desktop link: $(grep -i discord <<<"$out")"
+
+# ERGON-39: the screenshot folder is host.env's SCREENSHOT_DIR, handed to the
+# session through environment.d. Empty writes nothing; a plain absolute path
+# is written; anything the unquoted pipeline in screenshot.lua could split or
+# expand is refused; and emptying it again removes what it wrote.
+_ssf="$HOME/.config/environment.d/50-ergon-screenshots.conf"
+out=$("$T/inst/install.sh" --check 2>/dev/null)
+! grep -q '50-ergon-screenshots' <<<"$out" \
+  && ok "no SCREENSHOT_DIR: nothing written, so screenshots go to ~/Pictures/Screenshots" \
+  || bad "install.sh plans a screenshot folder with SCREENSHOT_DIR unset: $(grep screenshots <<<"$out")"
+printf 'GRAPHICAL=1\nSCREENSHOT_DIR=/home/t/screenshots-outgoing\n' > "$T/inst/hosts/testhost/host.env"
+out=$("$T/inst/install.sh" --check 2>/dev/null)
+grep -qxF '   would write  .config/environment.d/50-ergon-screenshots.conf (/home/t/screenshots-outgoing)' <<<"$out" \
+  && ok "  SCREENSHOT_DIR=/home/t/screenshots-outgoing is planned for the session" \
+  || bad "  install.sh --check does not plan SCREENSHOT_DIR: $(grep screenshots <<<"$out")"
+# A real run needs the whole theme render, which this fixture does not have;
+# the VM suite runs install.sh for real and reads the file back.
+printf 'GRAPHICAL=1\nSCREENSHOT_DIR="/home/t/my shots"\n' > "$T/inst/hosts/testhost/host.env"
+_err=$("$T/inst/install.sh" --check 2>&1 >/dev/null)
+grep -q 'SCREENSHOT_DIR=/home/t/my shots in .* ignored' <<<"$_err" \
+  && ok "  a path with a space is refused, with a warning" \
+  || bad "  a path with a space was not refused: $_err"
+printf 'GRAPHICAL=1\n' > "$T/inst/hosts/testhost/host.env"
+mkdir -p "$(dirname "$_ssf")" && printf 'ERGON_SCREENSHOT_DIR=/home/t/old\n' > "$_ssf"
+out=$("$T/inst/install.sh" --check 2>/dev/null)
+grep -qxF '   would remove  .config/environment.d/50-ergon-screenshots.conf' <<<"$out" \
+  && ok "  and emptying it again removes the file, back to ~/Pictures/Screenshots" \
+  || bad "  emptying SCREENSHOT_DIR does not plan the removal: $(grep screenshots <<<"$out")"
+rm -f "$_ssf"
+
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

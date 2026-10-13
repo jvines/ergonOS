@@ -1,0 +1,6 @@
+# SIZE_MB: moonlight-qt 2.1 MiB installed (pacman -Si at 6.2.0-1), and 1.2 MiB
+# of downloads on top of packages/pacman, which already has Qt6 on Wayland,
+# ffmpeg and SDL2 for other reasons.
+DESCRIPTION="Moonlight, streams a desktop or game from a Sunshine or GameStream host"
+SIZE_MB=5
+NOTE="Out of the base since ERGON-39. hypr/common/windows.lua already holds the two rules it needs, which match nothing until it is installed: no idle lock while it is fullscreen, and tearing allowed so input latency stays low. No key is bound. For one, in hosts/<host>/hyprland.lua: hl.bind('SUPER + M', hl.dsp.exec_cmd('uwsm-app -- moonlight'), { description = 'Moonlight' })."

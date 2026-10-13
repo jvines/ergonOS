@@ -67,7 +67,10 @@ _detect_keymap() {
   printf 'us\n'
 }
 KEYMAP="${KEYMAP:-$(_detect_keymap)}"
-USERNAME="${USERNAME:-jayvains}"
+# Prompted if empty, like the hostname. It used to default to this author's
+# name without asking, so every install made /home/jayvains (ERGON-39).
+# Unattended runs pass it: bin/test-arch-vm.sh does.
+USERNAME="${USERNAME:-}"
 
 # The wifi regulatory domain. Not a preference: transmit power and which
 # channels exist are legally determined by where the machine is, and getting it
@@ -152,6 +155,16 @@ if [ -z "$HOSTNAME" ]; then
   read -r HOSTNAME
 fi
 [ -n "$HOSTNAME" ] || { echo "hostname required" >&2; exit 1; }
+
+if [ -z "$USERNAME" ]; then
+  printf 'your username: '
+  read -r USERNAME
+fi
+# What useradd accepts by default, checked here rather than after the disk is
+# gone: a bad name fails useradd at the end of the install, with the system
+# already pacstrapped and no user to log in as.
+[[ $USERNAME =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+  || { echo "username required: lowercase letters, digits, _ and -, starting with a letter or _" >&2; exit 1; }
 
 # Locale, timezone and keymap, the way every installer asks. The defaults are
 # this author's, and a distro that silently gives a stranger America/Santiago

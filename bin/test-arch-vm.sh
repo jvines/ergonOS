@@ -43,7 +43,8 @@ SWAP_GIB="${SWAP_GIB:-6}"
 PASSPHRASE="${LUKS_PASSPHRASE:-testpass123}"
 USERPASS="${USER_PASSWORD:-testuser123}"
 VMHOST="${HOSTNAME_NEW:-testarch}"
-# Must match arch-bootstrap.sh USERNAME, which is what the install creates.
+# Passed to arch-bootstrap.sh, which creates it (it no longer has a default),
+# and the account every later VM script logs in as.
 USERNAME="${USERNAME:-jayvains}"
 
 KEEP=0; [ "${1:-}" = "--keep" ] && KEEP=1
@@ -229,7 +230,7 @@ expect {
 # UNATTENDED only -- deliberately NOT ARCH_BOOTSTRAP_TEST. The live-ISO guard,
 # the UEFI guard and the real swapon all have to run here; that is the entire
 # reason for doing this in a VM instead of a container.
-send "ARCH_BOOTSTRAP_UNATTENDED=1 HOSTNAME_NEW=$VMHOST LUKS_PASSPHRASE=$PASSPHRASE USER_PASSWORD=$USERPASS SWAP_GIB=$SWAP_GIB ERGON_ARCHIVE_DATE=$ARCHIVE_DATE bash /ergon/bin/arch-bootstrap.sh /dev/vda; echo BOOTSTRAP_RC=\\\$?\r"
+send "ARCH_BOOTSTRAP_UNATTENDED=1 HOSTNAME_NEW=$VMHOST USERNAME=$USERNAME LUKS_PASSPHRASE=$PASSPHRASE USER_PASSWORD=$USERPASS SWAP_GIB=$SWAP_GIB ERGON_ARCHIVE_DATE=$ARCHIVE_DATE bash /ergon/bin/arch-bootstrap.sh /dev/vda; echo BOOTSTRAP_RC=\\\$?\r"
 expect {
   timeout { puts "\n!! arch-bootstrap.sh did not finish in 50 minutes"; exit 1 }
   "BOOTSTRAP_RC=0" { puts "\n-- bootstrap exited 0" }
