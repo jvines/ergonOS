@@ -80,7 +80,6 @@ window#waybar.hidden { opacity: 0.0; }
 window#waybar.empty #window { background: transparent; }
 
 /* -- right-hand group ---------------------------------------------------- */
-#custom-palette,
 #custom-temperature,
 #cpu, #memory, #wireplumber, #backlight,
 #network, #bluetooth, #battery, #power-profiles-daemon,
@@ -101,11 +100,6 @@ window#waybar.empty #window { background: transparent; }
   margin-left: 2px;
   padding-left: 10px;
 }
-
-/* The palette name, in the palette's own accent -- so the module demonstrates
- * the thing it names. Its own group: it is a setting, not a reading, and it
- * does not belong in the load trio. */
-#custom-palette { color: @COOL_ACTIVE@; }
 
 /* The load trio reads as one unit, tinted along the ramp so you can tell them
  * apart at a glance without labels. */
