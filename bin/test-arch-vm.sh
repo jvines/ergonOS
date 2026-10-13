@@ -23,7 +23,7 @@
 # real LUKS passphrase typed at a real prompt over a serial console.
 #
 # Everything runs in a container (lib/fleet-qemu.sh); qemu is never installed
-# on the host. The VM needs /dev/kvm, which on checo is mode 0666.
+# on the host. The VM needs /dev/kvm, which the daemon hands the container.
 set -euo pipefail
 
 CACHE="${CACHE:-$HOME/.cache/fleet-artifacts}"
@@ -58,7 +58,6 @@ FAILED=0
 . "$ERGON/lib/docker-cmd.sh"
 ergon_resolve_docker || exit 1
 [ -c /dev/kvm ] || { echo "/dev/kvm missing — this needs hardware virtualisation" >&2; exit 1; }
-[ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "/dev/kvm not readable/writable by $USER" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 say "container image"
@@ -67,6 +66,18 @@ say "container image"
 . "$ERGON/lib/fleet-qemu.sh"
 fleet_qemu_image "$IMAGE"
 ok "$IMAGE"
+# Whether QEMU can open /dev/kvm, asked where QEMU runs: in the container,
+# handed the device by the daemon. This used to ask whether $USER could open
+# it on the host, which nothing here ever does. That held while checo kept it
+# 0666, and stopped when a reboot put it back to 0660 root:kvm on 2026-10-05.
+# Every vm.yml run since died here in its first second, while the rootful
+# daemon handed the device to QEMU as before: test-hypr-session.sh, which never
+# had this check, booted VMs from the same account on 2026-10-13. A rootless
+# daemon, whose root is $USER, still fails, and says so. An open, not a mode
+# test: root passes any mode test, and the device cgroup only bites on open.
+"${DOCKER[@]}" run --rm --device /dev/kvm "$IMAGE" sh -c '[ -c /dev/kvm ] && exec 3<>/dev/kvm' \
+  || { echo "/dev/kvm: QEMU cannot open it inside the container. The daemon hands the device over with its own rights, so a rootless one needs $USER in the group that owns /dev/kvm ($(stat -c %G /dev/kvm))." >&2; exit 1; }
+ok "QEMU can open /dev/kvm in the container"
 
 # ---------------------------------------------------------------------------
 say "iso"
