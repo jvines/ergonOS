@@ -1,0 +1,73 @@
+# fcitx5's global settings (ERGON-79). Linked to ~/.config/fcitx5/config by
+# install.sh. fcitx5 is here for ONE thing, press-and-hold accents through the
+# omacento addon (conf/omacento.conf), so everything it would otherwise claim
+# from the keyboard is switched off below.
+#
+# Every chord fcitx5 5.1.23 binds by default, read from its source rather than
+# remembered (globalconfig.cpp, im/keyboard, modules/*), and why each one goes:
+#
+#   Control+space          toggle input method -- Emacs's set-mark, every day
+#   Zenkaku_Hankaku, Hangul, Hangul_Hanja, Hangul_Romaja
+#                          IM toggles for keys this machine's keyboards lack
+#   Shift_L                temporary toggle -- a lone Shift
+#   Super+space            next IM group -- the compositor's SUPER + SPACE
+#                          (launcher)
+#   Super+Shift+space      previous IM group
+#   Control+Alt+P          toggle preedit: an app's chord, AND with preedit
+#                          off the accent popup loses the letter it shows
+#   Control+Alt+H/J        keyboard engine's hint mode (conf/keyboard.conf)
+#   Control+semicolon      clipboard addon      }
+#   Control+Shift+U, Control+Alt+Shift+U         } addons disabled below
+#                          unicode addon        }
+#   Super+grave, Super+semicolon                 }
+#                          quickphrase addon -- grave is the compositor's
+#                          SUPER + ` (scratchpad)
+#
+# The compositor matches its own binds BEFORE an input method is handed the
+# key, so SUPER + SPACE and SUPER + ` were never at risk; the rest are chords
+# an APPLICATION owns, and fcitx5 would have eaten them in any focused text
+# field. With one input method in the group most toggles are inert anyway
+# (Instance::canTrigger wants two) -- cleared regardless, because "inert until
+# someone adds a second input method" is how a chord goes missing months later.
+#
+# An empty section is an empty list. A key left out entirely keeps fcitx5's
+# default, which is the opposite of what is wanted here.
+[Hotkey/TriggerKeys]
+
+[Hotkey/AltTriggerKeys]
+
+[Hotkey/ActivateKeys]
+
+[Hotkey/DeactivateKeys]
+
+[Hotkey/EnumerateForwardKeys]
+
+[Hotkey/EnumerateBackwardKeys]
+
+[Hotkey/EnumerateGroupForwardKeys]
+
+[Hotkey/EnumerateGroupBackwardKeys]
+
+[Hotkey/TogglePreedit]
+
+[Behavior]
+# The "English (US)" flash on focus. There is one input method; nothing to say.
+ShowInputMethodInformation=False
+ShowFirstInputMethodInformation=False
+# Accents are typed in the application, so its own preedit is what shows the
+# held letter. This is fcitx5's default; omacento depends on it.
+PreeditEnabledByDefault=True
+
+# clipboard  keeps its own history of everything copied -- cliphist already
+#            does that, and this one is a second copy nobody asked for
+# quickphrase, unicode
+#            pop-up pickers nothing here uses, each on a chord above
+# notificationitem
+#            the tray icon: a keyboard glyph in waybar for an input method
+#            that has no state to show, and whose menu opens a config tool
+#            this machine does not install
+[Behavior/DisabledAddons]
+0=clipboard
+1=quickphrase
+2=unicode
+3=notificationitem

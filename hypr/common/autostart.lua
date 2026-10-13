@@ -61,6 +61,19 @@ hl.on("hyprland.start", function()
   -- Removable media. No tray icon — waybar already owns that corner.
   hl.exec_cmd("udiskie --automount --notify --no-tray")
 
+  -- Input method, for press-and-hold accents (ERGON-79; common.env sets what
+  -- each toolkit needs to reach it, fcitx5/ in the repo is its config).
+  --
+  -- --replace, because this is not the only thing that starts it. The fcitx5
+  -- package ships /etc/xdg/autostart/org.fcitx.Fcitx5.desktop, which uwsm runs
+  -- through xdg-desktop-autostart.target, and a D-Bus call to org.fcitx.Fcitx5
+  -- activates one too -- measured, a single gdbus call started it. Whichever
+  -- wins, there is one afterwards: a second plain fcitx5 sees the bus name
+  -- taken and exits, and this one takes it over. And a compositor restarted
+  -- inside one login would otherwise leave the old one attached to a Wayland
+  -- socket that is gone, holding the name, while this one exited.
+  hl.exec_cmd("fcitx5 -d --replace")
+
   -- Colour temperature daemon. Starts neutral; SUPER+SHIFT+N steps it warm.
   -- Useful at a telescope for the obvious reason, and at 2am for the ordinary
   -- one. See media.lua for the bindings.

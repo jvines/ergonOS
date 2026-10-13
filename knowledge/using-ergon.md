@@ -80,6 +80,25 @@ any that are missing, which the install does on every run anyway, and
 `ergon-wallpaper-gen GENERATOR SEED` computes a new one from scratch. Your own
 images go in `~/.config/ergon/backgrounds/`.
 
+## Accents: hold the key
+
+Hold a letter instead of tapping it and a numbered popup offers its accents,
+the way macOS does it: hold e, press 1, get é. Esc keeps the plain letter, and
+a tap is still just the letter. Spanish is first in line, so the accents it
+uses sit on 1 and 2 (á é í ó ú ñ ü); ¿ and ¡ are on a held ?, 1 and 2 — let go
+of Shift before the digit. The hold is a timer of its own, a quarter of a
+second, and has nothing to do with key repeat, which is why a held vowel no
+longer repeats.
+
+It is an input method doing it — fcitx5 with the omacento addon — so it works
+wherever an application takes text from one: GTK and Qt apps, Firefox,
+terminals, and Chromium or Electron apps started with `--enable-wayland-ime`
+(Discord from its keybind, VS Code and other apps on Arch's electron through
+`~/.config/electron-flags.conf`). It never changes your keyboard layout. The
+table, the hold time and a per-window opt-out (`Blocklist`, by window class)
+are in `fcitx5/conf/omacento.conf`; when it does not happen at all,
+`ergon explain troubleshooting`.
+
 ## Your own settings vs. the generated ones
 
 Every themed desktop surface — the bar, the launcher, the terminal, the Lua

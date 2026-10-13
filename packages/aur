@@ -58,3 +58,12 @@ wezterm-git       # (slow build) pin=33286bd9f22ed09224308d81991090a49185d175
                   # into any `tmux -CC` pane freezes it permanently. Arch ships
                   # tmux 3.7. Recheck extra/wezterm only when its pkgver commit
                   # postdates 2026-08-04.
+
+fcitx5-omacento   # pin=265f1ecc4326def8d64961d76ba4bdc8fa0eef2a
+                  # ERGON-79: press-and-hold accents. NOT in the AUR, so the
+                  # PKGBUILD is packages/pkgbuild/fcitx5-omacento and this pin
+                  # is heroesofcode/omacento's own commit (v1.1.1, 2026-09-30).
+                  # A seconds-long build of one shared object, so not "(slow
+                  # build)": the VM builds it, and runs its test suite, every run.
+                  # fcitx5 itself is in packages/pacman; fcitx5/ in this repo
+                  # is its configuration.

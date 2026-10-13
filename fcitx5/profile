@@ -1,0 +1,26 @@
+# fcitx5's input method group (ERGON-79). SEEDED by install.sh, not linked:
+# fcitx5 rewrites this file on every exit, comments and all, so after the first
+# session the copy in ~/.config/fcitx5 is fcitx5's own.
+#
+# One input method, the plain keyboard: fcitx5 is here for the accent addon,
+# not to type through an engine.
+#
+# "us" below is NOT the keyboard you type on, and nothing here changes it.
+# fcitx5 remaps keys only when an input method's layout differs from its
+# group's Default Layout (InputState::customXkbState in instance.cpp); here the
+# two are the same string, so it uses the keymap the compositor hands it --
+# whatever kb_layout hosts/<host>/hyprland.lua set, latam included -- untouched.
+# On Hyprland fcitx5 has no way to push a layout back to the compositor either
+# (modules/wayland only knows KDE's and GNOME's), and its XWayland one is
+# switched off in conf/xcb.conf.
+[Groups/0]
+Name=Default
+Default Layout=us
+DefaultIM=keyboard-us
+
+[Groups/0/Items/0]
+Name=keyboard-us
+Layout=
+
+[GroupOrder]
+0=Default

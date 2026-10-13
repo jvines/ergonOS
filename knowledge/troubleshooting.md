@@ -202,6 +202,38 @@ Find the key by `application`, not by label: every one of them is labelled
 Side effect, by design: with the variable set, Chromium takes its proxy from
 gsettings `org.gnome.system.proxy` and ignores `http_proxy` and `https_proxy`.
 
+## Holding a letter repeats it, and no accent popup appears
+
+Press-and-hold accents are fcitx5 plus the omacento addon (ERGON-79). Find
+which link is missing, in this order:
+
+    pgrep -a fcitx5                                       # running at all?
+    grep -c libomacento /proc/$(pgrep -x fcitx5)/maps     # 0: the addon is not loaded
+    pacman -Q fcitx5-omacento                             # installed?
+    gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller \
+      --method org.fcitx.Fcitx.Controller1.DebugInfo      # focus:1 = this window reached it
+
+- **No fcitx5.** `hypr/common/autostart.lua` starts it with the session; a
+  compositor started some other way did not. `fcitx5 -d --replace` starts it
+  by hand. Do not test with a D-Bus call first: one starts an fcitx5 by
+  activation, outside the session, and that one answers.
+- **Running, no libomacento.** The package is missing or failed to build —
+  it is built from `packages/pkgbuild/fcitx5-omacento` during provisioning,
+  and the log says why. `ergon aur --rebuild fcitx5-omacento`, then
+  `fcitx5 -d --replace`.
+- **Loaded, but this window is not focus:1.** The application is not talking
+  to an input method. A Chromium or Electron app needs
+  `--enable-wayland-ime` on its command line (Discord gets it from its
+  keybind, not from the launcher); a Qt app needs `QT_IM_MODULE=fcitx`, which
+  only a session started through Hyprland's own environment has. Password
+  fields are left out on purpose.
+- **focus:1, and still nothing.** The window's class is in `Blocklist` in
+  `fcitx5/conf/omacento.conf`, or `Enabled` is off there.
+
+The popup is fcitx5's to draw, positioned by the compositor; the accent is
+committed whether or not you could see it, so a digit after a hold types the
+accent even when the popup is missing.
+
 ---
 
 ## In a VM

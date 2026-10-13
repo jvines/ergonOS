@@ -163,6 +163,13 @@ engines do not accept the same file: GTK3 has no `@media` at all.
 starts a real bar and asserts it maps a layer surface, which is stronger than
 parsing it.
 
+fcitx5's files (`fcitx5/`, not themed) get the same treatment by a different
+route, because fcitx5 has no parse error to give: a key it does not know, or
+one that landed under the wrong `[section]`, is dropped and the default kept.
+So the same script loads them into a real fcitx5 and asks it over D-Bus what
+it ended up holding. `fcitx5/conf/omacento.conf` is read back that way in the
+VM suite instead, where its addon is actually built.
+
 `wezterm` is an AUR git build present on no machine this repo tests on, so the
 container installs Arch `[extra]`'s released wezterm instead — an OLDER one
 (see `packages/aur` for why `wezterm-git` is pinned over it), close enough to

@@ -268,6 +268,54 @@ else
   # and linking over it replaced a stow symlink and stopped at a real file.
   link uwsm/env-hyprland.d/ergon-keyring .config/uwsm/env-hyprland.d/ergon-keyring
 
+  # ERGON-79: fcitx5, which press-and-hold accents run inside. File by file,
+  # into a directory that stays real, because fcitx5 writes into it itself --
+  # measured, one Save on a fresh config created conf/cached_layouts and
+  # conf/notifications.conf beside ours, so a linked directory would be fcitx5
+  # writing into the checkout. The settings this repo owns are links; fcitx5
+  # only rewrites those when someone changes a setting through it, and then
+  # the link becomes that person's own file, which link() leaves alone.
+  link fcitx5/config .config/fcitx5/config
+  for _f in "$ERGON"/fcitx5/conf/*.conf; do
+    [ -e "$_f" ] || continue
+    link "fcitx5/conf/${_f##*/}" ".config/fcitx5/conf/${_f##*/}"
+  done
+  # The profile is the exception: fcitx5 rewrites it on every exit and every
+  # half-hour autosave (Instance::save), by renaming a new file over it. A link
+  # there is a real file after the first logout, and install.sh then warns
+  # about it forever. So it is SEEDED once, and fcitx5's from then on -- which
+  # is right anyway, since adding an input method is a change to exactly it.
+  if [ ! -e "$HOME/.config/fcitx5/profile" ]; then
+    if [ "$CHECK" = 1 ]; then
+      printf '   would seed  .config/fcitx5/profile from fcitx5/profile\n'
+    else
+      install -Dm644 "$ERGON/fcitx5/profile" "$HOME/.config/fcitx5/profile"
+      ok ".config/fcitx5/profile seeded from fcitx5/profile (fcitx5 owns it now)"
+    fi
+  fi
+
+  # ...and the Chromium half. A Chromium app talks to an input method on
+  # Wayland only when started with --enable-wayland-ime. Every app that runs
+  # on Arch's electron package -- code from the vscode bundle, and anything
+  # else built on electronNN -- goes through /usr/lib/electronNN's launcher,
+  # which reads ~/.config/electron-flags.conf one flag a line (unless an
+  # electronNN-flags.conf exists, which then wins; read off electron42's
+  # launcher, 2026-10-13). A line added, not a link: that file is where people
+  # put their own flags. Discord bundles its own Chromium and reads no such
+  # file; its flag is in hypr/common/binds.lua.
+  _ef="$HOME/.config/electron-flags.conf"
+  if ! grep -qxF -- --enable-wayland-ime "$_ef" 2>/dev/null; then
+    if [ "$CHECK" = 1 ]; then
+      printf '   would add  --enable-wayland-ime to .config/electron-flags.conf\n'
+    else
+      mkdir -p "$(dirname "$_ef")"
+      # A last line with no newline would swallow the flag into itself.
+      [ ! -s "$_ef" ] || [ -z "$(tail -c1 "$_ef")" ] || printf '\n' >> "$_ef"
+      printf -- '--enable-wayland-ime\n' >> "$_ef"
+      ok ".config/electron-flags.conf: --enable-wayland-ime (Electron apps reach the input method)"
+    fi
+  fi
+
   if [ "$CHECK" != 1 ]; then
     # ERGON-72: `su -`/`sudo -u` (provisioning, the VM harness) open no
     # logind session, so a bare `systemctl --user` below reached no manager

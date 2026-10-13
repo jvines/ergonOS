@@ -36,7 +36,7 @@ out=$("${DOCKER[@]}" run --rm --label cl.jvines.owner=ergon-test-hypr-config -v 
   # newer glib2 than the image had ("undefined symbol: g_timeout_source_new_ns"),
   # and both CSS checks failed on a stylesheet nobody had touched.
   pacman -Syu --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot \
-    python-gobject gtk3 gtk4 uwsm wezterm newsboat lazygit lazydocker >/dev/null 2>&1
+    python-gobject gtk3 gtk4 uwsm wezterm newsboat lazygit lazydocker fcitx5 dbus >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
   # you not to use it, so everything runs as a real user.
@@ -304,6 +304,62 @@ PYEOF
     *)  echo "GNOME_DESKTOP_SESSION_ID is not empty: every xdg-utils script then decides DE=gnome3, and xdg-open <dir> (zsh: o) fails rc=4" ;;
   esac
 
+  # ERGON-79. fcitx5 reads its INI files without a word about anything in them:
+  # a key it does not know, a key that landed under the wrong [section] (in
+  # this format a key belongs to the last header above it), a misspelt list --
+  # each is dropped and the default stays, silently. So the repo'"'"'s files go
+  # where install.sh puts them and fcitx5 ITSELF is asked, over D-Bus, what it
+  # ended up holding. Measured that this can fail (2026-10-13): with
+  # ShowInputMethodInformation moved below [Behavior/DisabledAddons] and the
+  # empty [Hotkey/TogglePreedit] deleted, it reports both -- True, and
+  # Control+Alt+P bound again -- and nothing else. The first call
+  # starts fcitx5 by D-Bus activation; no display is needed for any of this.
+  # omacento.conf is NOT checked here -- its addon is built from source, so
+  # its settings are read back in the VM suite instead.
+  echo "@@fcitx5"
+  install -d -o t -g t /home/t/.config/fcitx5 /home/t/.config/fcitx5/conf
+  install -o t -g t -m 644 /tmp/repo/fcitx5/config /tmp/repo/fcitx5/profile /home/t/.config/fcitx5/
+  install -o t -g t -m 644 /tmp/repo/fcitx5/conf/*.conf /home/t/.config/fcitx5/conf/
+  cat > /tmp/fcitx5q.sh <<"FQ"
+g() { gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller \
+        --method org.fcitx.Fcitx.Controller1."$@" 2>&1 | tr "\047" "~"; }
+glob=$(g GetConfig fcitx://config/global)
+for k in TriggerKeys AltTriggerKeys ActivateKeys DeactivateKeys EnumerateForwardKeys \
+         EnumerateBackwardKeys EnumerateGroupForwardKeys EnumerateGroupBackwardKeys TogglePreedit; do
+  case "$glob" in *"~$k~: <~~>"*) ;; *) echo "FINDING config: $k still binds a chord" ;; esac
+done
+for k in ShowInputMethodInformation ShowFirstInputMethodInformation; do
+  case "$glob" in *"~$k~: <~False~>"*) ;; *) echo "FINDING config: $k is not False" ;; esac
+done
+case "$glob" in
+  *"~DisabledAddons~: <{~0~: <~clipboard~>, ~1~: <~quickphrase~>, ~2~: <~unicode~>, ~3~: <~notificationitem~>}>"*) ;;
+  *) echo "FINDING config: DisabledAddons is not clipboard, quickphrase, unicode, notificationitem" ;;
+esac
+kb=$(g GetConfig fcitx://config/addon/keyboard)
+for k in "Hint Trigger" "One Time Hint Trigger"; do
+  case "$kb" in *"~$k~: <~~>"*) ;; *) echo "FINDING conf/keyboard.conf: $k still binds a chord" ;; esac
+done
+case "$kb" in *"~EnableLongPress~: <~False~>"*) ;; *) echo "FINDING conf/keyboard.conf: fcitx5 long press is not off" ;; esac
+case "$(g GetConfig fcitx://config/addon/xcb)" in
+  *"~Allow Overriding System XKB Settings~: <~False~>"*) ;;
+  *) echo "FINDING conf/xcb.conf: fcitx5 may push its layout onto XWayland" ;;
+esac
+ui=$(g GetConfig fcitx://config/addon/classicui)
+case "$ui" in *"~UseDarkTheme~: <~True~>"*) ;; *) echo "FINDING conf/classicui.conf: UseDarkTheme is not True" ;; esac
+case "$ui" in *"~Font~: <~Sans 14~>"*) ;; *) echo "FINDING conf/classicui.conf: Font is not Sans 14" ;; esac
+case "$(g FullInputMethodGroupInfo Default)" in
+  *"(~Default~, ~keyboard-us~, ~us~"*) ;;
+  *) echo "FINDING profile: the group is not keyboard-us over default layout us" ;;
+esac
+FQ
+  # Only the marked lines. The session bus here also carries whatever fcitx5
+  # and the services it activates say on their way up (classicui asks the
+  # settings portal for the colour scheme, and the portal complains about a
+  # container with no FUSE), none of which is about these files. A check that
+  # could not ask at all prints every FINDING, so silence still means read.
+  su t -c "XDG_RUNTIME_DIR=/tmp/rt dbus-run-session -- bash /tmp/fcitx5q.sh" 2>&1 \
+    | sed -n "s/^FINDING //p"
+
   echo "@@end"
 ' 2>&1) || true
 
@@ -315,7 +371,7 @@ grep -qx '@@end' <<<"$out" || {
   printf '   FAIL the container script stopped before the end; last lines:\n'
   printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
 for tool in hyprland hyprland-degraded hyprland-nvidia-env fuzzel foot wezterm waybar-css swayosd-css gtk-css \
-  lazygit-config lazydocker-config mako hypridle hyprlock newsboat uwsm-env; do
+  lazygit-config lazydocker-config mako hypridle hyprlock newsboat uwsm-env fcitx5; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"

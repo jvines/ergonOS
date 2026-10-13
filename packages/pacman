@@ -109,6 +109,24 @@ hyprpicker          # colour picker
 hyprsunset          # colour temperature
 hyprpolkitagent     # authentication prompts
 
+# --- input method (ERGON-79) -----------------------------------------------
+# Here for ONE feature: macOS-style press-and-hold accents -- hold e, pick é
+# from a numbered popup. The picker is the omacento addon (packages/aur, built
+# from packages/pkgbuild); fcitx5 is what it runs inside, because an input
+# method is the only thing every toolkit already hands keys to and takes text
+# back from. Not fcitx5's own long press, and not an evdev daemon in the
+# input group: the reasons are in fcitx5/conf/keyboard.conf.
+fcitx5              # the daemon: Wayland text-input (GTK3/4, Firefox, foot,
+                    # Chromium/Electron with --enable-wayland-ime) and XIM
+fcitx5-gtk          # the GTK3/GTK4 im modules. NOT chosen through
+                    # GTK_IM_MODULE (hypr/common/env.lua says why): a native
+                    # Wayland GTK app uses text-input-v3 instead. This is for
+                    # a GTK app that ends up under XWayland, where GTK picks
+                    # the module itself
+fcitx5-qt           # Qt5 and Qt6 platforminputcontext plugins, which
+                    # QT_IM_MODULE=fcitx selects. Qt5 has no text-input
+                    # Hyprland speaks, so without this a Qt5 app gets nothing
+
 # --- audio -----------------------------------------------------------------
 pipewire
 pipewire-alsa

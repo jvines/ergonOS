@@ -445,5 +445,31 @@ grep -qxF '   would link  .config/uwsm/env-hyprland.d/ergon-keyring -> uwsm/env-
   && ok "install.sh links the keyring drop-in into ~/.config/uwsm/env-hyprland.d" \
   || bad "install.sh --check on a graphical host does not plan the env-hyprland.d/ergon-keyring link"
 
+# ERGON-79: fcitx5's settings are linked file by file, its profile is seeded
+# rather than linked (fcitx5 renames a new one over it on every exit), and
+# Electron apps get --enable-wayland-ime through electron-flags.conf.
+cp -r "$REPO/fcitx5" "$T/inst/"
+out=$("$T/inst/install.sh" --check 2>/dev/null)
+_missing=""
+for _f in config conf/omacento.conf conf/keyboard.conf conf/xcb.conf conf/classicui.conf; do
+  grep -qxF "   would link  .config/fcitx5/$_f -> fcitx5/$_f" <<<"$out" || _missing="$_missing $_f"
+done
+[ -z "$_missing" ] && ok "install.sh links fcitx5's config and every conf/*.conf into ~/.config/fcitx5" \
+  || bad "install.sh --check does not plan the fcitx5 link(s):$_missing"
+grep -qxF '   would seed  .config/fcitx5/profile from fcitx5/profile' <<<"$out" \
+  && ! grep -q 'would link  .config/fcitx5/profile' <<<"$out" \
+  && ok "  and seeds the profile instead of linking it" \
+  || bad "install.sh --check does not seed .config/fcitx5/profile (or links it, which fcitx5 would replace at logout)"
+grep -qxF '   would add  --enable-wayland-ime to .config/electron-flags.conf' <<<"$out" \
+  && ok "  and gives Electron apps --enable-wayland-ime" \
+  || bad "install.sh --check does not plan --enable-wayland-ime in electron-flags.conf"
+mkdir -p "$HOME/.config/fcitx5"; : > "$HOME/.config/fcitx5/profile"
+printf -- '--ozone-platform-hint=auto\n--enable-wayland-ime\n' > "$HOME/.config/electron-flags.conf"
+out=$("$T/inst/install.sh" --check 2>/dev/null)
+! grep -q 'fcitx5/profile\|electron-flags' <<<"$out" \
+  && ok "  neither again once there: fcitx5's own profile and a flag already present are left alone" \
+  || bad "install.sh --check would touch an existing profile or re-add the flag: $(grep 'fcitx5/profile\|electron-flags' <<<"$out")"
+rm -rf "$HOME/.config/fcitx5" "$HOME/.config/electron-flags.conf"
+
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

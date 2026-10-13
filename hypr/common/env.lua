@@ -20,6 +20,31 @@ hl.env("MOZ_ENABLE_WAYLAND", "1")
 -- blurry on a scaled 2.8K panel and cannot do fractional scale at all.
 hl.env("ELECTRON_OZONE_PLATFORM_HINT", "wayland")
 
+-- Input method (ERGON-79): fcitx5, started by common.autostart, which is how
+-- press-and-hold accents reach an application (the omacento addon). What each
+-- toolkit needs in order to hand it the keys:
+--
+--   XWayland  XMODIFIERS names the XIM server fcitx5 runs. Tk, Java and
+--             anything else under X11 has no other route.
+--   Qt        QT_IM_MODULE=fcitx loads fcitx5-qt's plugin. Qt5 speaks only
+--             text-input-v2, which Hyprland does not implement, so this is
+--             Qt5's only route; Qt6 takes the same one rather than two.
+--   GTK       deliberately NOT set. GTK3 and GTK4 on Wayland use text-input-v3
+--             by themselves, which is the protocol fcitx5's Wayland frontend
+--             answers and where the accent popup is positioned by the
+--             compositor. GTK_IM_MODULE=fcitx would force the D-Bus module
+--             instead, and fcitx5 itself warns about it: its Wayland
+--             self-check (modules/wayland, selfDiagnose) puts up a notification
+--             asking for the variable to be unset whenever it sees one on a
+--             compositor that has the Wayland input method protocol. A GTK app
+--             that lands under XWayland does not need it either: fcitx5-gtk's
+--             module registers for every locale ("ja:ko:zh:*", gtk3/fcitxim.c),
+--             so GTK picks it there by itself.
+--   Chromium and Electron  a command-line flag, not a variable: see binds.lua
+--             (SUPER + D) and install.sh (electron-flags.conf).
+hl.env("XMODIFIERS", "@im=fcitx")
+hl.env("QT_IM_MODULE", "fcitx")
+
 hl.env("XDG_SESSION_TYPE", "wayland")
 hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
 hl.env("XDG_SESSION_DESKTOP", "Hyprland")

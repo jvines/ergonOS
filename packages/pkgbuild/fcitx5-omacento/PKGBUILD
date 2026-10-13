@@ -1,0 +1,70 @@
+# Press-and-hold accents (ERGON-79): the fcitx5 module addon from
+# heroesofcode/omacento, built from a pinned commit.
+#
+# Its PKGBUILD lives HERE because the AUR has none (searched 2026-10-13, as
+# omacento and as fcitx5-omacento). Everything else about it is a
+# packages/aur package: that file names it with pin=, bin/ergon-aur builds it
+# with makepkg -si, records what it built from, rebuilds it after a soname
+# bump, and `ergon doctor` compares the two. The one difference is that for
+# this package the pin is the UPSTREAM commit, because the recipe is reviewed
+# in this repository rather than on the AUR -- so _commit below and the pin=
+# on its packages/aur line are the same full SHA, and ergon-aur refuses to
+# build when they are not. To move it: read the upstream log from the old
+# commit, change both, `ergon aur --rebuild fcitx5-omacento`.
+#
+# Only the addon is built. The rest of that repository is an Omarchy bar
+# widget (QML, theme hooks, an omarchy-fcitx5.service drop-in that points
+# FCITX_ADDON_DIRS at ~/.local) and none of it applies here: installed by
+# pacman, the .so sits in /usr/lib/fcitx5, which is the only directory fcitx5
+# searches for addons anyway, and its settings come from fcitx5/conf in this
+# repo (install.sh links them).
+pkgname=fcitx5-omacento
+_commit=265f1ecc4326def8d64961d76ba4bdc8fa0eef2a  # v1.1.1, 2026-09-30
+pkgver=1.1.1
+pkgrel=1
+pkgdesc='Press-and-hold accent picker for fcitx5 (omacento addon)'
+arch=(x86_64)
+url='https://github.com/heroesofcode/omacento'
+license=(MIT)
+# What namcap reads off the built .so (2026-10-13): gcc-libs is split into
+# libgcc and libstdc++ now, and naming the old one draws a warning.
+depends=(fcitx5 glibc libgcc libstdc++)
+makedepends=(git)
+source=("omacento::git+$url.git#commit=$_commit")
+sha256sums=('SKIP')
+
+# The upstream Makefile sets CXXFLAGS with ?= and then appends pkg-config's
+# include paths with +=. makepkg exports its own CXXFLAGS, so the ?= never
+# applies and the build loses -std=c++20 (fcitx5's headers need it; GCC
+# defaults to C++17) and -fPIC (this is a shared object). It also compiles and
+# links in one command that never reads LDFLAGS, so those ride along too, or
+# the .so ships without RELRO and BIND_NOW.
+#
+# Through the ENVIRONMENT, not `make CXXFLAGS=...`: a variable given on make's
+# command line overrides the Makefile's += as well, and the include paths
+# vanish -- measured, "fcitx-config/configuration.h: No such file or
+# directory". An environment variable is appended to.
+_flags() {
+  export CXXFLAGS="$CXXFLAGS $LDFLAGS -std=c++20 -fPIC -fvisibility=hidden"
+}
+
+build() {
+  _flags
+  make -C omacento/addon
+}
+
+check() {
+  # Upstream's own suite: the .so just built, loaded into a real fcitx5
+  # Instance beside fcitx5's TestFrontend -- tap, hold-and-pick, Esc, Shift,
+  # the uppercase table, focus loss. Against the fcitx5 this machine has,
+  # which is the version that matters. Measured 2026-10-13 against 5.1.23:
+  # "16 outputs, all as expected", about six seconds.
+  _flags
+  make -C omacento/addon test
+}
+
+package() {
+  install -Dm755 omacento/addon/build/libomacento.so "$pkgdir/usr/lib/fcitx5/libomacento.so"
+  install -Dm644 omacento/addon/build/omacento.conf "$pkgdir/usr/share/fcitx5/addon/omacento.conf"
+  install -Dm644 omacento/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

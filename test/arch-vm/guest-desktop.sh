@@ -889,6 +889,31 @@ else
   fi
 fi
 
+# ERGON-79: the accent picker, the one package whose PKGBUILD is in this repo
+# (packages/pkgbuild) rather than the AUR. Real makepkg, real pacman, and its
+# check() ran upstream's own suite against this fcitx5 on the way -- a build
+# that failed it would not be installed. The pin here is an upstream commit,
+# so the source makepkg compiled is the thing to look at, not an AUR clone.
+if pacman -Qi fcitx5-omacento >/dev/null 2>&1; then
+  ok "fcitx5-omacento is installed, built from packages/pkgbuild"
+else
+  bad "fcitx5-omacento NOT installed (no press-and-hold accents):"
+  grep -i -A4 'omacento' /tmp/prov.log 2>/dev/null | tail -12 | sed 's/^/       /'
+fi
+OPIN=$(awk '$1 == "fcitx5-omacento" && match($0, /pin=[0-9a-f]{7,40}/) {
+              print substr($0, RSTART + 4, RLENGTH - 4) }' "$H/ergonOS/packages/aur")
+OFROM=$(awk '$1 == "fcitx5-omacento" { print $2 }' "$H/.local/state/ergon/aur-builds" 2>/dev/null)
+[ -n "$OPIN" ] && [ "$OFROM" = "$OPIN" ] \
+  && ok "  recorded as built from the upstream commit packages/aur pins" \
+  || bad "  recorded as built from '${OFROM:-nothing}', not the pinned '${OPIN:-none}'"
+OAT=$(su - "$U" -c "git -C ~/.cache/aur/fcitx5-omacento/src/omacento rev-parse HEAD" 2>/dev/null)
+[ -n "$OPIN" ] && [ "$OAT" = "$OPIN" ] \
+  && ok "  and the source makepkg compiled sits at exactly that commit" \
+  || bad "  but the source makepkg compiled sits at '${OAT:-nothing}', not $OPIN"
+[ -f /usr/lib/fcitx5/libomacento.so ] && [ -f /usr/share/fcitx5/addon/omacento.conf ] \
+  && ok "  in the one directory fcitx5 searches for addons, so no FCITX_ADDON_DIRS" \
+  || bad "  but not at /usr/lib/fcitx5/libomacento.so + /usr/share/fcitx5/addon/omacento.conf"
+
 # ERGON-29: the rebuild `ergon update` performs builds the SAME commit again --
 # only the libraries under it moved -- into the clone the previous build already
 # left a package in, and makepkg REFUSES to overwrite one ("A package has
@@ -990,10 +1015,19 @@ for pair in \
   ".config/fuzzel:the launcher" \
   ".config/gtk-3.0/settings.ini:GTK3 theme" \
   ".config/environment.d/10-ergon-path.conf:session PATH" \
-  ".config/uwsm/env-hyprland.d/ergon-keyring:the Electron keyring variable"; do
+  ".config/uwsm/env-hyprland.d/ergon-keyring:the Electron keyring variable" \
+  ".config/fcitx5/config:fcitx5's settings (ERGON-79)" \
+  ".config/fcitx5/conf/omacento.conf:the accent table"; do
   f=${pair%%:*}; what=${pair#*:}
   [ -e "$H/$f" ] && ok "install.sh linked $what" || bad "install.sh did not link $f ($what)"
 done
+# Seeded, not linked: fcitx5 renames a fresh profile over it at every exit.
+[ -f "$H/.config/fcitx5/profile" ] && [ ! -L "$H/.config/fcitx5/profile" ] \
+  && ok "install.sh seeded fcitx5's profile as a file of its own" \
+  || bad "~/.config/fcitx5/profile is $( [ -L "$H/.config/fcitx5/profile" ] && echo 'a link, which fcitx5 would replace at logout' || echo missing)"
+grep -qxF -- --enable-wayland-ime "$H/.config/electron-flags.conf" 2>/dev/null \
+  && ok "install.sh gave Electron apps --enable-wayland-ime (electron-flags.conf)" \
+  || bad "~/.config/electron-flags.conf has no --enable-wayland-ime line"
 
 # The user must be in `video` to open /dev/dri/card*, which are root:video 0660.
 # Without it Hyprland dies with "CBackend::create() failed!" and nothing else --
@@ -1731,6 +1765,134 @@ else
     fi
   fi
 fi
+
+# --- press-and-hold accents (ERGON-79) --------------------------------------
+# fcitx5 and the omacento addon, asked of the RUNNING session and not of a
+# file: the process the compositor started, the shared object mapped into it,
+# the settings it actually took, the environment a client the compositor
+# starts actually inherits -- and then the feature itself, a held key turned
+# into an accented letter inside a real Wayland client.
+echo "--- press-and-hold accents ---"
+# Asked BEFORE anything speaks D-Bus to it: a call to org.fcitx.Fcitx5 starts
+# one by D-Bus activation (measured), and that one would answer for a session
+# whose own never came up.
+FPID=""
+for _ in $(seq 1 20); do FPID=$(pgrep -u "$U" -x fcitx5 | head -1); [ -n "$FPID" ] && break; sleep 0.5; done
+if [ -z "$FPID" ]; then
+  bad "fcitx5 is not running in the session (hypr/common/autostart.lua starts it)"
+else
+  grep -qxF "HYPRLAND_INSTANCE_SIGNATURE=$SIG" <(tr '\0' '\n' < "/proc/$FPID/environ" 2>/dev/null) \
+    && ok "fcitx5 is running, started by this compositor (pid $FPID)" \
+    || bad "fcitx5 (pid $FPID) did not come from this compositor -- D-Bus activation, or a leftover"
+  grep -q '/libomacento\.so$' "/proc/$FPID/maps" 2>/dev/null \
+    && ok "  with omacento loaded into it (libomacento.so is mapped)" \
+    || bad "  but libomacento.so is not mapped into it: the addon did not load"
+fi
+fq() { usr "gdbus call --session --dest org.fcitx.Fcitx5 --object-path /controller --method org.fcitx.Fcitx.Controller1.$*" 2>&1; }
+_oc=$(fq "GetConfig fcitx://config/addon/omacento")
+grep -qF "'Language': <'es'>" <<<"$_oc" && grep -qF "'? ¿ ¡'" <<<"$_oc" && grep -qF "'5': <'n ñ ń'>" <<<"$_oc" \
+  && ok "  running fcitx5/conf/omacento.conf: the Spanish order, and ¿ ¡ on ?" \
+  || bad "  omacento's live settings are not the repo's: $(head -c 300 <<<"$_oc")"
+_gc=$(fq "GetConfig fcitx://config/global"); _miss=""
+for k in TriggerKeys AltTriggerKeys ActivateKeys EnumerateGroupForwardKeys EnumerateGroupBackwardKeys TogglePreedit; do
+  grep -qF "'$k': <''>" <<<"$_gc" || _miss="$_miss $k"
+done
+_kc=$(fq "GetConfig fcitx://config/addon/keyboard")
+for k in "Hint Trigger" "One Time Hint Trigger"; do grep -qF "'$k': <''>" <<<"$_kc" || _miss="$_miss '$k'"; done
+grep -qF "'EnableLongPress': <'False'>" <<<"$_kc" || _miss="$_miss EnableLongPress"
+for a in clipboard quickphrase unicode; do
+  fq "GetConfig fcitx://config/addon/$a" | grep -q 'Failed to get addon config' || _miss="$_miss $a(loaded)"
+done
+[ -z "$_miss" ] && ok "  claiming none of fcitx5's default chords, and its own long press off" \
+                || bad "  fcitx5 still claims:$_miss"
+grep -qF "'Allow Overriding System XKB Settings': <'False'>" <<<"$(fq 'GetConfig fcitx://config/addon/xcb')" \
+  && ok "  and never pushing a layout onto XWayland" \
+  || bad "  fcitx5's xcb module may still push its own layout onto XWayland"
+grep -qF "('Default', 'keyboard-us', 'us'" <<<"$(fq 'FullInputMethodGroupInfo Default')" \
+  && ok "  one group, keyboard-us over default layout us: the compositor's keymap passes through" \
+  || bad "  the input method group is not the seeded one: $(fq 'FullInputMethodGroupInfo Default' | head -c 200)"
+
+# The feature, driven for real. wtype types through the virtual-keyboard
+# PROTOCOL -- a Wayland client asking the compositor -- not through /dev/uinput,
+# and Hyprland hands a virtual keyboard's keys to an input method's grab exactly
+# as it does a physical one's, binds first (InputManager::onKeyboardKey). foot
+# is the client: it speaks text-input-v3, the protocol GTK3/4 and Firefox use
+# on Wayland too, and it writes whatever it is given to a pty, where cat keeps
+# it. A held key that came back as itself, or as the letter followed by the
+# accent, would be in that file.
+#
+# Only the commit is proved, not the popup's pixels: this VM has no GPU, so
+# nothing here can capture what classicui drew. That the accents arrive at all
+# proves the picker was open -- omacento commits a variant from no other state.
+# Qt (fcitx5-qt over D-Bus) and Chromium (text-input-v1 or -v3, with the flag)
+# take other routes into fcitx5 and are NOT exercised here.
+pacman -S --needed --noconfirm wtype >/dev/null 2>&1 || bad "could not install wtype (harness)"
+ACC_OUT=/tmp/ergon-accent.out
+rm -f "$ACC_OUT"
+printf '#!/bin/sh\nexec cat > %s\n' "$ACC_OUT" > /tmp/ergon-accent-cat.sh
+chmod 755 /tmp/ergon-accent-cat.sh
+# Workspace 3 then 1, so that SUPER + TAB ("Last workspace") has somewhere to go.
+hq "dispatch 'hl.dsp.focus({workspace = 3})'" >/dev/null 2>&1
+hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1
+hq "dispatch 'hl.dsp.exec_cmd(\"foot --app-id=ergon-accent /tmp/ergon-accent-cat.sh\")'" >/dev/null 2>&1
+APID=""
+for _ in $(seq 1 20); do
+  APID=$(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-accent") | .pid' 2>/dev/null | head -1)
+  [ -n "$APID" ] && break; sleep 0.5
+done
+acc_focus() {  # focus the probe and wait for fcitx5 to hold an input context for it
+  hq "dispatch 'hl.dsp.exec_raw(\"focuswindow class:ergon-accent\")'" >/dev/null 2>&1
+  for _ in $(seq 1 20); do
+    _ic=$(fq DebugInfo | grep -o 'IC \[[0-9a-f]*\] program:[^ ]* frontend:[^ ]* cap:[0-9a-f]* focus:1' | head -1)
+    [ -n "$_ic" ] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+if [ -z "$APID" ]; then
+  bad "foot, started by the compositor, never mapped a window: nothing to type into"
+else
+  _cenv=$(tr '\0' '\n' < "/proc/$APID/environ" 2>/dev/null)
+  if grep -qx 'XMODIFIERS=@im=fcitx' <<<"$_cenv" && grep -qx 'QT_IM_MODULE=fcitx' <<<"$_cenv" \
+     && ! grep -q '^GTK_IM_MODULE=' <<<"$_cenv"; then
+    ok "a client the compositor starts carries XMODIFIERS and QT_IM_MODULE, and no GTK_IM_MODULE"
+  else
+    bad "a client the compositor starts has: $(grep -E '^(XMODIFIERS|QT_IM_MODULE|GTK_IM_MODULE)=' <<<"$_cenv" | tr '\n' ' ')"
+  fi
+  if ! acc_focus; then
+    bad "fcitx5 never held a focused input context for foot: the text-input relay did not reach it"
+    fq DebugInfo | head -c 600 | sed 's/^/     /'; echo
+  else
+    ok "fcitx5 holds the focused input context for it ($_ic)"
+    # A tap of e, then holds of e n ? ? u E, each picked by a digit after the
+    # key is released -- the popup outlives the release. Expected, in order:
+    # e (the tap, handed back as the key), é ñ ¿ ¡ ü, and É from the uppercase
+    # half omacento derives. wtype's own keymap puts every keysym on a level
+    # of its own, so ? and E arrive without a Shift.
+    _w=$(usr "wtype -k e -s 200 -P e -s 900 -p e -s 300 -k 1 -s 200 -P n -s 900 -p n -s 300 -k 1 -s 200 -P question -s 900 -p question -s 300 -k 1 -s 200 -P question -s 900 -p question -s 300 -k 2 -s 200 -P u -s 900 -p u -s 300 -k 2 -s 200 -P E -s 900 -p E -s 300 -k 1 -s 200 -k Return" 2>&1)
+    sleep 1
+    _got=$(cat "$ACC_OUT" 2>/dev/null)
+    if [ "$_got" = "eéñ¿¡üÉ" ]; then
+      ok "a tap types the key; a HELD key opens the picker and a digit types its accent: $_got"
+    else
+      bad "typed into foot through fcitx5: '$_got', want 'eéñ¿¡üÉ'"
+      printf '%s' "$_got" | od -c | head -4 | sed 's/^/     /'
+      [ -z "$_w" ] || echo "     wtype said: $_w"
+    fi
+    # A compositor bind still fires while fcitx5 holds the keyboard grab: the
+    # compositor matches its binds before an input method is handed the key.
+    if acc_focus; then
+      usr "wtype -M logo -k Tab -m logo" >/dev/null 2>&1; sleep 0.6
+      _ws=$(hq activeworkspace -j 2>/dev/null | jq -r '.id // empty')
+      [ "$_ws" = 3 ] && ok "SUPER + TAB still switches workspace with fcitx5 holding the keyboard" \
+                     || bad "SUPER + TAB with fcitx5 holding the keyboard left the workspace at '$_ws', want 3"
+    else
+      bad "could not put foot back in focus to try SUPER + TAB"
+    fi
+  fi
+  kill "$APID" 2>/dev/null
+fi
+hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1
 
 # Only dump the log when something actually failed. An unconditional dump makes
 # a passing run look like a failing one and buries the next real failure.
