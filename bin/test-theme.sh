@@ -127,6 +127,11 @@ check "mako is told to reload"                hasx "$T/log/makoctl" "reload"
 check "btop is signalled, not restarted"      hasx "$T/log/pkill" "-USR2 -x btop"
 check "waybar is restarted"                   hasx "$T/log/pkill" "-x waybar"
 check "  and started again"                   has  "$T/log/hyprctl" 'exec_raw("waybar")'
+# The bar's palette label is read once at start (ERGON-76), so the restart
+# above is the only thing that relabels it. If either half goes, the label
+# goes stale after a switch.
+check "  which is what relabels the bar: its palette module is read once, not polled" \
+  bash -c "awk '/\"custom\\/palette\": \\{/,/^  \\}/' '$REPO/waybar/config.jsonc' | grep -q '\"interval\": \"once\"'"
 check "swayosd is restarted, since it reads its CSS once and has no reload" \
   hasx "$T/log/pkill" "-x swayosd-server"
 check "  and started again the way autostart.lua starts it" \

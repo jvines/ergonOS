@@ -61,8 +61,14 @@
     // through the login shell's PATH, which waybar and Hyprland's exec do not
     // have. Called as `ergon theme --current` this printed "cool" forever,
     // because the fallback fired on every poll.
+    //
+    // Read once, not polled (ERGON-76). The name changes only when a palette
+    // is applied, and applying one already restarts waybar (bin/ergon-theme),
+    // the only way it re-reads its CSS. That same restart relabels this. It
+    // used to start a process every 5 s for the whole session to learn
+    // nothing. bin/test-theme.sh checks both halves.
     "exec": "ergon-theme --current 2>/dev/null || echo cool",
-    "interval": 5,
+    "interval": "once",
     "format": "󰏘 {}",
     "on-click": "ergon-theme --next",
     "on-click-right": "ergon-theme --prev",
