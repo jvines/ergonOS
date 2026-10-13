@@ -338,9 +338,20 @@ else
   warn "no usable packages/tested-date — installing today's Arch, which no VM run has tested"
 fi
 
-pacstrap -K "${PACSTRAP_CONF[@]}" /mnt base base-devel $KERNELS linux-firmware $UCODE \
-  btrfs-progs mkinitcpio grub efibootmgr grub-btrfs snapper snap-pac \
-  networkmanager sudo zsh git vim inetutils
+# Up to four tries, 30 s apart. archive.archlinux.org is the one server, and
+# pacman gives up on a server after a few stalled files and installs nothing:
+# vm.yml run #250 lost its install that way on 2026-10-13, 74 files into 226,
+# while this host fetched the same day's core whole a minute later. A rerun
+# is safe and cheap: pacstrap keeps what arrived in /mnt's own package cache,
+# and -K makes a keyring only where there is none yet (arch-install-scripts 31).
+_try=1
+until pacstrap -K "${PACSTRAP_CONF[@]}" /mnt base base-devel $KERNELS linux-firmware $UCODE \
+        btrfs-progs mkinitcpio grub efibootmgr grub-btrfs snapper snap-pac \
+        networkmanager sudo zsh git vim inetutils; do
+  [ "$_try" -lt 4 ] || { warn "pacstrap failed $_try times — see above"; exit 1; }
+  warn "pacstrap failed (try $_try of 4) — trying again in 30 s; what arrived is kept"
+  _try=$((_try + 1)); sleep 30
+done
 ok "base system installed"
 
 genfstab -U /mnt >> /mnt/etc/fstab
