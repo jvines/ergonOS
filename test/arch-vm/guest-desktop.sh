@@ -908,6 +908,13 @@ else
   else
     bad "  but re-provisioning did not leave it alone:"
     grep 'waybar-git' /tmp/sync.log | head -3 | sed 's/^/       /'
+    # Usually not the re-provision's doing: a build here with no "is installed,
+    # but not from the commit" line means waybar-git was not installed at all,
+    # so the FIRST provisioning's build failed and fell back to extra/waybar.
+    # CI run #263 (2026-10-13) failed exactly so, and that log was gone with
+    # the disk. Show it.
+    echo "       first provisioning, on waybar:"
+    grep -E 'waybar|Alexays|failed|error:' /tmp/prov.log 2>/dev/null | grep -iv 'yt-dlp' | tail -8 | sed 's/^/         /'
   fi
 fi
 
