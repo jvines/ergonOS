@@ -27,15 +27,18 @@ check() { local what="$1"; shift; if "$@"; then ok "$what"; else bad "$what"; fi
 
 mkdir -p "$T/stub" "$T/cache"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$T/stub/$1"; chmod +x "$T/stub/$1"; }
-stub pgrep        '[ "${S_REC:-0}" = 1 ]'
+stub pgrep        'echo "probe pgrep" >> "$S_LOG"; [ "${S_REC:-0}" = 1 ]'
 stub makoctl      'case "$1" in mode) [ "$#" -gt 1 ] && echo "$*" >> "$S_LOG"; printf "default\n"; [ "${S_DND:-0}" = 1 ] && echo do-not-disturb ;; esac; exit 0'
-stub hyprctl      '[ -n "${S_TEMP:-}" ] && echo "$S_TEMP"; exit 0'
+stub hyprctl      'echo "probe hyprctl" >> "$S_LOG"; [ -n "${S_TEMP:-}" ] && echo "$S_TEMP"; exit 0'
 stub systemctl    'for i in $(seq "${S_WATCH:-0}"); do echo "ergon-watch-x-$i.scope loaded active running"; done'
 stub checkupdates 'for i in $(seq "${S_UPD:-0}"); do echo "pkg$i 1-1 -> 1-2"; done'
 stub informant    '[ "${S_NEWS:-0}" = 0 ]'
 stub ergon-record 'echo record >> "$S_LOG"'
+stub pkill        'echo "$*" >> "$S_LOG"'
 export PATH="$T/stub:$PATH" XDG_CACHE_HOME="$T/cache" S_LOG="$T/log"
 : > "$T/log"
+# The signal ergon-status sends, read from it rather than repeated here.
+SIG=$(sed -n 's/^SIGNAL=\([0-9]*\)$/\1/p' "$REPO/bin/ergon-status")
 
 # A cache that is fresh and empty, so no run below starts a background count.
 mkdir -p "$T/cache/ergon"; printf '0 0\n' > "$T/cache/ergon/updates"
@@ -83,8 +86,34 @@ check "  and leaves do-not-disturb alone"    no_mode_r
 check "with no recording, ends do-not-disturb" grep -qx 'mode -r do-not-disturb' "$T/log"
 
 echo "== the hourly count"
+: > "$T/log"
 S_UPD=3 S_NEWS=1 "$REPO/bin/ergon-status" --refresh
 check "--refresh writes updates and news to the cache" test "$(cat "$T/cache/ergon/updates")" = "3 1"
+check "  and tells the bar" grep -qx -- "-RTMIN+$SIG -x waybar" "$T/log"
+
+# ERGON-81: the bar is told, not polling. --poke is one pkill and nothing
+# else -- key binds send it -- and its signal must be the one waybar's module
+# listens for, or every poke lands on nothing and the bar waits for the
+# backstop.
+echo "== told, not polling"
+# With the update count STALE, so that anything past the poke would also start
+# the background recount -- whose own poke would land here a moment later.
+rm -f "$T/cache/ergon/updates"
+: > "$T/log"; S_REC=1 S_DND=1 S_TEMP=3000 "$REPO/bin/ergon-status" --poke; sleep 1
+check "--poke sends waybar SIGRTMIN+$SIG"   grep -qx -- "-RTMIN+$SIG -x waybar" "$T/log"
+check "  and asks nothing else, not even a stale count" test "$(wc -l < "$T/log")" -eq 1
+printf '0 0\n' > "$T/cache/ergon/updates"
+: > "$T/log"; S_DND=1 "$REPO/bin/ergon-status" --click
+check "ending do-not-disturb by click tells the bar" grep -qx -- "-RTMIN+$SIG -x waybar" "$T/log"
+_mod=$(sed -E 's|^[[:space:]]*//.*||' "$REPO/waybar/config.jsonc" | jq -c '."custom/status"' 2>/dev/null)
+check "waybar's custom/status listens on that signal" test "$(jq -r '.signal' <<<"$_mod")" = "$SIG"
+check "  and polls only as a backstop (60 s or more)" test "$(jq -r '.interval' <<<"$_mod")" -ge 60
+# Every key that changes a mode tells the bar too. Read off the live config
+# files: a bind that changes DND or the tint without --poke leaves the bar
+# wrong for up to a minute.
+_quiet=$(grep -hE 'makoctl mode -t|hyprctl hyprsunset (temperature|identity)' \
+           "$REPO/hypr/common/binds.lua" "$REPO/hypr/common/media.lua" | grep -v 'ergon-status --poke' || true)
+check "every DND and night-light key tells the bar" test -z "$_quiet"
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

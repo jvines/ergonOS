@@ -171,5 +171,55 @@ else
   bad "stop: rc=$rc log='$(cat "$LOG")' pactl='$(cat "$PACTLLOG")'"
 fi
 
+# --- the bar is told (ERGON-81) ----------------------------------------------
+# The status module no longer polls: ergon-record pokes it, on start once
+# wf-recorder is running, on stop once it has EXITED -- it is still finishing
+# the file after SIGINT. The stub records whether a recording was still live
+# at the moment of each poke.
+#
+# The start runs above each left a poke behind, waiting up to 5 s for a
+# wf-recorder their stub never starts. Let them land on nothing first, or they
+# fire into the checks below.
+sleep 5.5
+cat > "$T/stub/ergon-status" <<EOF
+#!/usr/bin/env bash
+printf 'ergon-status %s live=%s\n' "\$*" "\$( [ -e "$T/recording" ] && echo yes || echo no)" >> "$LOG"
+EOF
+chmod +x "$T/stub/ergon-status"
+poked() {  # <live=yes|no>: wait up to 8 s for a poke made in that state
+  for _ in $(seq 1 80); do
+    grep -qx "ergon-status --poke live=$1" "$LOG" 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# Start: wf-recorder (the stub) comes up a moment after the exec.
+cat > "$T/stub/wf-recorder" <<EOF
+#!/usr/bin/env bash
+sleep 0.5; : > "$T/recording"
+EOF
+chmod +x "$T/stub/wf-recorder"
+rm -f "$STATEFILE" "$T/recording"; : > "$LOG"
+"$RECORD" >"$T/out" 2>&1
+poked yes && ok "start: the bar is told once wf-recorder is running" \
+          || bad "start: no poke while recording: log='$(cat "$LOG")'"
+
+# Stop: wf-recorder takes a second to finish after SIGINT.
+cat > "$T/stub/pkill" <<EOF
+#!/usr/bin/env bash
+printf 'pkill %s\n' "\$*" >> "$LOG"
+( sleep 1; rm -f "$T/recording" ) &
+EOF
+chmod +x "$T/stub/pkill"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$T/stub/notify-send"
+: > "$T/recording"; : > "$LOG"
+"$RECORD" >"$T/out" 2>&1
+if poked no && ! grep -qx 'ergon-status --poke live=yes' "$LOG"; then
+  ok "stop: the bar is told once wf-recorder has exited, not while it finishes"
+else
+  bad "stop: poke too early or never: log='$(cat "$LOG")'"
+fi
+
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -256,6 +256,8 @@ case " $* " in
       printf '%s\n' "$STUB_OOM_APP"
     fi ;;
   *"systemd-oomd"*) [ "${STUB_OOMD:-active}" = active ] ;;
+  # ERGON-81: whether this run's scope is up, which the run itself marks.
+  *" is-active "*) [ -e "$TEST_ROOT/scope-live" ] ;;
   *) exit 0 ;;
 esac
 EOF
@@ -690,6 +692,24 @@ NU="$REPO/systemd/ergon-oom-notify.service"
 check "  and the unit does restart it" has "$NU" '^Restart=on-failure$'
 check "the notifier is not in app.slice, where the kill it reports could take it" \
   has "$NU" '^Slice=session\.slice$'
+
+# --- the bar counts runs, and is told (ERGON-81) ------------------------------
+# ergon-status's watch count is no longer polled: ergon watch pokes the bar
+# once its scope is up and once it is gone. The job below marks the scope's
+# lifetime itself (the systemctl stub answers is-active from that mark), and
+# the ergon-status stub notes whether the scope was live at each poke.
+cat > "$T/stub/ergon-status" <<'EOF'
+#!/usr/bin/env bash
+printf '%s live=%s\n' "$*" "$( [ -e "$TEST_ROOT/scope-live" ] && echo yes || echo no)" >> "$TEST_ROOT/log/pokes"
+EOF
+chmod +x "$T/stub/ergon-status"
+sleep 11   # earlier runs here leave a poke behind, waiting up to 10 s on a scope that never was
+: > "$L/pokes"
+"$REPO/bin/ergon-watch" --quiet --name poke -- \
+  sh -c ': > "$TEST_ROOT/scope-live"; sleep 1; rm -f "$TEST_ROOT/scope-live"' >/dev/null 2>&1
+for _ in $(seq 1 50); do [ "$(grep -c . "$L/pokes" 2>/dev/null)" -ge 2 ] && break; sleep 0.1; done
+check "ergon watch tells the bar once its run is up"   grep -qx -- '--poke live=yes' "$L/pokes"
+check "  and once it has ended"                        grep -qx -- '--poke live=no' "$L/pokes"
 
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

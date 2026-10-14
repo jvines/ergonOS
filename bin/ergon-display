@@ -104,7 +104,8 @@ case "$1" in
     mirror
     makoctl mode -a do-not-disturb >/dev/null 2>&1 \
       && echo "   notifications hidden (do-not-disturb)" \
-      || echo "   mako did not take do-not-disturb: notifications will show" >&2 ;;
+      || echo "   mako did not take do-not-disturb: notifications will show" >&2
+    ergon-status --poke 2>/dev/null || true ;;   # the bar shows DND (ERGON-81)
   extend)
     rc=0
     while IFS= read -r t; do
@@ -116,7 +117,8 @@ case "$1" in
     [ "$rc" = 0 ] || exit 1
     # A mirror of an output unplugged since, too, or it returns on replug.
     [ ! -f "$SAVED" ] || sed -i '/, mirror = /d' "$SAVED"
-    makoctl mode -r do-not-disturb >/dev/null 2>&1 || true ;;
+    makoctl mode -r do-not-disturb >/dev/null 2>&1 || true
+    ergon-status --poke 2>/dev/null || true ;;
   scale)
     case "${2:-}" in +|-) scale "$2" ;; *) usage ;; esac ;;
   *) usage ;;

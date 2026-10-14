@@ -1575,6 +1575,26 @@ hq hyprsunset temperature 6500 >/dev/null 2>&1; sleep 1
 grep -q '"tint"' <<<"$(_st)" && bad "back at 6500K the bar still shows a tint" \
   || ok "  and 6500K reads as neutral"
 
+# ERGON-81: the module is signalled, not polled, so the claim is that the REAL
+# waybar re-runs it on `ergon-status --poke`. Seen from outside through a side
+# effect of one run: with the update count gone, a run of the module starts the
+# recount at once, under flock, and the lock file appears. Absent for 2 s
+# first, so it is not the 60 s backstop that made it.
+_uc="$H/.cache/ergon/updates"
+if pgrep -x waybar >/dev/null; then
+  rm -f "$_uc" "$_uc.lock"; sleep 2
+  if [ -e "$_uc.lock" ]; then
+    note "the module's 60 s backstop ran during the poke check; nothing measured"
+  else
+    usr "ergon-status --poke" >/dev/null 2>&1
+    for _ in $(seq 1 25); do [ -e "$_uc.lock" ] && break; sleep 0.2; done
+    [ -e "$_uc.lock" ] && ok "waybar re-runs the status module when poked (SIGRTMIN+8)" \
+      || bad "ergon-status --poke reached no status module: nothing ran it within 5 s"
+  fi
+else
+  bad "no waybar to poke"
+fi
+
 # ergon-doctor is the bug-report format for a public distro, so it has to work
 # on a machine it has never seen. Assert it RUNS and that its JSON parses --
 # a health check that dies is worse than none, because it dies exactly when

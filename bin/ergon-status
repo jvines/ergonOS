@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=The modes this session is in right now, for the bar and for you
 # ergon:group=bar
-# ergon:args=[--waybar | --click | --refresh]
+# ergon:args=[--waybar | --click | --refresh | --poke]
 #
 # Which of these is on: a screen recording, do-not-disturb, a night-light tint,
 # an `ergon watch` run, pending updates or unread Arch news. Each fails
@@ -13,18 +13,35 @@
 #   ergon-status --waybar    the same as waybar JSON: empty text hides the module
 #   ergon-status --click     stop the loudest one: a recording, else do-not-disturb
 #   ergon-status --refresh   recount updates and news now (normally hourly)
+#   ergon-status --poke      tell the bar to ask again, now
 #
 # Every probe asks the thing itself -- wf-recorder's process, mako's mode,
 # hyprsunset's temperature, the user manager's scopes -- rather than a flag
 # file a crashed toggle could leave behind. Updates are the exception: asking
 # the mirrors takes seconds and the network, so their count is cached in
 # $XDG_CACHE_HOME/ergon/updates and refreshed in the background once an hour.
+#
+# The bar is TOLD, not polling (ERGON-81). It ran this every 3 s -- bash plus
+# pgrep, makoctl, hyprctl and systemctl, two processes a second for the whole
+# session, to learn that nothing had changed. Every mode here is changed by
+# something ergonOS runs (the DND, night-light and record keys, ergon-record,
+# ergon-display, ergon watch, --click, --refresh), and each runs --poke, which
+# sends waybar the module's signal. The module's 60 s interval is the backstop
+# for a change made behind ergonOS's back: a bare makoctl, a wf-recorder that
+# crashed.
 set -euo pipefail
 
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ergon/updates"
 # hyprsunset starts at 6500K (hypr/common/autostart.lua). Anything else is a
 # tint someone chose, and the point is to show that it is still on.
 NEUTRAL=6500
+# waybar/config.jsonc's custom/status has "signal": this number. waybar re-runs
+# the module on SIGRTMIN+N; test-status.sh holds the two to each other.
+SIGNAL=8
+poke() { pkill -RTMIN+"$SIGNAL" -x waybar 2>/dev/null || true; }
+# Before anything else, the stale-count check below included: a poke is sent
+# from key binds and must cost one pkill.
+[ "${1:-}" = --poke ] && { poke; exit 0; }
 
 recording() { pgrep -x wf-recorder >/dev/null 2>&1; }
 dnd()       { grep -qx do-not-disturb <<<"$(makoctl mode 2>/dev/null)"; }
@@ -60,10 +77,12 @@ if [ "${1:-}" != --refresh ] && stale && command -v flock >/dev/null 2>&1; then
 fi
 
 case "${1:-}" in
-  --refresh) refresh; exit 0 ;;
+  --refresh) refresh; poke; exit 0 ;;
   --click)
+    # A recording is stopped by ergon-record, which pokes once wf-recorder has
+    # actually exited; it is still finishing the file when this would.
     if recording; then exec ergon-record
-    elif dnd; then makoctl mode -r do-not-disturb >/dev/null
+    elif dnd; then makoctl mode -r do-not-disturb >/dev/null; poke
     fi
     exit 0 ;;
   -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;

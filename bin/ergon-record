@@ -40,6 +40,12 @@ if pgrep -x wf-recorder >/dev/null; then
   # SIGINT, not SIGTERM: wf-recorder finalises the container on INT and leaves
   # an unplayable file on TERM.
   pkill -INT -x wf-recorder
+  # The bar's recording mode goes when wf-recorder is gone, not when it is
+  # asked to go: it is still finishing the file. So the poke waits for the exit
+  # (ERGON-81), in the background, since nothing here waits for it either.
+  ( for _ in $(seq 40); do pgrep -x wf-recorder >/dev/null || break; sleep 0.25; done
+    ergon-status --poke ) </dev/null >/dev/null 2>&1 &
+  disown
   file=$(cat "$STATE/recording" 2>/dev/null || true)
   rm -f "$STATE/recording"
   # Tear down whatever --audio both built. Same ids START printed to this
@@ -145,4 +151,9 @@ fi
 msg="recording"
 [ -n "$audio" ] && msg="$msg, $audio audio"
 notify-send "ergon-record" "$msg → $(basename "$file")"
+# The bar shows the recording once wf-recorder is running, which is after the
+# exec below: so the poke waits for it, from a subshell the exec leaves behind.
+( for _ in $(seq 20); do pgrep -x wf-recorder >/dev/null && break; sleep 0.25; done
+  ergon-status --poke ) </dev/null >/dev/null 2>&1 &
+disown
 exec wf-recorder "${args[@]}"

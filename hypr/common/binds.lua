@@ -254,4 +254,4 @@ bind("SUPER + SHIFT + A",     "Restore notification",     "makoctl restore")
 -- display`'s presentation, which sets it; this is the toggle for everything
 -- else -- observing, a talk on someone else's screen. Toasts are still kept in
 -- history while it is on, and the bar shows the mode until it is off.
-bind("SUPER + CTRL + D",      "Do not disturb (toggle)",  "makoctl mode -t do-not-disturb")
+bind("SUPER + CTRL + D",      "Do not disturb (toggle)",  "makoctl mode -t do-not-disturb; ergon-status --poke")

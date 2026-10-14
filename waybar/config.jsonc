@@ -66,10 +66,16 @@
   // updates or unread news. Each one fails silently when forgotten, which is
   // the case for drawing it. Empty text when none is on, so the module hides.
   // A click stops a recording, else ends do-not-disturb. See bin/ergon-status.
+  //
+  // Signalled, not polled (ERGON-81): whatever changes a mode runs
+  // `ergon-status --poke`, which sends SIGRTMIN+8, and waybar re-runs this at
+  // once. It polled every 3 s, two processes a second all session. The 60 s
+  // interval is only the backstop, for a change made behind ergonOS's back.
   "custom/status": {
     "exec": "ergon-status --waybar",
     "return-type": "json",
-    "interval": 3,
+    "interval": 60,
+    "signal": 8,
     "format": "{}",
     "on-click": "ergon-status --click",
     "tooltip": true

@@ -72,10 +72,12 @@ bind("XF86AudioPrev",  "Previous track", osd .. "--playerctl previous",   locked
 -- sunset schedule on purpose: your working hours are not the sun's, and a
 -- daemon that warms the panel on its own schedule is actively wrong when you
 -- are reading a colour-mapped plot at midnight.
-bind("SUPER + SHIFT + N", "Night light (3500K)", "hyprctl hyprsunset temperature 3500")
-bind("SUPER + SHIFT + M", "Daylight (6500K)",    "hyprctl hyprsunset temperature 6500")
+-- Each tells the bar's status module, which shows a tint while one is on
+-- (ergon-status --poke, ERGON-81).
+bind("SUPER + SHIFT + N", "Night light (3500K)", "hyprctl hyprsunset temperature 3500; ergon-status --poke")
+bind("SUPER + SHIFT + M", "Daylight (6500K)",    "hyprctl hyprsunset temperature 6500; ergon-status --poke")
 -- Identity: no colour transform at all. This was SUPER+SHIFT+B, which is also
 -- "Next background" in binds.lua; Hyprland fires every bind that matches, so
 -- one press changed the wallpaper AND reset the panel. CTRL+N keeps it beside
 -- the other night-light key. ergon-lint now refuses a chord bound twice.
-bind("SUPER + CTRL + N",  "Colour temperature off", "hyprctl hyprsunset identity")
+bind("SUPER + CTRL + N",  "Colour temperature off", "hyprctl hyprsunset identity; ergon-status --poke")
