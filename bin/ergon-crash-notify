@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# ergon:summary=Say on the desktop which of your programs crashed and dumped core
+# ergon:group=system
+# ergon:args=
+#
+# Run by systemd/ergon-crash-notify.service for as long as the user manager runs.
+#
+# ERGON-86. A program that segfaults closes its window and says nothing; the core
+# is in the journal and in `coredumpctl`, and nobody looks. Same shape as
+# ergon-oom-notify (ERGON-50): follow the journal, filter by MESSAGE_ID and our
+# own _UID, notify. systemd-coredump logs every dump under the MESSAGE_ID below
+# with structured COREDUMP_* fields (systemd.journal-fields(7)).
+set -euo pipefail
+
+DUMPED=fc2e22bc6ee647b6b90729ab34a250b1     # "Process N (comm) of user U dumped core."
+WINDOW=${ERGON_CRASH_WINDOW:-60}            # seconds; one popup per program per window
+
+declare -A last
+
+# --lines=0: a restart must not announce again the crashes it already announced.
+# As in ergon-oom-notify, an exit here is a fault and Restart= answers it.
+journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID="$DUMPED" _UID="$(id -u)" \
+  | jq --unbuffered -r '[.COREDUMP_PID, .COREDUMP_EXE, .COREDUMP_COMM, .COREDUMP_SIGNAL_NAME]
+                        | map(if . == null or . == "" then "-" else . end) | @tsv' \
+  | while IFS=$'\t' read -r pid exe comm sig; do
+  # Tab is IFS whitespace, so "-" stands in for an empty field (else the rest shift).
+  # comm is cut at 15 characters; the executable's basename is the better name.
+  name=$comm
+  case "$exe" in /*) name=${exe##*/} ;; esac
+  case "$name" in ''|-|.|..) name=unknown ;; esac
+  # Never announce our own machinery; a crashing notifier would announce itself.
+  case "$name" in ergon-crash-notify|ergon-oom-notify) continue ;; esac
+  # Crash loops dump repeatedly: one popup per program per window.
+  now=$EPOCHSECONDS
+  [ $((now - ${last[$name]:-0})) -ge "$WINDOW" ] || continue
+  last[$name]=$now
+  if [ "$sig" = - ]; then sig=""; else sig=" ($sig)"; fi
+  [[ $pid =~ ^[0-9]+$ ]] || pid=""
+  # Backslashes doubled in the body only: notify-send g_strcompress()es it and
+  # not the summary (see ergon-oom-notify).
+  notify-send -u normal "$name crashed${sig}" \
+    "A core dump was recorded. \`coredumpctl info ${pid:-$name}\` has the details." \
+    || printf 'could not deliver the notification for %s (no session bus?)\n' "$name" >&2
+done
