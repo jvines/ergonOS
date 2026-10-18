@@ -185,6 +185,10 @@ jobs:
       - name: The layout key cycles the keyboard layouts a host lists
         run: cd "$CI_DIR" && ./bin/test-layout.sh
 
+      # ERGON-89: pop out and close-all, stub hyprctl.
+      - name: Window pop-out and close-all touch the right windows
+        run: cd "$CI_DIR" && ./bin/test-window.sh
+
       # ERGON-87: the emoji list parsed from Unicode's own file; the pick copied and typed.
       - name: The emoji picker copies and types the pick
         run: cd "$CI_DIR" && ./bin/test-emoji.sh

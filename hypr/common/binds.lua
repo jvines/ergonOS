@@ -149,6 +149,8 @@ bind("SUPER + Q",            "Close window",        hl.dsp.window.close())
 bind("SUPER + SHIFT + F",    "Toggle floating",     hl.dsp.window.float({ action = "toggle" }))
 bind("SUPER + F",            "Fullscreen",          hl.dsp.window.fullscreen({ action = "toggle" }))
 bind("SUPER + P",            "Pseudo-tile",         hl.dsp.window.pseudo({ action = "toggle" }))
+bind("SUPER + O",            "Pop window out (float, centre, pin; again to undo)", "ergon-window pop")
+bind("SUPER + CTRL + SHIFT + Q", "Close ALL windows on this workspace", "ergon-window close-all")
 
 -- Focus. hjkl because every other tool on this machine uses them.
 bind("SUPER + H", "Focus left",  hl.dsp.focus({ direction = "left"  }))
@@ -160,6 +162,25 @@ bind("SUPER + SHIFT + H", "Move window left",  hl.dsp.window.move({ direction = 
 bind("SUPER + SHIFT + J", "Move window down",  hl.dsp.window.move({ direction = "down"  }))
 bind("SUPER + SHIFT + K", "Move window up",    hl.dsp.window.move({ direction = "up"    }))
 bind("SUPER + SHIFT + L", "Move window right", hl.dsp.window.move({ direction = "right" }))
+
+-- Swap places with the neighbour (ERGON-89), ALT being the third rung after
+-- SHIFT (move) and CTRL (resize): the layout stays, the two windows trade tiles.
+bind("SUPER + ALT + H", "Swap with left window",  hl.dsp.window.swap({ direction = "l" }))
+bind("SUPER + ALT + J", "Swap with window below", hl.dsp.window.swap({ direction = "d" }))
+bind("SUPER + ALT + K", "Swap with window above", hl.dsp.window.swap({ direction = "u" }))
+bind("SUPER + ALT + L", "Swap with right window", hl.dsp.window.swap({ direction = "r" }))
+
+-- Cycle every window on the workspace, floating ones included, raising each so
+-- a floating window is not left behind a tile. A function bind because one
+-- chord cannot carry two dispatchers (and no chord may be bound twice).
+local function cycle(forward)
+  return function()
+    hl.dispatch(hl.dsp.window.cycle_next({ next = forward }))
+    hl.dispatch(hl.dsp.window.bring_to_top())
+  end
+end
+bind("ALT + TAB",         "Next window",     cycle(true))
+bind("ALT + SHIFT + TAB", "Previous window", cycle(false))
 
 -- Resize without a submap: hold CTRL and use the same hjkl. A submap is a mode
 -- you can be stuck in, and there is no bar indicator worth the risk.
