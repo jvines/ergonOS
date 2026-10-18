@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# ergon:summary=Show or change the machine's timezone, detected or picked
+# ergon:group=system
+# ergon:args=[--show | --detect | ZONE]
+# ergon:help=native
+#
+#   ergon timezone              detect from the connection, confirm or pick, apply
+#   ergon timezone Europe/Madrid   set it directly
+#   ergon timezone --detect     print what the connection says, change nothing
+#   ergon timezone --show       print the current zone
+#
+# The same detect-or-pick the installer uses (lib/timezone.sh): Enter accepts
+# the detected zone, and with no connection a region -> city picker opens at the
+# current zone. Applied with timedatectl. The wifi regulatory domain is derived
+# from the timezone at provisioning (provision-arch.sh); a move to another
+# country takes effect there on the next provisioning run.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+. "$ERGON/lib/timezone.sh"
+
+current() { timedatectl show -p Timezone --value 2>/dev/null || readlink -f /etc/localtime | sed "s|^$TZ_ZONEDIR/||"; }
+
+case "${1:-}" in
+  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --show)    current; exit 0 ;;
+  --detect)  tz_detect || { echo "ergon-timezone: could not detect a timezone" >&2; exit 1; } ; exit 0 ;;
+  '')        now=$(current); TZ_DEFAULT=${now:-America/Santiago}
+             [ -t 0 ] || { echo "ergon-timezone: needs a terminal, or pass a ZONE" >&2; exit 2; }
+             zone=$(tz_resolve 1 "$TZ_DEFAULT") || exit 1 ;;
+  *)         zone=$1 ;;
+esac
+
+tz_valid "$zone" || { echo "ergon-timezone: no such timezone: $zone" >&2; exit 1; }
+if [ "$zone" = "$(current)" ]; then echo "timezone is already $zone"; exit 0; fi
+if [ "$(id -u)" = 0 ]; then timedatectl set-timezone "$zone"; else sudo timedatectl set-timezone "$zone"; fi
+echo "timezone is now $zone"
