@@ -106,6 +106,12 @@ bright7=@COOL_FG0:raw@
 [key-bindings]
 # Matches wezterm's, so muscle memory survives falling back to the escape hatch.
 search-start=Control+Shift+f
+# ERGON-88: SUPER+C/V send Ctrl+Insert / Shift+Insert (hypr/common/binds.lua).
+# foot's default Shift+Insert pastes the PRIMARY selection, so it moves to the
+# clipboard here; middle-click still pastes primary.
+clipboard-copy=Control+Shift+c XF86Copy Control+Insert
+clipboard-paste=Control+Shift+v XF86Paste Shift+Insert
+primary-paste=none
 
 [mouse]
 hide-when-typing=yes
