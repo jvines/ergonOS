@@ -44,7 +44,7 @@ SWAP_GIB="${SWAP_GIB:-$(( _ram_gib + 4 ))}"
 HIBERNATE="${HIBERNATE:-1}"
 
 HOSTNAME="${HOSTNAME_NEW:-}"          # prompted if empty
-TIMEZONE="${TIMEZONE:-America/Santiago}"
+TIMEZONE="${TIMEZONE:-}"       # env wins; else detected from the connection, else picked
 LOCALE="${LOCALE:-en_US.UTF-8}"
 # Detected, not assumed. Anyone whose keyboard is not American has already run
 # `loadkeys` on the ISO -- they had to, to type a password containing anything
@@ -172,11 +172,18 @@ fi
   || { echo "username required: lowercase letters, digits, _ and -, starting with a letter or _" >&2; exit 1; }
 [ "$USERNAME" != root ] || { echo "the username cannot be root: this is the account you log in with" >&2; exit 1; }
 
-# Locale, timezone and keymap, the way every installer asks. The defaults are
-# this author's, and a distro that silently gives a stranger America/Santiago
-# and a US keymap is not one they will keep.
+# Locale, timezone and keymap, the way every installer asks. A distro that
+# silently gives a stranger America/Santiago and a US keymap is not one they
+# will keep, so the timezone is detected from the connection (lib/timezone.sh),
+# with a picker when there is none. TIMEZONE in the environment wins outright;
+# unattended with no connection falls back to America/Santiago.
+# shellcheck source=../lib/timezone.sh
+. "$ERGON/lib/timezone.sh"
+if [ -z "$TIMEZONE" ]; then
+  if [ "$UNATTENDED" = 1 ]; then _int=0; else _int=1; fi
+  TIMEZONE=$(tz_resolve "$_int" America/Santiago)
+fi
 if [ "$UNATTENDED" != 1 ]; then
-  printf 'timezone [%s]: ' "$TIMEZONE"; read -r _a; [ -n "$_a" ] && TIMEZONE="$_a"
   printf 'locale   [%s]: ' "$LOCALE";   read -r _a; [ -n "$_a" ] && LOCALE="$_a"
   printf 'keymap   [%s]: ' "$KEYMAP";   read -r _a; [ -n "$_a" ] && KEYMAP="$_a"
 fi

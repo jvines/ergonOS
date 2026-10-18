@@ -26,7 +26,7 @@
 # message the command itself prints, then type the real one into the terminal
 # that is now sitting open, focused, and yours.
 #
-# System and Style are the two exceptions: `ergon-session` and the
+# System (Timezone excepted: it asks questions) and Style are the two exceptions: `ergon-session` and the
 # `ergon-theme`/`ergon-wallpaper` setters are quick, self-contained and
 # already either fuzzel-driven or silent-on-success, so they run detached,
 # the same way SUPER+T and SUPER+SHIFT+B already do.
@@ -90,6 +90,15 @@ show_topic() {  # $1: an `ergon explain` topic name
     elif command -v less >/dev/null 2>&1; then "$0" explain "$1" | less -R
     else "$0" explain "$1"; echo; echo "-- press enter to close --"; read -r _
     fi' "$BINDIR/ergon" "$1"
+}
+
+system_menu() {
+  local sel
+  sel=$(printf 'Session\nTimezone\n' | pick system) || exit 0
+  case "$sel" in
+    Session)  exec "$BINDIR/ergon-session" ;;
+    Timezone) run_in_terminal timezone ;;   # asks questions, so a real terminal
+  esac
 }
 
 style_menu() {
@@ -177,7 +186,7 @@ help_menu() {
 # `ergon --list` (not --groups/--group, which this function itself calls --
 # see that test for why comparing it to itself would be circular).
 dump() {
-  printf 'System\n  session menu (ergon session)\n'
+  printf 'System\n  session menu (ergon session)\n  Timezone (ergon timezone)\n'
   printf 'Style\n  Palette\n'
   "$BINDIR/ergon-theme" --list | unmarked | sed 's/^/    /'
   printf '  Background\n'
@@ -213,7 +222,7 @@ command -v fuzzel >/dev/null 2>&1 || { echo "ergon-menu: fuzzel is not installed
 
 sel=$(printf 'System\nStyle\nCommands\nHelp\n' | pick ergon) || exit 0
 case "$sel" in
-  System)   exec "$BINDIR/ergon-session" ;;
+  System)   system_menu ;;
   Style)    style_menu ;;
   Commands) commands_menu ;;
   Help)     help_menu ;;
