@@ -118,6 +118,7 @@
     "format-icons": ["󰕿", "󰖀", "󰕾"],
     "on-click": "ergon-launch-tui wiremix",
     "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+    "on-click-middle": "ergon-audio-output",
     "scroll-step": 5
   },
 

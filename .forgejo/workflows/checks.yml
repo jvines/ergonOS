@@ -176,6 +176,11 @@ jobs:
       - name: The bar shows the modes the session is in
         run: cd "$CI_DIR" && ./bin/test-status.sh
 
+      # ERGON-84: the audio-output key. Stubs pactl and swayosd-client; asserts the
+      # sink chosen, the streams moved and the device named on screen.
+      - name: The audio-output key cycles sinks
+        run: cd "$CI_DIR" && ./bin/test-audio-output.sh
+
       # lib/ -- the science tooling, which until now was the only part of this
       # repo with no gate at all. Every step above this line tests the desktop,
       # the installer or the system; none of them imports a single line of the
