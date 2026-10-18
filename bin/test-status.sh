@@ -30,12 +30,13 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$T/stub/$1"; chmod +x "$T/st
 stub pgrep        'echo "probe pgrep" >> "$S_LOG"; [ "${S_REC:-0}" = 1 ]'
 stub makoctl      'case "$1" in mode) [ "$#" -gt 1 ] && echo "$*" >> "$S_LOG"; printf "default\n"; [ "${S_DND:-0}" = 1 ] && echo do-not-disturb ;; esac; exit 0'
 stub hyprctl      'echo "probe hyprctl" >> "$S_LOG"; [ -n "${S_TEMP:-}" ] && echo "$S_TEMP"; exit 0'
-stub systemctl    'for i in $(seq "${S_WATCH:-0}"); do echo "ergon-watch-x-$i.scope loaded active running"; done'
+stub systemctl    'case "$*" in *is-active*) [ "${S_AWAKE:-0}" = 1 ]; exit;; *stop*) echo "systemctl $*" >> "$S_LOG"; exit 0;; esac; for i in $(seq "${S_WATCH:-0}"); do echo "ergon-watch-x-$i.scope loaded active running"; done'
+stub systemd-run  'echo "systemd-run $*" >> "$S_LOG"'
 stub checkupdates 'for i in $(seq "${S_UPD:-0}"); do echo "pkg$i 1-1 -> 1-2"; done'
 stub informant    '[ "${S_NEWS:-0}" = 0 ]'
 stub ergon-record 'echo record >> "$S_LOG"'
 stub pkill        'echo "$*" >> "$S_LOG"'
-export PATH="$T/stub:$PATH" XDG_CACHE_HOME="$T/cache" S_LOG="$T/log"
+export PATH="$T/stub:$PATH:$REPO/bin" XDG_CACHE_HOME="$T/cache" S_LOG="$T/log"
 : > "$T/log"
 # The signal ergon-status sends, read from it rather than repeated here.
 SIG=$(sed -n 's/^SIGNAL=\([0-9]*\)$/\1/p' "$REPO/bin/ergon-status")
@@ -84,6 +85,22 @@ check "stops the recording first"            grep -qx record "$T/log"
 check "  and leaves do-not-disturb alone"    no_mode_r
 : > "$T/log"; S_DND=1 "$REPO/bin/ergon-status" --click
 check "with no recording, ends do-not-disturb" grep -qx 'mode -r do-not-disturb' "$T/log"
+
+
+echo "== stay awake (ERGON-83)"
+out=$(st S_AWAKE=1)
+check "stay-awake shows, classed awake"      has "$out" '"awake"'
+check "  and says how to end it"             has "$out" 'SUPER+CTRL+I'
+: > "$T/log"; S_AWAKE=1 "$REPO/bin/ergon-status" --click
+check "a click ends it, via ergon-awake off" grep -q 'systemctl --user stop ergon-awake.service' "$T/log"
+: > "$T/log"; "$REPO/bin/ergon-awake" toggle
+check "toggling when off holds an idle inhibitor" grep -qE 'systemd-run .*--what=idle( |$)' "$T/log"
+check "  and never the sleep or lid-switch lock" test -z "$(grep -E 'what=[a-z:]*(sleep|handle-lid)' "$T/log")"
+check "  and tells the bar"                  grep -qx -- "-RTMIN+$SIG -x waybar" "$T/log"
+: > "$T/log"; S_AWAKE=1 "$REPO/bin/ergon-awake" toggle
+check "toggling when on stops the unit"      grep -q 'systemctl --user stop ergon-awake.service' "$T/log"
+: > "$T/log"; S_AWAKE=1 "$REPO/bin/ergon-awake" on
+check "'on' twice starts no second inhibitor" test -z "$(grep systemd-run "$T/log")"
 
 echo "== the hourly count"
 : > "$T/log"

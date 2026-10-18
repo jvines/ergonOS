@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# ergon:summary=Stay awake: no dimming, locking or screen-off until you turn it off
+# ergon:group=power
+# ergon:args=[on | off | toggle | status]
+#
+# For a long run you are watching and for giving a talk. hypridle dims at 4
+# min, locks at 10 and blanks the panel at 12 (hypr/hypridle.conf); this holds
+# a logind "idle" inhibitor, which hypridle respects (ignore_systemd_inhibit
+# is false there), so none of the three fires while it is held. Bare
+# `ergon-awake` toggles.
+#
+# Why an inhibitor and not `pkill hypridle` (omarchy's way): stopping hypridle
+# also loses its lock_cmd / before_sleep_cmd / after_sleep_cmd, so a lid-close
+# suspend would sleep UNLOCKED, and a forgotten stop leaves nothing to say so.
+# The inhibitor leaves hypridle running.
+#
+# What it deliberately does not touch: the lid. Closing it still suspends (or
+# docks, see ergon-lid) exactly as always -- shutting a laptop into a bag is a
+# human decision. There is no idle suspend to disable (hypridle.conf says why).
+#
+# State is a transient user unit, ergon-awake.service, holding the inhibitor:
+# it survives a waybar restart, ergon-status asks the unit rather than a flag
+# file, and it is gone at logout and reboot, so it can never outlive the
+# session that asked for it. The bar shows it (ERGON-32/81) and is poked.
+set -euo pipefail
+
+UNIT=ergon-awake.service
+on_p() { systemctl --user is-active --quiet "$UNIT" 2>/dev/null; }
+say()  { command -v notify-send >/dev/null 2>&1 && notify-send -t 3000 "ergon-awake" "$1" || true; }
+
+start() {
+  on_p && return 0
+  systemd-run --user --quiet --unit="${UNIT%.service}" \
+    --description="ergon: stay awake (idle inhibitor)" \
+    systemd-inhibit --what=idle --who=ergon-awake --why="stay awake is on" \
+      --mode=block sleep infinity
+  say "staying awake: no dimming, lock or screen-off until you turn it off"
+}
+stop() {
+  if on_p; then systemctl --user stop "$UNIT"; fi
+  say "idle behaviour back to normal"
+}
+
+case "${1:-toggle}" in
+  on)     start ;;
+  off)    stop ;;
+  toggle) if on_p; then stop; else start; fi ;;
+  status) if on_p; then echo "on"; else echo "off"; fi; exit 0 ;;
+  -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) echo "usage: ergon-awake [on|off|toggle|status]" >&2; exit 2 ;;
+esac
+command -v ergon-status >/dev/null 2>&1 && ergon-status --poke || true
