@@ -125,6 +125,9 @@ config.colors = {
 config.keys = {
   { key = "c", mods = "CTRL|SHIFT", action = wezterm.action.CopyTo("Clipboard") },
   { key = "v", mods = "CTRL|SHIFT", action = wezterm.action.PasteFrom("Clipboard") },
+  -- ERGON-88: SUPER+C/V arrive as these (wezterm's defaults use the primary selection).
+  { key = "Insert", mods = "CTRL", action = wezterm.action.CopyTo("Clipboard") },
+  { key = "Insert", mods = "SHIFT", action = wezterm.action.PasteFrom("Clipboard") },
   { key = "f", mods = "CTRL|SHIFT", action = wezterm.action.Search({ CaseInSensitiveString = "" }) },
   { key = "k", mods = "CTRL|SHIFT", action = wezterm.action.ClearScrollback("ScrollbackAndViewport") },
   -- Font size, with the window size pinned (see above).

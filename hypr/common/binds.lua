@@ -145,7 +145,8 @@ bind("SUPER + ALT + SPACE",  "Menu",                "ergon-menu")
 -- ---------------------------------------------------------------------------
 -- Windows
 bind("SUPER + Q",            "Close window",        hl.dsp.window.close())
-bind("SUPER + V",            "Toggle floating",     hl.dsp.window.float({ action = "toggle" }))
+-- SUPER+V is paste (see Clipboard below), so floating moved to SUPER+SHIFT+F.
+bind("SUPER + SHIFT + F",    "Toggle floating",     hl.dsp.window.float({ action = "toggle" }))
 bind("SUPER + F",            "Fullscreen",          hl.dsp.window.fullscreen({ action = "toggle" }))
 bind("SUPER + P",            "Pseudo-tile",         hl.dsp.window.pseudo({ action = "toggle" }))
 
@@ -231,7 +232,29 @@ bind("SUPER + E", "Files",      launch .. term .. " yazi")
 bind("SUPER + N", "Notes",      launch .. term .. " emacs -nw")
 
 -- ---------------------------------------------------------------------------
--- Clipboard. cliphist stores; fuzzel picks; wl-copy puts it back.
+-- Clipboard (ERGON-88). SUPER+C / V / X copy, paste and cut in every app,
+-- terminals included. They send Ctrl+Insert / Shift+Insert / Shift+Delete, the
+-- legacy CUA chords: GTK and Qt honour them as copy/paste/cut, and a terminal
+-- never mistakes them for ^C / ^V (which is why Ctrl+C would be wrong in one).
+-- foot and wezterm bind them to the CLIPBOARD (not the primary selection) in
+-- foot/foot.ini.in and wezterm/wezterm.lua.in; cut has no meaning in a terminal.
+--
+-- No window is targeted, so the chord reaches whatever has focus. A virtual
+-- keyboard would not do: the physically held SUPER merges into the injected
+-- chord. The down/up split, 50 ms apart, avoids synthetic keys sticking.
+local function send_shortcut(mods, key)
+  return function()
+    hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = key, state = "down" }))
+    hl.timer(function()
+      hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = key, state = "up" }))
+    end, { timeout = 50, type = "oneshot" })
+  end
+end
+bind("SUPER + C", "Copy (every app)",  send_shortcut("CTRL",  "Insert"))
+bind("SUPER + V", "Paste (every app)", send_shortcut("SHIFT", "Insert"))
+bind("SUPER + X", "Cut (every app)",   send_shortcut("SHIFT", "Delete"))
+
+-- cliphist stores; fuzzel picks; wl-copy puts it back.
 -- `--no-run-if-empty` stops an empty selection from clearing the clipboard.
 bind("SUPER + SHIFT + V", "Clipboard history",
   "cliphist list | fuzzel --dmenu --prompt 'clip  ' | cliphist decode | wl-copy")
