@@ -3,7 +3,8 @@
 # ergon:group=bar
 # ergon:args=[--waybar | --click | --refresh | --poke]
 #
-# Which of these is on: a screen recording, do-not-disturb, a night-light tint,
+# Which of these is on: a screen recording, do-not-disturb, stay-awake (ergon-awake,
+# ERGON-83), a night-light tint,
 # an `ergon watch` run, pending updates or unread Arch news. Each fails
 # silently when forgotten -- a recording nobody stopped, a warm tint over a
 # colormap being judged, toasts swallowed long after the talk ended -- so the
@@ -11,7 +12,7 @@
 #
 #   ergon-status             one line per active mode, for a terminal
 #   ergon-status --waybar    the same as waybar JSON: empty text hides the module
-#   ergon-status --click     stop the loudest one: a recording, else do-not-disturb
+#   ergon-status --click     stop the loudest one: a recording, do-not-disturb, stay-awake
 #   ergon-status --refresh   recount updates and news now (normally hourly)
 #   ergon-status --poke      tell the bar to ask again, now
 #
@@ -52,6 +53,7 @@ tint() {
   t=$(grep -m1 -oE '^[0-9]+' <<<"$(hyprctl hyprsunset temperature 2>/dev/null)") || true
   [ -n "$t" ] && [ "$t" != "$NEUTRAL" ] && printf '%s' "$t"
 }
+awake()     { systemctl --user is-active --quiet ergon-awake.service 2>/dev/null; }
 watches() {
   grep -c . <<<"$(systemctl --user list-units --no-legend --state=active 'ergon-watch-*.scope' 2>/dev/null)" || true
 }
@@ -83,15 +85,17 @@ case "${1:-}" in
     # actually exited; it is still finishing the file when this would.
     if recording; then exec ergon-record
     elif dnd; then makoctl mode -r do-not-disturb >/dev/null; poke
+    elif awake; then ergon-awake off  # pokes the bar itself
     fi
     exit 0 ;;
-  -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 
 text=() tip=() class=()
 if recording; then text+=("󰑋"); tip+=("recording -- click to stop"); class+=(recording); fi
 if dnd; then text+=("󰂛"); tip+=("do not disturb -- SUPER+CTRL+D to end it"); class+=(dnd); fi
 if t=$(tint); then text+=("󰖔"); tip+=("night light at ${t}K"); class+=(tint); fi
+if awake; then text+=("󰅶"); tip+=("staying awake -- SUPER+CTRL+I to end it"); class+=(awake); fi
 w=$(watches)
 if [ "${w:-0}" -gt 0 ]; then text+=("󰔟 $w"); tip+=("$w ergon watch run(s)"); class+=(watch); fi
 read -r upd news 2>/dev/null < "$CACHE" || { upd=0; news=0; }

@@ -255,3 +255,5 @@ bind("SUPER + SHIFT + A",     "Restore notification",     "makoctl restore")
 -- else -- observing, a talk on someone else's screen. Toasts are still kept in
 -- history while it is on, and the bar shows the mode until it is off.
 bind("SUPER + CTRL + D",      "Do not disturb (toggle)",  "makoctl mode -t do-not-disturb; ergon-status --poke")
+-- Stay awake (ERGON-83): no dim, lock or screen-off until toggled back. Shown on the bar.
+bind("SUPER + CTRL + I",      "Stay awake (toggle)",      "ergon-awake")
