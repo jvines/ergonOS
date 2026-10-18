@@ -43,6 +43,10 @@ bind("XF86MonBrightnessDown",       "Brightness down",    osd .. "--brightness l
 bind("ALT + XF86MonBrightnessUp",   "Brightness up 1%",   osd .. "--brightness +1",    ramp)
 bind("ALT + XF86MonBrightnessDown", "Brightness down 1%", osd .. "--brightness -1",    ramp)
 
+-- Next audio output (speakers, headphones, HDMI, Bluetooth): moves the default
+-- sink and every playing stream, and names the device in the OSD.
+bind("SUPER + XF86AudioMute", "Next audio output", "ergon-audio-output", locked)
+
 -- External monitor, over DDC/CI. The hardware keys cannot touch it: an
 -- external display has no /sys/class/backlight entry, so brightnessctl and
 -- swayosd both silently do nothing. SUPER is the "other screen" modifier.

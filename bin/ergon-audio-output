@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# ergon:summary=Switch the audio output to the next sink
+# ergon:group=hardware
+# ergon:args=
+#
+# Cycles the default PipeWire sink (speakers, headphones, HDMI, a Bluetooth
+# headset) to the next one, moves every playing stream onto it, and says which
+# device it landed on through swayosd -- the same overlay the volume keys use.
+#
+# Moving the streams matters: set-default-sink alone only affects streams that
+# start afterwards, so a playing video would stay on the old device and the key
+# would look broken. pactl rather than wpctl because `pactl list sinks` prints
+# one stable "Name:/Description:" record per sink, where `wpctl status` is a
+# tree meant for people; pipewire-pulse is already in packages/pacman.
+set -euo pipefail
+export LC_ALL=C
+
+# Prints "name<TAB>description" per sink, in the order pactl lists them.
+list_sinks() {
+  pactl list sinks | awk -F': ' '
+    /^[[:space:]]*Name: /        { name = $2 }
+    /^[[:space:]]*Description: / { print name "\t" $2 }'
+}
+
+# next_sink DEFAULT < "name<TAB>description" lines  ->  the line after DEFAULT,
+# wrapping round. An unknown default (unplugged, or none set) picks the first.
+next_sink() {
+  awk -F'\t' -v cur="$1" '
+    { n[NR] = $0; if ($1 == cur) at = NR }
+    END { if (NR) print n[at % NR + 1] }'
+}
+
+main() {
+  local sinks cur pick name desc
+  sinks=$(list_sinks)
+  if [ "$(printf '%s\n' "$sinks" | grep -c .)" -lt 2 ]; then
+    swayosd-client --custom-message "Only one audio output" --custom-icon audio-speakers-symbolic 2>/dev/null || true
+    return 0
+  fi
+  cur=$(pactl get-default-sink)
+  pick=$(printf '%s\n' "$sinks" | next_sink "$cur")
+  name=${pick%%$'\t'*}
+  desc=${pick#*$'\t'}
+
+  pactl set-default-sink "$name"
+  local id
+  while read -r id _; do
+    [ -n "$id" ] && pactl move-sink-input "$id" "$name" 2>/dev/null || true
+  done < <(pactl list short sink-inputs)
+
+  swayosd-client --custom-message "$desc" --custom-icon audio-speakers-symbolic 2>/dev/null \
+    || notify-send -t 2000 "Audio output" "$desc" 2>/dev/null || true
+}
+
+[ "${1:-}" = --source-only ] || main "$@"
