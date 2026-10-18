@@ -93,7 +93,7 @@ window#waybar.hidden { opacity: 0.0; }
 window#waybar.empty #window { background: transparent; }
 
 /* -- right-hand group ---------------------------------------------------- */
-#custom-status,
+#custom-status, #custom-layout,
 #custom-temperature,
 #cpu, #memory, #wireplumber, #backlight,
 #network, #bluetooth, #battery, #power-profiles-daemon,
