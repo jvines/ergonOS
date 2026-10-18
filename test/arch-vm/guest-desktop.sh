@@ -2995,6 +2995,7 @@ done
 # What this Hyprland really exposes, for when a dispatch below is silently a no-op.
 hq "eval 'local f = io.open(\"/tmp/o-dsp.txt\", \"w\"); for _, t in ipairs({\"dsp\", \"dsp.window\", \"dsp.workspace\"}) do local m = hl; for p in t:gmatch(\"[^.]+\") do m = m and m[p] end; if type(m) == \"table\" then local k = {}; for n in pairs(m) do k[#k+1] = tostring(n) end; table.sort(k); f:write(t, \": \", table.concat(k, \" \"), \"\\n\") end end; f:close()'" >/dev/null 2>&1
 note "hl API: $(tr '\n' ';' </tmp/o-dsp.txt 2>/dev/null | cut -c1-900)"
+pkill -u "$U" -x foot 2>/dev/null; sleep 1   # strays from the sections above
 o_dsp 'hl.dsp.focus({workspace = 7})'
 sleep 1
 if o_win ergon-t1 && o_win ergon-t2; then
@@ -3011,7 +3012,7 @@ if o_win ergon-t1 && o_win ergon-t2; then
 
   # --- ERGON-89: swap (the dispatch SUPER+ALT+H/L issues) --------------------
   # t2 was opened last, so it is focused and sits right of t1 in dwindle.
-  o_focus ergon-t2
+  [ "$(o_active .class)" = ergon-t2 ] || note "precondition: focused is '$(o_active .class)', not ergon-t2"
   _x1=$(o_field ergon-t1 '.at[0]'); _x2=$(o_field ergon-t2 '.at[0]')
   if [ "${_x1:-0}" -lt "${_x2:-0}" ]; then
     o_dsp 'hl.dsp.window.swap({ direction = "l" })'
@@ -3030,7 +3031,7 @@ if o_win ergon-t1 && o_win ergon-t2; then
   cyc() { [ "$(o_active .class)" != "$_a0" ]; }
   if o_until 4 cyc; then ok "window.cycle_next + bring_to_top moved focus ($_a0 -> $(o_active .class))"
   else bad "window.cycle_next left focus on $_a0 (dispatch name wrong, or rejected)"; fi
-  note "cycle dispatch said: $O_OUT; clients: $(hq clients -j | jq -r '[.[] | "\(.class)@\(.workspace.id)"] | join(" ")')"
+  note "cycle said: $O_OUT; next=false -> $(hq "dispatch 'hl.dsp.window.cycle_next({ next = false })'" 2>&1) / $(o_active .class); {} -> $(hq "dispatch 'hl.dsp.window.cycle_next({})'" 2>&1) / $(o_active .class)"
 
   # --- ERGON-88: the dispatch SUPER+C sends, down, then up from hl.timer ------
   # F5 with CTRL rather than Ctrl+Insert: foot binds the latter to copy and
@@ -3043,7 +3044,7 @@ exec cat -v > /tmp/o-keys.out
 KEYS
   chmod 755 /tmp/o-keys.sh
   o_win ergon-t3 /tmp/o-keys.sh; sleep 1
-  o_focus ergon-t3
+  [ "$(o_active .class)" = ergon-t3 ] || note "precondition: focused is '$(o_active .class)', not ergon-t3"
   hq "eval 'hl.dispatch(hl.dsp.send_key_state({ mods = \"CTRL\", key = \"F5\", state = \"down\" })); hl.timer(function() hl.dispatch(hl.dsp.send_key_state({ mods = \"CTRL\", key = \"F5\", state = \"up\" })) end, { timeout = 50, type = \"oneshot\" })'" >/dev/null 2>&1
   keyseen() { grep -q '15;5~' /tmp/o-keys.out 2>/dev/null; }
   if o_until 5 keyseen; then ok "send_key_state + hl.timer delivered Ctrl+F5 to the focused client"
@@ -3129,6 +3130,7 @@ CRASH
       note "id: $(id $U); coredumpctl: $(coredumpctl list --no-pager 2>&1 | tail -3 | tr '\n' ';'); mako: $(usr "makoctl list" 2>&1 | head -5 | tr '\n' ';')"
       usr "journalctl --user -u ergon-crash-notify -n 8 --no-pager -o cat" 2>&1 | sed 's/^/     /'
       journalctl -b --no-pager -o cat MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1 2>&1 | tail -3 | sed 's/^/     coredump: /'
+      note "entry fields: $(journalctl -b --no-pager -o json -n 1 MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1 2>/dev/null | jq -c '{_UID,COREDUMP_UID,OBJECT_UID,COREDUMP_COMM}' 2>&1); as user: $(usr "journalctl --no-pager -o cat -n 1 MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1" 2>&1 | head -c 200)"
     fi
   else
     bad "the crash probe process did not start"

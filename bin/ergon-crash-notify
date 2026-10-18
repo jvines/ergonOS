@@ -8,7 +8,7 @@
 # ERGON-86. A program that segfaults closes its window and says nothing; the core
 # is in the journal and in `coredumpctl`, and nobody looks. Same shape as
 # ergon-oom-notify (ERGON-50): follow the journal, filter by MESSAGE_ID and our
-# own _UID, notify. systemd-coredump logs every dump under the MESSAGE_ID below
+# own COREDUMP_UID (_UID is the root coredump helper, never us), notify. systemd-coredump logs every dump under the MESSAGE_ID below
 # with structured COREDUMP_* fields (systemd.journal-fields(7)).
 set -euo pipefail
 
@@ -19,7 +19,7 @@ declare -A last
 
 # --lines=0: a restart must not announce again the crashes it already announced.
 # As in ergon-oom-notify, an exit here is a fault and Restart= answers it.
-journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID="$DUMPED" _UID="$(id -u)" \
+journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID="$DUMPED" COREDUMP_UID="$(id -u)" \
   | jq --unbuffered -r '[.COREDUMP_PID, .COREDUMP_EXE, .COREDUMP_COMM, .COREDUMP_SIGNAL_NAME]
                         | map(if . == null or . == "" then "-" else . end) | @tsv' \
   | while IFS=$'\t' read -r pid exe comm sig; do
