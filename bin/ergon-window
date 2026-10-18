@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# ergon:summary=Window actions that need more than one dispatch: pop out, close all
+# ergon:group=desktop
+# ergon:args=pop | close-all
+#
+#   pop        Toggle the focused window out of the tiling: float it, size it to
+#              60% x 70% of its monitor, centre it and pin it, so it follows you
+#              across workspaces (a video, a call, a plot). Run again to put it
+#              back in the tiling. "Popped" is the pinned state, so a window you
+#              pinned by hand also un-pops.
+#   close-all  Close every window on the focused workspace. Each gets an
+#              ordinary close request, so an app may still ask to save. Bound
+#              to SUPER+CTRL+SHIFT+Q on purpose: three modifiers, and one hand
+#              cannot reach it while reaching for SUPER+Q.
+#
+# Dispatches go through the Lua form (`ergon explain desktop-config`): a
+# Lua-configured Hyprland reads the payload as Lua, and a classic string dies
+# silently.
+set -euo pipefail
+
+dispatch() { hyprctl dispatch "$1" >/dev/null; }
+
+pop() {
+  local win addr
+  win=$(hyprctl activewindow -j)
+  addr=$(jq -r '.address // empty' <<<"$win")
+  [[ -n $addr ]] || return 0
+  local w="address:$addr"
+  if [[ $(jq -r .pinned <<<"$win") == true ]]; then
+    dispatch "hl.dsp.window.pin({ window = \"$w\" })"
+    [[ $(jq -r .floating <<<"$win") == true ]] && dispatch "hl.dsp.window.float({ window = \"$w\", action = \"toggle\" })"
+    return 0
+  fi
+  [[ $(jq -r .floating <<<"$win") == true ]] || dispatch "hl.dsp.window.float({ window = \"$w\", action = \"toggle\" })"
+  local size
+  size=$(hyprctl monitors -j | jq -r --argjson m "$(jq .monitor <<<"$win")" \
+    '.[] | select(.id == $m) | "\((.width / .scale * 0.6) | floor) \((.height / .scale * 0.7) | floor)"')
+  if [[ -n $size ]]; then
+    read -r sw sh <<<"$size"
+    dispatch "hl.dsp.window.resize({ window = \"$w\", x = $sw, y = $sh })"
+  fi
+  dispatch "hl.dsp.window.center({ window = \"$w\" })"
+  dispatch "hl.dsp.window.pin({ window = \"$w\" })"
+  dispatch "hl.dsp.window.alter_zorder({ window = \"$w\", mode = \"top\" })"
+}
+
+close_all() {
+  local ws addr
+  ws=$(hyprctl activeworkspace -j | jq -r .id)
+  hyprctl clients -j | jq -r --argjson ws "$ws" '.[] | select(.workspace.id == $ws) | .address' |
+    while read -r addr; do
+      dispatch "hl.dsp.window.close({ window = \"address:$addr\" })"
+    done
+}
+
+case "${1:-}" in
+  pop)       pop ;;
+  close-all) close_all ;;
+  *)         echo "usage: ergon-window pop | close-all" >&2; exit 2 ;;
+esac
