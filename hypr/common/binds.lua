@@ -236,6 +236,7 @@ bind("SUPER + N", "Notes",      launch .. term .. " emacs -nw")
 bind("SUPER + SHIFT + V", "Clipboard history",
   "cliphist list | fuzzel --dmenu --prompt 'clip  ' | cliphist decode | wl-copy")
 bind("SUPER + SHIFT + X", "Clear clipboard history", "cliphist wipe")
+bind("SUPER + CTRL + E",   "Emoji picker (copy and type)", "ergon-emoji")
 
 -- ---------------------------------------------------------------------------
 -- Capture. Screenshots live in screenshot.lua — they have their own sync
