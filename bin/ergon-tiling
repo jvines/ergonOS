@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# ergon:summary=Cycle the current workspace's layout: dwindle, master, scrolling, floating
+# ergon:group=windows
+# ergon:args=[next | back | show]
+#
+# Per workspace (ERGON-90), not global: general.layout in hypr/common/looknfeel.lua
+# stays the default every workspace starts from. dwindle, master and scrolling
+# are Hyprland's own layouts (scrolling is in the compositor, not the
+# hyprscrolling plugin, so nothing extra is installed); they are set with a
+# workspace rule. Hyprland has no floating layout, so "floating" floats the
+# workspace's tiled windows and remembers which, so leaving it tiles those and
+# only those. Windows opened later on a floating workspace open tiled.
+#
+# The mode lives in $XDG_RUNTIME_DIR, so it is gone at logout, like the rules it
+# mirrors; a config reload drops the rules and this then reports Hyprland's own
+# layout again. Named workspaces (negative id) are refused: a leading "-" is
+# read as relative to the current one.
+set -euo pipefail
+
+dir=${1:-next}
+case "$dir" in
+  next|back|show) ;;
+  -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) echo "ergon-tiling: unknown argument '$dir'" >&2; exit 2 ;;
+esac
+
+ws=$(hyprctl activeworkspace -j | jq -r '.id')
+[[ $ws =~ ^[0-9]+$ ]] || { echo "ergon-tiling: workspace $ws is not numbered" >&2; exit 1; }
+tiled=$(hyprctl activeworkspace -j | jq -r '.tiledLayout // "dwindle"')
+state="${XDG_RUNTIME_DIR:-/tmp}/ergon-tiling"; mkdir -p "$state"
+file="$state/$ws"
+
+# Line 1 of the file is the mode; the rest are the addresses floating floated.
+cur=$(head -n1 "$file" 2>/dev/null || true)
+cur=${cur:-$tiled}
+[ "$dir" = show ] && { echo "$cur"; exit 0; }
+
+order=(dwindle master scrolling floating)
+for i in "${!order[@]}"; do [ "${order[$i]}" = "$cur" ] && idx=$i; done
+idx=${idx:-0}
+if [ "$dir" = back ]; then new=${order[$(( (idx + 3) % 4 ))]}; else new=${order[$(( (idx + 1) % 4 ))]}; fi
+
+# Windows go through the Lua dispatcher: a classic `hyprctl dispatch float` is
+# evaluated as Lua here and silently does nothing (ergon explain desktop-config).
+float() { hyprctl dispatch "hl.dsp.window.float({ action = \"$1\", window = \"address:$2\" })" >/dev/null; }
+
+floated=()
+if [ "$cur" = floating ]; then
+  # Give back what this mode floated, and nothing the user floated themselves.
+  while read -r a; do [ -n "$a" ] && float off "$a"; done < <(tail -n +2 "$file")
+fi
+if [ "$new" = floating ]; then
+  while read -r a; do float on "$a"; floated+=("$a"); done < <(
+    hyprctl clients -j | jq -r --argjson w "$ws" '.[] | select(.workspace.id == $w and (.floating | not) and .fullscreen == 0) | .address')
+else
+  hyprctl eval "hl.workspace_rule({ workspace = \"$ws\", layout = \"$new\" })" >/dev/null \
+    || { echo "ergon-tiling: Hyprland refused layout '$new'" >&2; exit 1; }
+fi
+
+{ echo "$new"; printf '%s\n' "${floated[@]}"; } | sed '/^$/d' > "$file"
+
+command -v notify-send >/dev/null 2>&1 &&
+  notify-send -u low -t 1500 -h string:x-canonical-private-synchronous:ergon-tiling \
+    "Workspace $ws layout" "$new" || true
+echo "$new"
