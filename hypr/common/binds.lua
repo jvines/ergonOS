@@ -285,3 +285,9 @@ bind("SUPER + CTRL + I",      "Stay awake (toggle)",      "ergon-awake")
 -- Next keyboard layout (ERGON-85), for a host that lists more than one in kb_layout.
 -- SUPER+SPACE is the launcher; with CTRL it was free. The bar is told by the script.
 bind("SUPER + CTRL + SPACE",  "Next keyboard layout",     "ergon-layout")
+
+-- Cycle this workspace's layout (ERGON-90): dwindle, master, scrolling, floating.
+-- Per workspace, so the others keep theirs. W for "ways to lay out"; SUPER+ALT+W
+-- cycles back. The toast names the layout it landed on.
+bind("SUPER + W",       "Next workspace layout",     "ergon-tiling")
+bind("SUPER + ALT + W", "Previous workspace layout", "ergon-tiling back")
