@@ -17,7 +17,7 @@
   "modules-left":   ["custom/menu", "hyprland/workspaces", "hyprland/submap"],
   "modules-center": ["hyprland/window"],
   "modules-right":  [
-    "custom/status",
+    "custom/status", "custom/layout",
     "custom/temperature", "cpu", "memory",
     "wireplumber", "backlight",
     "network", "bluetooth", "battery", "power-profiles-daemon",
@@ -78,6 +78,19 @@
     "signal": 8,
     "format": "{}",
     "on-click": "ergon-status --click",
+    "tooltip": true
+  },
+
+  // The active keyboard layout, only on a host that lists more than one in
+  // kb_layout (ERGON-85): empty text hides the module otherwise. Signalled by
+  // `ergon-layout`, which the key runs; the interval is the backstop.
+  "custom/layout": {
+    "exec": "ergon-layout --waybar",
+    "return-type": "json",
+    "interval": 60,
+    "signal": 9,
+    "format": "{}",
+    "on-click": "ergon-layout",
     "tooltip": true
   },
 

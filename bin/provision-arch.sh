@@ -914,6 +914,8 @@ else
 -- Keyboard, from the keymap chosen at install (/etc/vconsole.conf).
 -- The console keymap and the Wayland layout are different settings with
 -- different vocabularies; if yours needs a variant, set it here.
+-- More than one layout: a comma-separated list, e.g. "us,es". SUPER+CTRL+SPACE
+-- then cycles them and the bar shows the active one (ERGON-85).
 hl.config({ input = { kb_layout = "$KB" } })
 
 HYPRHOST

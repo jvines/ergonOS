@@ -255,3 +255,7 @@ bind("SUPER + SHIFT + A",     "Restore notification",     "makoctl restore")
 -- else -- observing, a talk on someone else's screen. Toasts are still kept in
 -- history while it is on, and the bar shows the mode until it is off.
 bind("SUPER + CTRL + D",      "Do not disturb (toggle)",  "makoctl mode -t do-not-disturb; ergon-status --poke")
+
+-- Next keyboard layout (ERGON-85), for a host that lists more than one in kb_layout.
+-- SUPER+SPACE is the launcher; with CTRL it was free. The bar is told by the script.
+bind("SUPER + CTRL + SPACE",  "Next keyboard layout",     "ergon-layout")
