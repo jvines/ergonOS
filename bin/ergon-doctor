@@ -619,6 +619,13 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     else
       rec fail "oom-notify" "ergon-oom-notify.service is ${ne:-unknown} and ${na:-unknown} — oomd can close a window here and say nothing (./install.sh; journalctl --user -u ergon-oom-notify)"
     fi
+    nca=$(systemctl --user show -p ActiveState --value ergon-crash-notify.service 2>/dev/null)
+    nce=$(systemctl --user show -p UnitFileState --value ergon-crash-notify.service 2>/dev/null)
+    if [ "$nca:$nce" = active:enabled ]; then
+      rec ok "crash-notify" "a program that dumps core in this session is named in a notification"
+    else
+      rec fail "crash-notify" "ergon-crash-notify.service is ${nce:-unknown} and ${nca:-unknown} — a crash closes a window and says nothing (./install.sh; journalctl --user -u ergon-crash-notify)"
+    fi
   fi
   case ":$PATH:" in
     *":$ERGON/bin:"*) rec ok "session-path" "repo bin is on PATH" ;;

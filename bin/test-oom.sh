@@ -239,7 +239,7 @@ case " $* " in
       *" ${unit:-__none__}.scope "*) printf '%s\n' "${STUB_SCOPE_RESULT:-success}" ;;
       *) echo success ;;
     esac ;;
-  *" ergon-oom-notify.service "*)
+  *" ergon-oom-notify.service "*|*" ergon-crash-notify.service "*)
     case " $* " in *" ActiveState "*) echo "${STUB_NOTIFY_ACTIVE:-active}" ;; *) echo "${STUB_NOTIFY_ENABLED:-enabled}" ;; esac ;;
   # A scope is over by the time ergon-watch asks; the poll exists for the
   # moment before that, and a stub that never says "active" still exercises it.
@@ -589,6 +589,9 @@ check "  enabled but failed is a failure" \
   has <(STUB_NOTIFY_ACTIVE=failed doctor oom-notify) '"state":"fail".*enabled and failed'
 check "  running but not enabled is one too, gone at the next login" \
   has <(STUB_NOTIFY_ENABLED=disabled doctor oom-notify) '"state":"fail"'
+check "the crash notifier enabled and running is ok" has <(doctor crash-notify) '"state":"ok"'
+check "  and a failed one is a failure" \
+  has <(STUB_NOTIFY_ACTIVE=failed doctor crash-notify) '"state":"fail".*enabled and failed'
 check "  under sudo it says it cannot answer" \
   has <(SUDO_USER=someone doctor oom-notify) '"state":"warn"'
 
@@ -692,6 +695,35 @@ NU="$REPO/systemd/ergon-oom-notify.service"
 check "  and the unit does restart it" has "$NU" '^Restart=on-failure$'
 check "the notifier is not in app.slice, where the kill it reports could take it" \
   has "$NU" '^Slice=session\.slice$'
+
+# --- a crash nobody was watching (ERGON-86) -----------------------------------
+# Same journal stub: a dump arrives as systemd-coredump logs it.
+CORE=fc2e22bc6ee647b6b90729ab34a250b1
+dump() {  # dump <exe> <comm> <pid> [uid]
+  printf '{"MESSAGE_ID":"%s","COREDUMP_EXE":"%s","COREDUMP_COMM":"%s","COREDUMP_PID":"%s","COREDUMP_SIGNAL_NAME":"SIGSEGV","_UID":"%s"}\n' \
+    "$CORE" "$1" "$2" "$3" "${4:-$(id -u)}"
+}
+dump /usr/bin/old old 1 > "$T/journal.old"
+{ dump /usr/bin/firefox-esr firefox-esr 101
+  dump /usr/bin/firefox-esr firefox-esr 102
+  dump "" "" 103
+  dump /usr/bin/other other 104 $(( $(id -u) + 1 ))
+  dump /usr/bin/ergon-oom-notify ergon-oom-noti 105
+  dump /usr/bin/last last 106; } > "$T/journal.new"
+rm -f "$L"/*
+timeout 20 "$REPO/bin/ergon-crash-notify" >/dev/null 2>&1 & fp=$!
+for _ in $(seq 100); do hasf "$L/notify-send" 'last crashed' && break; sleep 0.1; done
+kill "$fp" 2>/dev/null; wait "$fp" 2>/dev/null
+check "a core dump is announced by program name, with the signal" \
+  hasf "$L/notify-send" 'firefox-esr crashed (SIGSEGV)'
+check "  and the hint names the pid to look up" hasf "$L/notify-send" 'coredumpctl info 101'
+check "a repeat of the same program inside the window is not announced again" \
+  test "$(grep -c firefox-esr "$L/notify-send")" = 1
+check "a dump with no recorded name is still announced, as unknown" \
+  hasf "$L/notify-send" 'unknown crashed'
+check "a dump already in the journal at start, another user's, and our own notifier's are not" \
+  test "$(wc -l < "$L/notify-send")" = 3
+check "the crash unit restarts on failure" has "$REPO/systemd/ergon-crash-notify.service" '^Restart=on-failure$'
 
 # --- the bar counts runs, and is told (ERGON-81) ------------------------------
 # ergon-status's watch count is no longer polled: ergon watch pokes the bar
