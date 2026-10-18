@@ -2966,7 +2966,9 @@ grep -q 'ergon explain' "$H/.codex/AGENTS.md" 2>/dev/null \
 # there is no way to press one from here; the dispatch a bind issues is
 # issued directly, and the bind itself is only asserted registered.
 echo "--- omarchy-derived behaviour (ERGON-82..90) ---"
-o_dsp() { hq "dispatch '$1'" >/dev/null 2>&1; }
+o_dsp() { O_OUT=$(hq "dispatch '$1'" 2>&1); }
+o_addr() { hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | .address' | head -1; }
+o_focus() { o_dsp "hl.dsp.focus({ window = \"address:$(o_addr "$1")\" })"; }
 o_has() { [ -n "$(hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | .address' 2>/dev/null | head -1)" ]; }
 o_win() {  # o_win <class> [cmd] -> opens a foot window of that class on the focused workspace, waits for it
   o_dsp "hl.dsp.exec_cmd(\"foot --app-id=$1 ${2:-sleep 900}\")"
@@ -2990,6 +2992,9 @@ for _d in "Copy (every app)" "Paste (every app)" "Cut (every app)" "Next window"
     && ok "bind registered: $_d" || bad "bind not registered: $_d"
 done
 
+# What this Hyprland really exposes, for when a dispatch below is silently a no-op.
+hq "eval 'local f = io.open(\"/tmp/o-dsp.txt\", \"w\"); for _, t in ipairs({\"dsp\", \"dsp.window\", \"dsp.workspace\"}) do local m = hl; for p in t:gmatch(\"[^.]+\") do m = m and m[p] end; if type(m) == \"table\" then local k = {}; for n in pairs(m) do k[#k+1] = tostring(n) end; table.sort(k); f:write(t, \": \", table.concat(k, \" \"), \"\\n\") end end; f:close()'" >/dev/null 2>&1
+note "hl API: $(tr '\n' ';' </tmp/o-dsp.txt 2>/dev/null | cut -c1-900)"
 o_dsp 'hl.dsp.focus({workspace = 7})'
 sleep 1
 if o_win ergon-t1 && o_win ergon-t2; then
@@ -3006,13 +3011,14 @@ if o_win ergon-t1 && o_win ergon-t2; then
 
   # --- ERGON-89: swap (the dispatch SUPER+ALT+H/L issues) --------------------
   # t2 was opened last, so it is focused and sits right of t1 in dwindle.
-  o_dsp 'hl.dsp.focus({ window = "class:ergon-t2" })'
+  o_focus ergon-t2
   _x1=$(o_field ergon-t1 '.at[0]'); _x2=$(o_field ergon-t2 '.at[0]')
   if [ "${_x1:-0}" -lt "${_x2:-0}" ]; then
     o_dsp 'hl.dsp.window.swap({ direction = "l" })'
     swapped() { [ "$(o_field ergon-t1 '.at[0]')" -gt "$(o_field ergon-t2 '.at[0]')" ]; }
     if o_until 5 swapped; then ok "window.swap direction \"l\" exchanged the two tiles (t1 x $_x1 -> $(o_field ergon-t1 '.at[0]'))"
     else bad "window.swap direction \"l\" moved nothing (t1 x=$(o_field ergon-t1 '.at[0]'), t2 x=$(o_field ergon-t2 '.at[0]'))"; fi
+      note "swap dispatch said: $O_OUT; focused now: $(o_active .class); a swap with direction=left: $(hq "dispatch 'hl.dsp.window.swap({ direction = \"left\" })'" 2>&1) t1 x=$(o_field ergon-t1 '.at[0]')"
   else
     bad "precondition: t1 not left of t2 (x $_x1 vs $_x2), swap not tested"
   fi
@@ -3024,6 +3030,7 @@ if o_win ergon-t1 && o_win ergon-t2; then
   cyc() { [ "$(o_active .class)" != "$_a0" ]; }
   if o_until 4 cyc; then ok "window.cycle_next + bring_to_top moved focus ($_a0 -> $(o_active .class))"
   else bad "window.cycle_next left focus on $_a0 (dispatch name wrong, or rejected)"; fi
+  note "cycle dispatch said: $O_OUT; clients: $(hq clients -j | jq -r '[.[] | "\(.class)@\(.workspace.id)"] | join(" ")')"
 
   # --- ERGON-88: the dispatch SUPER+C sends, down, then up from hl.timer ------
   # F5 with CTRL rather than Ctrl+Insert: foot binds the latter to copy and
@@ -3036,7 +3043,7 @@ exec cat -v > /tmp/o-keys.out
 KEYS
   chmod 755 /tmp/o-keys.sh
   o_win ergon-t3 /tmp/o-keys.sh; sleep 1
-  o_dsp 'hl.dsp.focus({ window = "class:ergon-t3" })'
+  o_focus ergon-t3
   hq "eval 'hl.dispatch(hl.dsp.send_key_state({ mods = \"CTRL\", key = \"F5\", state = \"down\" })); hl.timer(function() hl.dispatch(hl.dsp.send_key_state({ mods = \"CTRL\", key = \"F5\", state = \"up\" })) end, { timeout = 50, type = \"oneshot\" })'" >/dev/null 2>&1
   keyseen() { grep -q '15;5~' /tmp/o-keys.out 2>/dev/null; }
   if o_until 5 keyseen; then ok "send_key_state + hl.timer delivered Ctrl+F5 to the focused client"
@@ -3119,6 +3126,7 @@ CRASH
     if o_until 20 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification"
     else
       bad "a SIGSEGV'd program raised no notification within 20s"
+      note "id: $(id $U); coredumpctl: $(coredumpctl list --no-pager 2>&1 | tail -3 | tr '\n' ';'); mako: $(usr "makoctl list" 2>&1 | head -5 | tr '\n' ';')"
       usr "journalctl --user -u ergon-crash-notify -n 8 --no-pager -o cat" 2>&1 | sed 's/^/     /'
       journalctl -b --no-pager -o cat MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1 2>&1 | tail -3 | sed 's/^/     coredump: /'
     fi
