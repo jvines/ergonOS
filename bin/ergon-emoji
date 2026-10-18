@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# ergon:summary=Pick an emoji in fuzzel, copy it and type it into the focused window
+# ergon:group=capture
+# ergon:args=[--list [FILE]]
+#
+# SUPER+CTRL+E (Omarchy's chord). The list is parsed from the Unicode
+# emoji-test.txt that the `unicode-emoji` package ships, not vendored: it
+# tracks Unicode releases with the distro and is the complete, named list.
+# Only fully-qualified emoji are offered; the unqualified and minimally
+# qualified spellings are duplicates that render as text in some places.
+#
+# The pick is copied (wl-copy) and typed (wtype). Typing needs the focus to be
+# back on the window fuzzel covered, so it waits a beat; with no wtype the copy
+# alone is done and a notification says so.
+#
+#   --list [FILE]   print "<emoji>  <name>" lines and exit (FILE for a fixture)
+set -euo pipefail
+
+find_data() {
+  local f
+  for f in /usr/share/unicode/emoji/emoji-test.txt /usr/share/unicode-emoji/emoji-test.txt; do
+    [ -r "$f" ] && { echo "$f"; return 0; }
+  done
+  return 1
+}
+
+# "1F600 ; fully-qualified # 😀 E1.0 grinning face" -> "😀  grinning face"
+list() {
+  awk -F'#' '
+    /^#/ || !/; fully-qualified/ { next }
+    { s = $2; sub(/^ +/, "", s); i = index(s, " "); e = substr(s, 1, i - 1)
+      rest = substr(s, i + 1); sub(/^E[0-9.]+ +/, "", rest)
+      print e "  " rest }' "$1"
+}
+
+if [ "${1:-}" = --list ]; then
+  data=${2:-$(find_data)} || { echo "ergon-emoji: no emoji-test.txt (install unicode-emoji)" >&2; exit 1; }
+  list "$data"
+  exit 0
+fi
+
+data=$(find_data) || { notify-send -u critical "ergon-emoji" "unicode-emoji is not installed"; exit 1; }
+sel=$(list "$data" | fuzzel --dmenu --prompt 'emoji  ') || exit 0
+[ -n "$sel" ] || exit 0
+emoji=${sel%%  *}
+
+printf %s "$emoji" | wl-copy
+if command -v wtype >/dev/null 2>&1; then
+  sleep 0.15
+  wtype -- "$emoji"
+else
+  notify-send -u low "ergon-emoji" "$emoji copied (wtype not installed, so not typed)"
+fi
