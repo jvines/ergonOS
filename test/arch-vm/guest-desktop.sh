@@ -2959,6 +2959,186 @@ grep -q 'ergon explain' "$H/.codex/AGENTS.md" 2>/dev/null \
 # shellcheck source=guest-backup.sh
 . "$SHARE/test/arch-vm/guest-backup.sh"
 
+# --- ERGON-82..90: the Omarchy-derived keys and commands, driven live -------
+# The Lua dispatch names these use came from another distro's config and were
+# unverified: a wrong one is accepted and then does nothing. Each check below
+# asserts the OUTCOME in the running compositor. Binds are Lua closures, so
+# there is no way to press one from here; the dispatch a bind issues is
+# issued directly, and the bind itself is only asserted registered.
+echo "--- omarchy-derived behaviour (ERGON-82..90) ---"
+o_dsp() { hq "dispatch '$1'" >/dev/null 2>&1; }
+o_has() { [ -n "$(hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | .address' 2>/dev/null | head -1)" ]; }
+o_win() {  # o_win <class> [cmd] -> opens a foot window of that class on the focused workspace, waits for it
+  o_dsp "hl.dsp.exec_cmd(\"foot --app-id=$1 ${2:-sleep 900}\")"
+  for _ in $(seq 1 30); do o_has "$1" && return 0; sleep 0.5; done; return 1
+}
+o_field() {  # o_field <class> <jq path on the client> -> value
+  hq clients -j 2>/dev/null | jq -r --arg c "$1" ".[] | select(.class == \$c) | $2" 2>/dev/null | head -1
+}
+o_until() {  # o_until <seconds> <command...> -> polled until it succeeds
+  local n=$1; shift
+  for _ in $(seq 1 $((n * 2))); do "$@" && return 0; sleep 0.5; done; return 1
+}
+o_active() { hq activewindow -j 2>/dev/null | jq -r "$1" 2>/dev/null; }
+
+# Binds registered (the part of SUPER+C etc. that can be proven here).
+_ob=$(hq binds -j 2>/dev/null)
+for _d in "Copy (every app)" "Paste (every app)" "Cut (every app)" "Next window" "Previous window" \
+          "Swap with left window" "Swap with right window" "Swap with window above" "Swap with window below" \
+          "Emoji picker (copy and type)"; do
+  jq -e --arg d "$_d" 'any(.[]; .description == $d)' <<<"$_ob" >/dev/null 2>&1 \
+    && ok "bind registered: $_d" || bad "bind not registered: $_d"
+done
+
+o_dsp 'hl.dsp.focus({workspace = 7})'
+sleep 1
+if o_win ergon-t1 && o_win ergon-t2; then
+  ok "two windows opened on workspace 7"
+  # --- ERGON-89: pop out -----------------------------------------------------
+  usr "ergon-window pop" >/dev/null 2>&1
+  pop_on() { [ "$(o_active .floating)" = true ] && [ "$(o_active .pinned)" = true ]; }
+  if o_until 5 pop_on; then ok "ergon-window pop floats and pins the focused window"
+  else bad "ergon-window pop: floating=$(o_active .floating) pinned=$(o_active .pinned)"; fi
+  usr "ergon-window pop" >/dev/null 2>&1
+  pop_off() { [ "$(o_active .floating)" = false ] && [ "$(o_active .pinned)" = false ]; }
+  if o_until 5 pop_off; then ok "ergon-window pop again puts it back in the tiling"
+  else bad "ergon-window pop again: floating=$(o_active .floating) pinned=$(o_active .pinned)"; fi
+
+  # --- ERGON-89: swap (the dispatch SUPER+ALT+H/L issues) --------------------
+  # t2 was opened last, so it is focused and sits right of t1 in dwindle.
+  o_dsp 'hl.dsp.focus({ window = "class:ergon-t2" })'
+  _x1=$(o_field ergon-t1 '.at[0]'); _x2=$(o_field ergon-t2 '.at[0]')
+  if [ "${_x1:-0}" -lt "${_x2:-0}" ]; then
+    o_dsp 'hl.dsp.window.swap({ direction = "l" })'
+    swapped() { [ "$(o_field ergon-t1 '.at[0]')" -gt "$(o_field ergon-t2 '.at[0]')" ]; }
+    if o_until 5 swapped; then ok "window.swap direction \"l\" exchanged the two tiles (t1 x $_x1 -> $(o_field ergon-t1 '.at[0]'))"
+    else bad "window.swap direction \"l\" moved nothing (t1 x=$(o_field ergon-t1 '.at[0]'), t2 x=$(o_field ergon-t2 '.at[0]'))"; fi
+  else
+    bad "precondition: t1 not left of t2 (x $_x1 vs $_x2), swap not tested"
+  fi
+
+  # --- ERGON-89: ALT+TAB closure (cycle_next + bring_to_top) ----------------
+  _a0=$(o_active .class)
+  o_dsp 'hl.dsp.window.cycle_next({ next = true })'
+  o_dsp 'hl.dsp.window.bring_to_top()'
+  cyc() { [ "$(o_active .class)" != "$_a0" ]; }
+  if o_until 4 cyc; then ok "window.cycle_next + bring_to_top moved focus ($_a0 -> $(o_active .class))"
+  else bad "window.cycle_next left focus on $_a0 (dispatch name wrong, or rejected)"; fi
+
+  # --- ERGON-88: the dispatch SUPER+C sends, down, then up from hl.timer ------
+  # F5 with CTRL rather than Ctrl+Insert: foot binds the latter to copy and
+  # would consume it. What is proven is the mechanism (send_key_state reaching
+  # the focused client, and hl.timer firing the release), not foot's bindings.
+  rm -f /tmp/o-keys.out
+  cat > /tmp/o-keys.sh <<'KEYS'
+#!/bin/sh
+exec cat -v > /tmp/o-keys.out
+KEYS
+  chmod 755 /tmp/o-keys.sh
+  o_win ergon-t3 /tmp/o-keys.sh; sleep 1
+  o_dsp 'hl.dsp.focus({ window = "class:ergon-t3" })'
+  hq "eval 'hl.dispatch(hl.dsp.send_key_state({ mods = \"CTRL\", key = \"F5\", state = \"down\" })); hl.timer(function() hl.dispatch(hl.dsp.send_key_state({ mods = \"CTRL\", key = \"F5\", state = \"up\" })) end, { timeout = 50, type = \"oneshot\" })'" >/dev/null 2>&1
+  keyseen() { grep -q '15;5~' /tmp/o-keys.out 2>/dev/null; }
+  if o_until 5 keyseen; then ok "send_key_state + hl.timer delivered Ctrl+F5 to the focused client"
+  else bad "send_key_state delivered nothing to the focused client (cat -v saw: '$(head -c 60 /tmp/o-keys.out 2>/dev/null)')"; fi
+
+  # --- ERGON-90: layout cycle ------------------------------------------------
+  o_dsp 'hl.dsp.focus({ workspace = 7 })'
+  tl() { hq activeworkspace -j 2>/dev/null | jq -r '.tiledLayout // "none"'; }
+  _l0=$(tl)
+  for want in master scrolling; do
+    usr "ergon-tiling next" >/dev/null 2>&1
+    lay() { [ "$(tl)" = "$want" ]; }
+    if o_until 5 lay; then ok "ergon-tiling next -> activeworkspace tiledLayout is $want (started $_l0)"
+    else bad "ergon-tiling next: tiledLayout is '$(tl)', want $want"; fi
+  done
+  usr "ergon-tiling next" >/dev/null 2>&1
+  allfloat() { [ "$(hq clients -j | jq '[.[] | select(.workspace.id == 7 and (.floating | not))] | length')" = 0 ]; }
+  o_until 5 allfloat && ok "ergon-tiling floating floats the workspace's windows" || bad "ergon-tiling floating left tiled windows on workspace 7"
+  usr "ergon-tiling next" >/dev/null 2>&1
+  dwi() { [ "$(tl)" = dwindle ] && [ "$(hq clients -j | jq '[.[] | select(.workspace.id == 7 and .floating)] | length')" = 0 ]; }
+  o_until 5 dwi && ok "ergon-tiling next wraps to dwindle and tiles them again" || bad "ergon-tiling wrap: layout '$(tl)'"
+  usr "ergon-tiling back" >/dev/null 2>&1
+  bk() { [ "$(usr 'ergon-tiling show')" = floating ]; }
+  o_until 5 bk && ok "ergon-tiling back goes the other way round" || bad "ergon-tiling back did not reach floating"
+  usr "ergon-tiling next" >/dev/null 2>&1   # back to dwindle, windows tiled
+
+  # --- ERGON-89: close-all ---------------------------------------------------
+  usr "ergon-window close-all" >/dev/null 2>&1
+  empty7() { [ "$(hq clients -j | jq '[.[] | select(.workspace.id == 7)] | length')" = 0 ]; }
+  o_until 8 empty7 && ok "ergon-window close-all closed every window on the workspace" \
+                   || bad "ergon-window close-all left $(hq clients -j | jq '[.[] | select(.workspace.id == 7)] | length') windows"
+else
+  bad "could not open windows for the window-key checks"
+fi
+pkill -u "$U" -f 'app-id=ergon-t' 2>/dev/null
+
+# --- ERGON-83: stay awake holds an idle inhibitor ---------------------------
+inh() { su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemd-inhibit --list --no-legend 2>/dev/null" | grep -c 'ergon-awake.*idle'; }
+usr "ergon-awake on" >/dev/null 2>&1
+has_inh() { [ "$(inh)" -ge 1 ]; }
+o_until 6 has_inh && ok "ergon-awake on: systemd-inhibit lists an idle inhibitor" \
+                  || { bad "ergon-awake on: no idle inhibitor listed"; usr "systemd-inhibit --list" 2>&1 | head -8 | sed 's/^/     /'; }
+[ "$(usr 'ergon-awake status')" = on ] && ok "ergon-awake status says on" || bad "ergon-awake status says '$(usr 'ergon-awake status')'"
+usr "ergon-awake off" >/dev/null 2>&1
+no_inh() { [ "$(inh)" = 0 ]; }
+o_until 6 no_inh && ok "ergon-awake off: the inhibitor is gone" || bad "ergon-awake off: inhibitor still listed"
+
+# --- ERGON-85: layout cycle changes the active keymap -----------------------
+_kb_save=$(kb_main)
+if set_layout "us,es"; then
+  kidx() { hq devices -j | jq -r '(.keyboards | map(select(.main)) + .)[0].active_layout_index'; }
+  _i0=$(kidx)
+  usr "ergon-layout" >/dev/null 2>&1
+  moved() { [ "$(kidx)" != "$_i0" ]; }
+  if o_until 5 moved; then ok "ergon-layout cycled the active layout (index $_i0 -> $(kidx))"
+  else bad "ergon-layout left the active layout index at $_i0"; fi
+  _wb=$(usr "ergon-layout --waybar")
+  grep -q 'es\|us' <<<"$_wb" && ok "ergon-layout --waybar names the active layout: $_wb" || bad "ergon-layout --waybar: $_wb"
+else
+  bad "could not give the compositor kb_layout us,es"
+fi
+IFS=$'\t' read -r _kl _kv <<<"$_kb_save"; set_layout "$_kl" "$_kv" || true
+
+# --- ERGON-86: a crashing program of the user's raises a notification -------
+if su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active ergon-crash-notify.service" >/dev/null 2>&1; then
+  ok "ergon-crash-notify.service is running in the user manager"
+  note "core_pattern: $(cut -c1-70 /proc/sys/kernel/core_pattern); coredumpctl: $(command -v coredumpctl || echo missing)"
+  cat > /tmp/o-crash.sh <<'CRASH'
+#!/bin/bash
+ulimit -c unlimited
+exec -a ergoncrashprobe sleep 300
+CRASH
+  chmod 755 /tmp/o-crash.sh
+  usr "/tmp/o-crash.sh" >/dev/null 2>&1 &
+  sleep 2
+  _cp=$(pgrep -u "$U" -f ergoncrashprobe | head -1)
+  if [ -n "$_cp" ]; then
+    kill -SEGV "$_cp"
+    crashed() { { usr "makoctl list; makoctl history" 2>/dev/null; } | grep -qi 'crashed'; }
+    if o_until 20 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification"
+    else
+      bad "a SIGSEGV'd program raised no notification within 20s"
+      usr "journalctl --user -u ergon-crash-notify -n 8 --no-pager -o cat" 2>&1 | sed 's/^/     /'
+      journalctl -b --no-pager -o cat MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1 2>&1 | tail -3 | sed 's/^/     coredump: /'
+    fi
+  else
+    bad "the crash probe process did not start"
+  fi
+else
+  bad "ergon-crash-notify.service is not active in the user manager"
+fi
+
+# --- ERGON-87: the emoji list, on the real Unicode file ---------------------
+_en=$(usr "ergon-emoji --list" 2>/dev/null | wc -l)
+[ "${_en:-0}" -gt 1000 ] && ok "ergon-emoji --list reads the installed emoji-test.txt ($_en entries)" \
+                         || bad "ergon-emoji --list gave ${_en:-0} entries from the installed Unicode data"
+
+# --- ERGON-84: audio output with whatever sinks the VM has ------------------
+_ao=$(usr "timeout 10 ergon-audio-output" 2>&1); _ao_rc=$?
+if [ "$_ao_rc" -lt 124 ]; then ok "ergon-audio-output ended (rc $_ao_rc) without hanging: $(head -c 100 <<<"$_ao" | tr '\n' ' ')"
+else bad "ergon-audio-output hung with the VM's sinks"; fi
+
 # ERGON-70, measured rather than asserted: does a user manager that has made a
 # tmux pane scope spin when a unit directory changes under it with no reload,
 # and a second pane is asked for? Seen at ~90% CPU in a container (systemd 262,
