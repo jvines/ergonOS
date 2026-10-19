@@ -146,7 +146,7 @@
     "format-ethernet": "󰈀 {ipaddr}",
     "format-disconnected": "󰖪",
     "tooltip-format-wifi": "{essid}  {signalStrength}%  {ipaddr}\n{bandwidthDownBits} down  {bandwidthUpBits} up",
-    "on-click": "ergon-launch-tui nmtui"
+    "on-click": "ergon-wifi"
   },
 
   "bluetooth": {

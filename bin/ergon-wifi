@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# ergon:summary=Wi-Fi picker: connect, disconnect, rescan, radio, share as QR
+# ergon:group=hardware
+# ergon:args=[--format | --join SSID | --qr-payload SSID KEYMGMT PSK]
+#
+# A fuzzel menu over nmcli, so the bar's network module no longer drops you
+# into nmtui for the one thing you wanted: join a network. nmtui stays as the
+# "Advanced" entry (802.1X, static IPs, VPNs).
+#
+# SHARE shows the saved password on screen as a WIFI: QR code. That is the
+# user's own, deliberate action on a network they already joined, the same as
+# a phone's "share Wi-Fi" sheet. The PNG lives in $XDG_RUNTIME_DIR (a per-user
+# tmpfs, mode 0700, created 0600) and is removed when the viewer closes.
+#
+# `--format` (terse nmcli on stdin -> menu lines) and `--qr-payload` are the
+# pure parts, split out so bin/test-wifi.sh can feed them fixtures.
+set -euo pipefail
+export LC_ALL=C
+
+# nmcli -t escapes ':' and '\' in a field as '\:' and '\\'. SSID is requested
+# LAST so the three fields before it (none can hold a colon) are cut off
+# plainly and everything after is the SSID, unescaped here.
+# Input : nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list
+# Output: "<mark> <sig>%  <security>  <ssid>", strongest first, one per SSID.
+# Fixed 21-column prefix, so SSID_COL recovers the SSID from a chosen line.
+SSID_COL=22
+format() {
+  awk '
+    { n = 0; rest = $0
+      for (i = 0; i < 3; i++) { p = index(rest, ":"); f[i] = substr(rest, 1, p - 1); rest = substr(rest, p + 1) }
+      ssid = ""
+      while (rest != "") {
+        c = substr(rest, 1, 1)
+        if (c == "\\" && length(rest) > 1) { ssid = ssid substr(rest, 2, 1); rest = substr(rest, 3) }
+        else { ssid = ssid c; rest = substr(rest, 2) }
+      }
+      if (ssid == "") next
+      sec = (f[2] == "" ? "--" : f[2])
+      mark = (f[0] == "*" ? "*" : " ")
+      printf "%03d\t%s\t%s %3s%%  %-11.11s  %s\n", f[1], ssid, mark, f[1], sec, ssid }' \
+  | sort -t$'\t' -k1,1nr -s | awk -F'\t' '!seen[$2]++ { print $3 }'
+}
+
+# WIFI:T:<WPA|nopass>;S:<ssid>;P:<psk>;;   with \ ; , : " escaped in S and P.
+qr_payload() {  # $1 ssid  $2 key-mgmt  $3 psk
+  local ssid psk t=WPA
+  esc() { sed -e 's/[\;,:"]/\\&/g' <<<"$1"; }
+  ssid=$(esc "$1"); psk=$(esc "$3")
+  case "$2" in ""|none) printf 'WIFI:T:nopass;S:%s;;' "$ssid" ;;
+               *)       printf 'WIFI:T:%s;S:%s;P:%s;;' "$t" "$ssid" "$psk" ;;
+  esac
+}
+
+# Join a secured network with the password read from stdin. nmcli takes it
+# through passwd-file on an fd, so it is never on argv or disk. The profile is
+# made first (without the psk) and deleted again if activation fails, so a typo
+# leaves no broken saved network.
+join() {  # $1 ssid; password on stdin
+  local pw; IFS= read -r pw
+  nmcli connection add type wifi con-name "$1" ssid "$1" wifi-sec.key-mgmt wpa-psk >/dev/null 2>&1 || return 1
+  if nmcli connection up id "$1" passwd-file /dev/fd/3 >/dev/null 2>&1 3< <(printf "802-11-wireless-security.psk:%s\n" "$pw"); then return 0; fi
+  nmcli connection delete id "$1" >/dev/null 2>&1 || true
+  return 1
+}
+
+case "${1:-}" in
+  --join)       join "${2:?ssid}"; exit $? ;;
+  --format)     format; exit 0 ;;
+  --qr-payload) qr_payload "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
+  "") ;;
+  *) echo "usage: ergon-wifi [--format | --qr-payload SSID KEYMGMT PSK]" >&2; exit 2 ;;
+esac
+
+for c in nmcli fuzzel; do
+  command -v "$c" >/dev/null 2>&1 || { echo "ergon-wifi: $c is not installed" >&2; exit 1; }
+done
+BINDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+say()  { command -v notify-send >/dev/null 2>&1 && notify-send -a ergon-wifi "Wi-Fi" "$1" || echo "$1" >&2; }
+pick() { fuzzel --dmenu --prompt "wifi  " --width 60; }
+advanced() { exec "$BINDIR/ergon-launch-tui" nmtui; }
+
+# The active Wi-Fi connection's profile name, or nothing.
+active_profile() { nmcli -t -f TYPE,NAME connection show --active | sed -n 's/^802-11-wireless:\(.*\)$/\1/p' | sed 's/\\\(.\)/\1/g' | head -n1; }
+
+share() {
+  local prof ssid km psk png
+  prof=$(active_profile)
+  [ -n "$prof" ] || { say "not connected to a Wi-Fi network"; return; }
+  command -v qrencode >/dev/null 2>&1 || { say "qrencode is not installed"; return; }
+  ssid=$(nmcli -g 802-11-wireless.ssid connection show id "$prof")
+  km=$(nmcli -g 802-11-wireless-security.key-mgmt connection show id "$prof")
+  psk=$(nmcli -s -g 802-11-wireless-security.psk connection show id "$prof")
+  umask 077
+  png=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/ergon-wifi.XXXXXX.png")
+  trap 'rm -f "$png"' EXIT
+  qr_payload "$ssid" "$km" "$psk" | qrencode -s 12 -m 4 -o "$png"
+  say "Scan to join \"$ssid\" (the QR holds the password; close the window when done)"
+  if command -v imv >/dev/null 2>&1; then imv "$png"; else say "imv is not installed"; fi
+  rm -f "$png"; trap - EXIT
+}
+
+connect() {  # $1 line chosen from the list
+  local line=$1 ssid sec pw known
+  ssid=$(cut -c"$SSID_COL"- <<<"$line")
+  sec=$(cut -c9-19 <<<"$line" | sed 's/ *$//')
+  known=$(nmcli -t -f NAME connection show | sed 's/\\\(.\)/\1/g' || true)
+  if grep -qxF -- "$ssid" <<<"$known"; then
+    nmcli connection up id "$ssid" >/dev/null 2>&1 && say "Connected to $ssid" || say "Could not connect to $ssid"
+  elif [ "$sec" = -- ]; then
+    nmcli dev wifi connect "$ssid" >/dev/null 2>&1 && say "Connected to $ssid" || say "Could not connect to $ssid"
+  elif [[ $sec == *802.1X* ]]; then
+    say "$ssid needs enterprise settings: opening Advanced"; advanced
+  else
+    pw=$(fuzzel --dmenu --password --prompt "$ssid password  " --lines 0) || return 0
+    if printf "%s\n" "$pw" | join "$ssid"; then say "Connected to $ssid"
+    else say "Could not connect to $ssid (wrong password?)"; fi
+  fi
+}
+
+while true; do
+  if [ "$(nmcli radio wifi)" != enabled ]; then
+    sel=$(printf 'Turn Wi-Fi on\nAdvanced (nmtui)\n' | pick) || exit 0
+    case "$sel" in "Turn Wi-Fi on") nmcli radio wifi on; sleep 2 ;; *) advanced ;; esac
+    continue
+  fi
+  nets=$(nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list | format)
+  sel=$({ printf 'Rescan\nDisconnect\nShare this network (QR)\nTurn Wi-Fi off\nAdvanced (nmtui)\n'
+          printf '%s\n' "$nets"; } | pick) || exit 0
+  if grep -qE '^[* ] [ 0-9]{3}%' <<<"$sel"; then connect "$sel"; exit 0; fi
+  case "$sel" in
+    Rescan)        nmcli dev wifi rescan >/dev/null 2>&1 || true; sleep 2 ;;
+    Disconnect)    nmcli dev disconnect "$(nmcli -t -f DEVICE,TYPE dev | sed -n 's/^\(.*\):wifi$/\1/p' | head -n1)" >/dev/null 2>&1 \
+                     && say "Disconnected" || say "Nothing to disconnect"; exit 0 ;;
+    Share*)        share; exit 0 ;;
+    "Turn Wi-Fi off") nmcli radio wifi off; exit 0 ;;
+    Advanced*)     advanced ;;
+  esac
+done
