@@ -3288,7 +3288,15 @@ STUB
   usr "xdg-mime default ergon-stubbrowser.desktop x-scheme-handler/https x-scheme-handler/http" >/dev/null 2>&1
 fi
 usr "pkill -x firefox" >/dev/null 2>&1
-usr "BROWSER=ergon-browser timeout 60 xdg-open https://example.invalid" >/tmp/xdg-open.log 2>&1; _xo=$?
+_t0=$SECONDS
+usr "BROWSER=ergon-browser timeout 60 xdg-open https://example.invalid" >/tmp/xdg-open.log 2>&1 &
+_xpid=$!
+sleep 15
+if kill -0 "$_xpid" 2>/dev/null; then
+  note "xdg-open still running after 15s; process tree: $(ps -u "$U" -o pid,ppid,etime,args --forest 2>/dev/null | grep -E 'xdg-open|ergon-browser|uwsm|firefox|systemd-run|sleep' | grep -v grep | cut -c1-150 | tr '\n' '|')"
+fi
+wait "$_xpid"; _xo=$?
+note "xdg-open took $((SECONDS - _t0))s, rc $_xo, said: $(head -c 300 /tmp/xdg-open.log | tr '\n' ' ')"
 [ "$_xo" -lt 124 ] && ok "xdg-open https://example.invalid returned (rc $_xo) without hanging" || bad "xdg-open hung"
 _hasb() { o_has "$_bclass"; }
 _focb() { [ "$(o_active .class)" = "$_bclass" ]; }
