@@ -132,6 +132,41 @@ else
   bad "provision-arch.sh failed"
   tail -25 /tmp/prov.log | sed 's/^/     /'
 fi
+# --- ERGON-104: ergon-qr reads a real QR off the screen; ergon-webcam refuses with no camera
+echo "--- ERGON-104 ---"
+for _c in zbarimg ffmpeg qrencode grim; do
+  command -v "$_c" >/dev/null && ok "$_c is installed" || bad "$_c is missing"
+done
+rm -rf /tmp/qr104bin; mkdir -p /tmp/qr104bin
+qrencode -s 12 -m 4 -o /tmp/qr104.png 'https://ergon.example/qr104' && chmod a+r /tmp/qr104.png
+usr "setsid -f imv /tmp/qr104.png >/dev/null 2>&1"
+_qrwin=""
+for _i in $(seq 1 20); do
+  _qrwin=$(usr "hyprctl clients -j" 2>/dev/null | jq -r '[.[] | select(.class=="imv")][0] | select(.) | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' 2>/dev/null)
+  [ -n "$_qrwin" ] && break; sleep 0.5
+done
+if [ -n "$_qrwin" ]; then
+  sleep 1   # first frame drawn
+  # slurp is interactive; the stand-in returns the imv window, as a drag over it would.
+  printf '#!/bin/sh\necho "%s"\n' "$_qrwin" > /tmp/qr104bin/slurp; chmod a+rx /tmp/qr104bin /tmp/qr104bin/slurp
+  usr "printf x | wl-copy" 2>/dev/null
+  _qr=$(usr "PATH=/tmp/qr104bin:$SESSION_PATH timeout 30 ergon-qr" 2>&1); _qr_rc=$?
+  _clip=$(usr 'timeout 3 wl-paste -n' 2>/dev/null)
+  if [ "$_qr_rc" = 0 ] && [ "$_clip" = 'https://ergon.example/qr104' ]; then
+    ok "ergon-qr decoded the QR shown on screen ($_qrwin) to the clipboard"
+  else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"; fi
+else bad "harness: imv showed no window for the QR image"; fi
+pkill -u "$U" -x imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png
+if ls /sys/class/video4linux/video* >/dev/null 2>&1; then
+  note "ERGON-104: the guest has a V4L2 node, so the no-camera refusal is not exercised"
+else
+  _wc=$(usr "timeout 10 ergon-webcam" 2>&1 </dev/null); _wc_rc=$?
+  if [ "$_wc_rc" != 0 ] && [ "$_wc_rc" != 124 ] && ! pgrep -u "$U" -x ffmpeg >/dev/null; then
+    ok "ergon-webcam refuses with no camera: $(head -c 100 <<<"$_wc" | tr '\n' '|')"
+  else bad "ergon-webcam with no camera: rc $_wc_rc, ffmpeg $(pgrep -u "$U" -x ffmpeg || echo absent), output: $_wc"; pkill -u "$U" -x ffmpeg; fi
+fi
+note "ERGON-104: a real webcam recording and the Open button on mako are unproven here"
+
 rm -f /etc/sudoers.d/99-harness
 
 # --- what provisioning was supposed to leave behind ------------------------
