@@ -359,11 +359,17 @@ esac
 # pacman.conf of its own: what it copies into /mnt is still this ISO's live
 # mirrorlist, which the pin's --latest needs, and provisioning points the new
 # system at the pin. ERGON_ARCHIVE_DATE is how bin/test-arch-vm.sh installs the
-# day it is about to test.
+# day it is about to test. A host.env already committed for this hostname that
+# says CHANNEL=rolling (ERGON-99) installs today's Arch instead, and records the
+# live sync the way ergon update does, so a later switch to tested knows how
+# new this machine is.
 # shellcheck source=../lib/archive-pin.sh
 . "$ERGON/lib/archive-pin.sh"
 PACSTRAP_CONF=()
-if PIN=$(ergon_tested_date); then
+CHANNEL=$(ergon_channel "$HOSTNAME") || warn "CHANNEL in hosts/$HOSTNAME/host.env is neither tested nor rolling — treated as tested"
+if [ "$CHANNEL" = rolling ]; then
+  PIN=""; ok "channel rolling (hosts/$HOSTNAME/host.env): today's Arch, which no VM run has tested"
+elif PIN=$(ergon_tested_date); then
   ergon_pin_list "$PIN" > "$ERGON_PIN_LIST"
   ergon_pin_conf < /etc/pacman.conf > /tmp/ergon-pacstrap.conf
   PACSTRAP_CONF=(-C /tmp/ergon-pacstrap.conf)
@@ -387,6 +393,7 @@ until pacstrap -K "${PACSTRAP_CONF[@]}" /mnt base base-devel $KERNELS linux-firm
   _try=$((_try + 1)); sleep 30
 done
 ok "base system installed"
+[ -n "$PIN" ] || { mkdir -p "/mnt$(dirname "$ERGON_LIVE_SYNCED")" && date -u +%F > "/mnt$ERGON_LIVE_SYNCED"; }
 
 genfstab -U /mnt >> /mnt/etc/fstab
 # Strip subvol= AND subvolid= from the ROOT line only. Every other line keeps

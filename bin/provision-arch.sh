@@ -134,11 +134,17 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   # a sync against the list has gone through, for the reason ergon-update
   # gives; recorded only once this whole command has, so a failed one is forced
   # again by whichever of the two syncs next.
-  if PIN=$(ergon_tested_date); then
-    ok "installing from Arch as of $PIN, the day the VM suite last passed"
-  else
-    PIN=""; warn "no usable packages/tested-date — installing from live mirrors, which no VM run has tested"
-  fi
+  # The channel decides the day exactly as it does for ergon update
+  # (ergon_pin_decide, ERGON-99). A machine held after rolling installs from
+  # live mirrors, as it already is, rather than mix the tested day's builds into
+  # newer ones; that live sync is recorded, and the hold moves to today.
+  ergon_pin_decide; PIN=$ERGON_PIN
+  case "$ERGON_PIN_WHY" in
+    tested)  ok "installing from Arch as of $PIN, the day the VM suite last passed" ;;
+    rolling) ok "channel rolling: installing from live mirrors, which no VM run has tested" ;;
+    ahead)   warn "this machine took live Arch on $ERGON_LIVE, not before the tested $ERGON_TESTED — installing from live mirrors, as it already is; ergon update holds it until a tested day after today" ;;
+    *)       warn "no usable packages/tested-date — installing from live mirrors, which no VM run has tested" ;;
+  esac
   _rc=0; ergon_pin_apply "$PIN" || _rc=$?
   [ "$_rc" -lt 2 ] || { warn "could not point pacman at $ERGON_PIN_LIST"; exit 1; }
   _sync=-Syu; ! ergon_pin_owed || _sync=-Syyu
@@ -157,7 +163,7 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
     _try=$((_try + 1)); sleep 30
   done
   sudo "${ERGON_TXN[@]}" pacman -Su --needed --noconfirm "${PKGS[@]}"
-  [ "$_sync" = -Syu ] || sudo bash -c "$(ergon_pin_synced_cmd)"
+  [ "$_sync" = -Syu ] && [ -n "$PIN" ] || sudo bash -c "$(ergon_pin_synced_cmd)"
   ok "${#PKGS[@]} packages"
 else
   ok "${#PKGS[@]} packages already installed; nothing to upgrade here (use: ergon update)"

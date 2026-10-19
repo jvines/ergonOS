@@ -31,7 +31,15 @@
 # pending, and again on the run after that sync failed, --check moving
 # nothing, --latest and back, a missing or unreadable day falling back to live
 # mirrors rather than refusing, and doctor's arch-date row over the files those
-# runs left, and over installed packages newer than the day.
+# runs left, and over installed packages newer than the day. And ERGON-99, the
+# channels: unset means tested; `ergon channel` records the choice in host.env,
+# once, and moves nothing; rolling puts the list on live mirrors with a forced
+# -Syy and records every live sync; back to tested (or after --latest) holds
+# the machine, syncing nothing, until a tested day after that sync, then pins it
+# with -Syy and drops the record; a flip and back with no update moves nothing;
+# the databases' mtime standing in for a missing record; a typo read as
+# tested; doctor's channel row; and provisioning's own install block, run
+# against the same sysroot, following all of it.
 #
 # DOES NOT COVER: a real pacman transaction, real logind, real firmware, or the
 # real AUR (bin/test-aur.sh covers what ergon-aur --outdated makes of a reply).
@@ -268,13 +276,14 @@ systemd-inhibit --what=sleep:shutdown:handle-lid-switch --who=ergon --why=system
 bash -c pacman -Sy --noconfirm || exit 10; \
 pacman -S --needed --noconfirm archlinux-keyring || true; pacman -Su --noconfirm"
 
-# The one doctor row ERGON-35 adds, off the same sysroot. Its own log dir: doctor
-# asks the pacman stub things an update never does, and those are not this
-# file's violations.
-doctor() {
+# The doctor rows ERGON-35 and ERGON-99 add, off the same sysroot. Its own log
+# dir: doctor asks the pacman stub things an update never does, and those are
+# not this file's violations.
+doctor_row() {  # <row name>
   env -u WAYLAND_DISPLAY HOME="$T/home" TEST_ROOT="$T/dr" "$REPO/bin/ergon-doctor" --json 2>/dev/null \
-    | grep -o '{"name":"arch-date"[^}]*}'
+    | grep -o "{\"name\":\"$1\"[^}]*}"
 }
+doctor() { doctor_row arch-date; }
 
 echo "== held at the Arch day the VM suite passed (ERGON-35)"
 update -- --yes
@@ -513,14 +522,31 @@ check "  unless something installed is newer than that day's, which doctor count
 core zsh 5.9-5 [installed]
 extra vim 9.1.2-1 [installed: 9.1.0-1]
 extra git 2.51.1-1 [installed: 2.51.0-1]" doctor) '"state":"warn".*but 1 installed package\(s\) are newer'
+LIVEREC="$S/var/lib/ergon/live-synced"
+TODAY=$(date -u +%F)
 update -- --yes --latest
 check "--latest reads live mirrors" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
 check "  forcing the sync" hasx "$L/pacman" "-Syy --noconfirm"
 check "  and says no VM run has tested them" has "$T/out" "--latest: live mirrors, which no VM run has tested"
-check "  doctor says the machine is on live mirrors" hasre <(doctor) '"state":"warn".*--latest'
+check "  the live sync records its day, inside the transaction" hasx "$LIVEREC" "$TODAY"
+check "  doctor says the machine is held on live mirrors" hasre <(doctor) '"state":"warn".*took live Arch on '"$TODAY"
+update STUB_PENDING=vim -- --yes
+rc=$?
+check "the next plain update holds it there: the tested day is older (ERGON-99)" noxact
+check "  the list stays on live mirrors" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
+check "  and it says why, and when that ends" has "$T/out" "until a tested day after $TODAY arrives"
+check "  a held run is no failure" test "$rc" -eq 0
+update STUB_PENDING=vim -- --check
+rc=$?
+check "  --check says the same, and exits 0" test "$rc" -eq 0
+check "    having written nothing" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
+check "    and named the hold" has "$T/out" "held at live Arch of $TODAY"
+# The live sync two days back, the tested day yesterday: it has passed it.
+date -u -d '2 days ago' +%F > "$LIVEREC"
 update -- --yes
-check "the next plain update returns to the tested day" hasx "$LIST" "$(server "$NEWER")"
+check "a tested day after the live sync returns it there" hasx "$LIST" "$(server "$NEWER")"
 check "  with -Syy: back to an older day, -Sy keeps the newer database" hasx "$L/pacman" "-Syy --noconfirm"
+check "  and that sync drops the live record" test ! -e "$LIVEREC"
 echo "next tuesday" > "$T/ergon/packages/tested-date"
 update STUB_PENDING=vim -- --yes
 check "an unreadable tested day is no refusal" test "$?" -eq 0
@@ -531,6 +557,9 @@ rm "$T/ergon/packages/tested-date"
 update STUB_PENDING=vim -- --yes
 check "no tested day at all: the same" hasx "$L/pacman" "-Su --noconfirm"
 check "  doctor warns" hasre <(doctor) '"state":"warn".*no usable packages/tested-date'
+# Those two live runs recorded today; the stale-day rows below are about a
+# machine that has been on the tested day all along.
+rm -f "$LIVEREC"
 date -u -d '20 days ago' +%F > "$T/ergon/packages/tested-date"
 update -- --yes
 check "a tested day three weeks old: doctor says security fixes are that far behind" \
@@ -543,6 +572,95 @@ check "a pacman.conf that does not read the list pins nothing, and doctor says s
 update -- --yes
 check "  pointing it back at the list forces a sync too, though the list itself stayed" hasx "$L/pacman" "-Syy --noconfirm"
 
+
+echo "== channels: tested and rolling (ERGON-99)"
+HE="$T/ergon/hosts/$(hostname -s)/host.env"
+channel() { env -u CHANNEL "$REPO/bin/ergon-channel" "$@" > "$T/out" 2>&1; }
+# Provisioning's install, the block itself, lifted out of provision-arch.sh and
+# run against the same sysroot: its pacman logs instead of installing.
+mkdir -p "$T/pstub"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TEST_ROOT/log/ppacman"\n' > "$T/pstub/pacman"
+chmod +x "$T/pstub/pacman"
+sed -n '/^  ergon_pin_decide; PIN=\$ERGON_PIN$/,/^  ok "\${#PKGS\[@\]} packages"$/p' "$REPO/bin/provision-arch.sh" > "$T/provision-block"
+provision() {
+  rm -rf "$T/log"; mkdir -p "$T/log"
+  PATH="$T/pstub:$PATH" bash -c '. "$ERGON/lib/archive-pin.sh"; ok() { echo "ok $*"; }; warn() { echo "warn $*"; }
+    PKGS=(vim); ERGON_TXN=(); . "$1"' _ "$T/provision-block" > "$T/out" 2>&1
+}
+check "the provisioning block was found" grep -q 'ergon_pin_apply' "$T/provision-block"
+echo "$TESTED" > "$T/ergon/packages/tested-date"
+update -- --yes
+check "no host.env at all: tested, the default" hasx "$LIST" "$(server "$TESTED")"
+channel
+check "  ergon channel says so, with the day" has "$T/out" "tested — Arch as of $TESTED"
+check "  doctor's channel row too" hasre <(doctor_row channel) '"state":"ok".*tested: Arch held.*'"$TESTED"
+channel rolling
+check "ergon channel rolling records it in host.env" hasx "$HE" "CHANNEL=rolling"
+check "  and moves nothing itself" hasx "$LIST" "$(server "$TESTED")"
+check "  but says the next update will" has "$T/out" "the next 'ergon update' moves it to live mirrors"
+check "  doctor flags pacman held on a day the channel does not want" \
+  hasre <(doctor) '"state":"warn".*channel rolling, but pacman is held at Arch '"$TESTED"
+cp "$HE" "$T/he.1"; channel rolling
+check "  again: nothing changes" cmp -s "$T/he.1" "$HE"
+check "    and it says so" has "$T/out" "already on rolling"
+update -- --yes
+check "the next update puts the list on live mirrors" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
+check "  with a forced -Syy" hasx "$L/pacman" "-Syy --noconfirm"
+check "  records the live sync" hasx "$LIVEREC" "$TODAY"
+check "  and says it is rolling" has "$T/out" "channel rolling: live Arch mirrors"
+check "  doctor: rolling, on live mirrors" hasre <(doctor) '"state":"ok".*pacman follows live mirrors \(channel rolling\)'
+date -u -d '9 days ago' +%F > "$LIVEREC"
+update STUB_PENDING=vim -- --yes
+check "a second rolling update is a plain -Sy" hasx "$L/pacman" "-Sy --noconfirm"
+check "  and every live sync is recorded, owed or not" hasx "$LIVEREC" "$TODAY"
+provision
+check "provisioning on rolling installs from live mirrors" hasx "$L/ppacman" "-Syuw --needed --noconfirm vim"
+check "  says so" has "$T/out" "channel rolling: installing from live mirrors"
+check "  and records that sync" hasx "$LIVEREC" "$TODAY"
+channel tested
+check "ergon channel tested records it" hasx "$HE" "CHANNEL=tested"
+check "  and there is one CHANNEL line" test "$(grep -c '^CHANNEL=' "$HE")" -eq 1
+check "  it says the machine is held, since it took live Arch today" has "$T/out" "took live Arch on $TODAY"
+update STUB_PENDING=vim -- --yes
+check "back on tested, the update holds: nothing synced or downgraded" noxact
+check "  the list stays on live mirrors, as the databases are" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
+check "  doctor warns it is held, and that nothing is downgraded" \
+  hasre <(doctor) '"state":"warn".*channel tested, but this machine took live Arch on '"$TODAY"'.*nothing is downgraded'
+provision
+check "provisioning while held installs from live mirrors, as the machine is" hasx "$L/ppacman" "-Syuw --needed --noconfirm vim"
+check "  without moving the list to the older day" hasx "$LIST" "Include = /etc/pacman.d/mirrorlist"
+check "  and says the hold moves" has "$T/out" "holds it until a tested day after today"
+date -u -d '5 days ago' +%F > "$LIVEREC"
+provision
+check "once the tested day passes the live sync, provisioning pins it" hasx "$LIST" "$(server "$TESTED")"
+check "  with -Syyuw" hasx "$L/ppacman" "-Syyuw --needed --noconfirm vim"
+check "  and drops the live record once that sync went through" test ! -e "$LIVEREC"
+update -- --yes
+check "  ergon update then has nothing to force" noxact
+channel rolling; channel tested
+update -- --yes
+check "tested -> rolling -> tested with no update between: nothing moves" noxact
+check "  the list still the tested day" hasx "$LIST" "$(server "$TESTED")"
+# A list on live mirrors from before ERGON-99 has no record; the databases'
+# mtime, which pacman takes from the server, stands in for it.
+channel rolling; update -- --yes; rm -f "$LIVEREC"; channel tested
+mkdir -p "$S/var/lib/pacman/sync"; touch "$S/var/lib/pacman/sync/core.db"
+update -- --yes
+check "no record, databases synced today on live mirrors: held too" noxact
+touch -d '6 days ago' "$S/var/lib/pacman/sync/core.db"
+update -- --yes
+check "  databases from before the tested day: pinned" hasx "$LIST" "$(server "$TESTED")"
+sed -i 's/^CHANNEL=.*/CHANNEL=roling/' "$HE"
+check "a CHANNEL that is neither is tested, and doctor says so" \
+  hasre <(doctor_row channel) '"state":"warn".*neither tested nor rolling'
+update -- --yes
+check "  ergon update keeps the tested day" hasx "$LIST" "$(server "$TESTED")"
+check "  and warns" has "$T/out" "neither tested nor rolling"
+check "ergon channel refuses anything else" not channel weekly
+sed -i 's/^CHANNEL=.*/CHANNEL="rolling"  # chosen by hand/' "$HE"
+sed -i '1i SCREENSHOT_DIR="$NOT_SET_ANYWHERE/shots"' "$HE"
+channel
+check "a quoted, commented CHANNEL beside a line set -u would trip is still read" has "$T/out" "rolling — live Arch mirrors"
 echo
 check "no stub saw a command it did not expect" test ! -e "$L/violations"
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"

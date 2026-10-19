@@ -250,10 +250,15 @@ behind -- on a machine whose checkout `ergon sync` keeps current, since the day
 arrives in it like any other file. `ergon update` says how old its day is, and
 doctor's `arch-date` row warns past two weeks, when the checkout is stale or
 the suite has stopped passing. `ergon update --latest` takes live mirrors now,
-untested, and pacman stays on them until the next plain `ergon update`, or
-provisioning that installs a package. **What stays true:** nothing is ever
-downgraded -- behind a newer machine, pacman says "local is newer" and leaves
-it, and doctor counts what is newer than the day -- and AUR packages keep
+untested, once; `ergon channel rolling` makes that every update (ERGON-99), and
+`ergon channel` with no argument says which this machine is on. **What stays
+true:** nothing is ever downgraded. Back on the tested day after live mirrors,
+a plain `ergon update` holds the machine where it is, upgrading nothing, until a
+tested day after its last live sync arrives: moving back sooner would mix that
+day's builds into newer ones, and `pacman -Suu` would downgrade data formats
+that already migrated (a Firefox profile refuses an older Firefox). The way back
+to a tested state now is `ergon rollback`. Doctor's `channel` and `arch-date`
+rows say which of these the machine is in. AUR packages keep
 following their own pins in `packages/aur`, built against the held day's
 libraries.
 
