@@ -3384,7 +3384,8 @@ if command -v yazi >/dev/null 2>&1; then
     [ -s "$H/.config/yazi/$_f" ] && ok "yazi $_f is installed" || note "yazi $_f is absent from $H/.config/yazi"
   done
   # Yazi parses all its config before it draws; a parse error prints and exits.
-  _yz=$(su - "$U" -s /bin/bash -c "TERM=xterm-256color XDG_RUNTIME_DIR=/run/user/1000 timeout 6 script -qec \"stty cols 120 rows 40; yazi\" /dev/null </dev/null" 2>&1 | tr -d '\000' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')
+  # A yazi that outlives script once held this for 30 min of silence (2026-10-19): both waits are bounded and killed.
+  _yz=$(timeout -k 3 20 su - "$U" -s /bin/bash -c "TERM=xterm-256color XDG_RUNTIME_DIR=/run/user/1000 timeout -k 2 6 script -qec \"stty cols 120 rows 40; yazi\" /dev/null </dev/null" 2>&1 | tr -d '\000' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')
   if grep -qE "Failed to parse|TOML parse error|panicked" <<<"$_yz"; then
     bad "yazi complained about its config: $(grep -A4 -E "Failed to parse|TOML parse error|panicked" <<<"$_yz" | head -8 | tr '\n' ' ')"
   else ok "yazi started with keymap.toml ([mgr]) and theme.toml and printed no config error"; fi
