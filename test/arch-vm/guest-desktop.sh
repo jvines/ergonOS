@@ -3021,7 +3021,14 @@ done
 # What this Hyprland really exposes, for when a dispatch below is silently a no-op.
 hq "eval 'local f = io.open(\"/tmp/o-dsp.txt\", \"w\"); for _, t in ipairs({\"hl\", \"dsp\", \"dsp.window\", \"dsp.workspace\"}) do local m = hl; for p in t:gmatch(\"[^.]+\") do m = m and m[p] end; if type(m) == \"table\" then local k = {}; for n in pairs(m) do k[#k+1] = tostring(n) end; table.sort(k); f:write(t, \": \", table.concat(k, \" \"), \"\\n\") end end; f:close()'" >/dev/null 2>&1
 note "hl API: $(tr '\n' ';' </tmp/o-dsp.txt 2>/dev/null | cut -c1-900)"
+# The screenshot section leaves fuzzel up, and fuzzel is a layer surface with
+# EXCLUSIVE keyboard interactivity: while it is mapped no window can take focus,
+# by click, by dispatch or on map. Runs 1-5 of this section were that.
+note "before the window keys: layers $(hq layers -j 2>/dev/null | jq -c '[.. | objects | select(has("namespace")) | "\(.namespace)/\(.pid)"]' 2>/dev/null); fuzzel: $(pgrep -a -x fuzzel | tr '\n' ' ')"
+pkill -u "$U" -x fuzzel 2>/dev/null
 pkill -u "$U" -x foot 2>/dev/null; sleep 1   # strays from the sections above
+nolauncher() { ! hq layers -j 2>/dev/null | jq -e '[.. | objects | select(.namespace? == "launcher")] | length > 0' >/dev/null; }
+o_until 5 nolauncher || note "a launcher layer is still mapped"
 o_dsp 'hl.dsp.focus({workspace = 7})'
 sleep 1
 # The keys below are PRESSED, through ydotool's uinput keyboard, as the
@@ -3031,7 +3038,6 @@ sleep 1
 if [ ! -S "$YSOCK" ] || ! pgrep -x ydotoold >/dev/null; then
   note "ydotoold is gone: the window keys below cannot be pressed, only dispatched"
 fi
-note "before the window keys: active '$(o_active .class)', cursor $(hq cursorpos 2>/dev/null), monitors $(hq monitors -j 2>/dev/null | jq -c '[.[] | {name, focused, ws: .activeWorkspace.id}]'), layers $(hq layers -j 2>/dev/null | jq -c '[.. | objects | select(has("namespace")) | .namespace] | unique' 2>/dev/null)"
 if o_win ergon-t1 && o_win ergon-t2; then
   ok "two windows opened on workspace 7"
   o_focus ergon-t2 || note "could not focus ergon-t2 before pop"
@@ -3138,8 +3144,8 @@ o_until 6 no_inh && ok "ergon-awake off: the inhibitor is gone" || bad "ergon-aw
 _kb_save=$(kb_main)
 hq "eval 'hl.config({ input = { kb_layout = \"us,es\", kb_variant = \"\" } })'" >/dev/null
 # Any keyboard, not the main one: main is whichever sent the last key, and after
-# the typing above that is a virtual keyboard kb_layout never reaches (fcitx5's,
-# or ydotool's). ergon-layout reads a keyboard that carries the list for that
+# the typing above that can be a virtual keyboard kb_layout never reaches (wtype's
+# or an input method's). ergon-layout reads a keyboard that carries the list for that
 # reason, and kidx reads the one it reads.
 note "keyboards: $(hq devices -j | jq -c '[.keyboards[] | {name, layout, main}]')"
 have2() { hq devices -j | jq -e 'any(.keyboards[]; .layout == "us,es")' >/dev/null; }
@@ -3186,11 +3192,16 @@ CRASH
   usr "/tmp/o-crash.sh" >/dev/null 2>&1 &
   sleep 2
   _cp=$(pgrep -u "$U" -f ergoncrashprobe | head -1)
+  _cg=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/ergon-crash-notify.service
+  cgio() { local p; for p in $(cat "$_cg/cgroup.procs" 2>/dev/null); do printf '%s:%s r=%s w=%s %s; ' "$p" "$(cat /proc/$p/comm)" "$(awk '/^rchar/ {print $2}' /proc/$p/io)" "$(awk '/^wchar/ {print $2}' /proc/$p/io)" "$(cat /proc/$p/wchan)"; done; }
+  _io0=$(cgio)
   if [ -n "$_cp" ]; then
     kill -SEGV "$_cp"
     crashed() { { usr "makoctl list; makoctl history" 2>/dev/null; } | grep -qi 'crashed'; }
     if o_until 20 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification"
     else bad "a SIGSEGV'd program raised no notification within 20s"; fi
+    note "the service's processes, read/written bytes before the crash: $_io0"
+    note "                                              and after it: $(cgio)"
     for _s in A B C D; do
       note "by hand, stage $_s: $(wc -l </tmp/o-f$_s.out 2>/dev/null) line(s): $(head -c 160 /tmp/o-f$_s.out 2>/dev/null | tr '\n' ' ')"
     done
@@ -3206,6 +3217,15 @@ CRASH
     note "entry fields: $(journalctl -b --no-pager -o json -n 1 MESSAGE_ID=$CID 2>/dev/null | jq -c '{_UID,_GID,COREDUMP_UID,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,_TRANSPORT}' 2>&1)"
     note "the service's own lines: $(journalctl --no-pager -o cat -n 5 _SYSTEMD_USER_UNIT=ergon-crash-notify.service 2>&1 | tr '\n' ';' | head -c 300)"
     note "mako: $(usr "makoctl list" 2>&1 | head -4 | tr '\n' ';')"
+    # The same crash against a follower started just now: a stale follower and a
+    # broken one are different bugs.
+    if ! crashed; then
+      su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart ergon-crash-notify.service" >/dev/null 2>&1; sleep 3
+      usr "/tmp/o-crash.sh" >/dev/null 2>&1 & sleep 2
+      _cp=$(pgrep -u "$U" -f ergoncrashprobe | head -1); [ -n "$_cp" ] && kill -SEGV "$_cp"
+      if o_until 15 crashed; then note "after a restart of the service, the same crash WAS announced"
+      else note "after a restart of the service, the crash was still not announced: $(cgio)"; fi
+    fi
     pkill -s "$(cat /tmp/o-follow.sid 2>/dev/null || echo 999999)" 2>/dev/null   # the hand followers only: their own session
   else
     bad "the crash probe process did not start"
