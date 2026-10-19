@@ -181,6 +181,10 @@ jobs:
       - name: The audio-output key cycles sinks
         run: cd "$CI_DIR" && ./bin/test-audio-output.sh
 
+      # ERGON-95: the Wi-Fi picker. nmcli -t fixtures (escaped colons), QR payload.
+      - name: The Wi-Fi picker parses nmcli and builds the share QR
+        run: cd "$CI_DIR" && ./bin/test-wifi.sh
+
       # ERGON-85: the layout key with one layout and with several, stub hyprctl.
       - name: The layout key cycles the keyboard layouts a host lists
         run: cd "$CI_DIR" && ./bin/test-layout.sh
