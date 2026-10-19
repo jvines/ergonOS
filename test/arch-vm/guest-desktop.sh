@@ -3375,7 +3375,7 @@ else note "ERGON-96: yazi is not installed in the guest"; fi
 # --- ERGON-94: ergon drive on the guest's real lsblk ------------------------
 _dl=$(usr "ergon drive list --why" 2>&1); _dl_rc=$?
 [ "$_dl_rc" = 0 ] && ok "ergon drive list --why exited 0: $(head -c 150 <<<"$_dl" | tr '\n' '|')" || bad "ergon drive list --why rc $_dl_rc: $_dl"
-_sysdisk=/dev/$(lsblk -no PKNAME "$(findmnt -no SOURCE /)" 2>/dev/null | head -1)
+_sysdisk=$(lsblk -nspo NAME,TYPE "$(findmnt -no SOURCE -T / | sed "s/\[.*//")" 2>/dev/null | awk '$2=="disk"{print $1; exit}')
 if usr 'ergon drive list' 2>/dev/null | grep -qF -- "$_sysdisk"; then bad "the system disk $_sysdisk is OFFERED for formatting"
 else ok "the system disk $_sysdisk is not offered by ergon drive list"; fi
 _df=$(usr "ergon drive format $_sysdisk" 2>&1 </dev/null); _df_rc=$?
