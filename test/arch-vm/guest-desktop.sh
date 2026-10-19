@@ -2968,10 +2968,29 @@ grep -q 'ergon explain' "$H/.codex/AGENTS.md" 2>/dev/null \
 echo "--- omarchy-derived behaviour (ERGON-82..90) ---"
 o_dsp() { O_OUT=$(hq "dispatch '$1'" 2>&1); }
 o_addr() { hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | .address' | head -1; }
-o_focus() {  # o_focus <class>: tries the selector forms in turn, says which one took
-  local a want i f; a=$(o_addr "$1"); want=$(o_addr "$1")
-  for f in "{ window = \"address:$a\" }" "{ window = \"class:$1\" }" "{ window = \"$a\" }" "{ window = \"class:^$1\$\" }"; do
-    o_dsp "hl.dsp.focus($f)"; sleep 0.5
+# Focus the way a person does: click the window, through ydotool's uinput
+# pointer (the synthetic-clicks section started ydotoold). Runs 1-4 of this
+# section tried hl.dsp.focus({ window = ... }) in four selector forms: each said
+# "ok" and none moved focus, and a window the compositor maps here does not take
+# focus either -- follow_mouse = 1 hands it back to whatever is under the
+# pointer. The dispatch forms are still tried after the click, and reported.
+o_center() { hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | "\((.at[0] + .size[0] / 2) | floor) \((.at[1] + .size[1] / 2) | floor)"' | head -1; }
+o_click() {  # o_click <x> <y> [count]
+  hq "dispatch 'hl.dsp.cursor.move({x = $1, y = $2})'" >/dev/null 2>&1; sleep 0.3
+  usr "YDOTOOL_SOCKET=$YSOCK ydotool click --repeat ${3:-1} --next-delay 60 0xC0" >/dev/null 2>&1; sleep 0.5
+}
+o_key() { usr "YDOTOOL_SOCKET=$YSOCK ydotool key $*" >/tmp/ydotool.out 2>&1; sleep 0.6; }
+o_focus() {  # o_focus <class>: a click first, then the dispatch forms; says which took
+  local a f; a=$(o_addr "$1")
+  [ "$(o_active .address)" = "$a" ] && return 0
+  if [ -S "$YSOCK" ]; then
+    # shellcheck disable=SC2046
+    o_click $(o_center "$1")
+    [ "$(o_active .address)" = "$a" ] && return 0
+    note "a click at $(o_center "$1") left focus on '$(o_active .class)'"
+  fi
+  for f in "hl.dsp.exec_raw(\"focuswindow address:$a\")" "hl.dsp.focus({ window = \"address:$a\" })"; do
+    o_dsp "$f"; sleep 0.5
     if [ "$(o_active .address)" = "$a" ]; then note "focus form that works: $f"; return 0; fi
     note "focus form $f did nothing (said: $O_OUT)"
   done; return 1
@@ -3005,58 +3024,73 @@ note "hl API: $(tr '\n' ';' </tmp/o-dsp.txt 2>/dev/null | cut -c1-900)"
 pkill -u "$U" -x foot 2>/dev/null; sleep 1   # strays from the sections above
 o_dsp 'hl.dsp.focus({workspace = 7})'
 sleep 1
+# The keys below are PRESSED, through ydotool's uinput keyboard, as the
+# keycode binds above are: Hyprland matches them through the us layout the
+# compositor is back on. evdev: LEFTMETA 125, LEFTALT 56, TAB 15, H 35, O 24,
+# C 46, V 47, ENTER 28.
+if [ ! -S "$YSOCK" ] || ! pgrep -x ydotoold >/dev/null; then
+  note "ydotoold is gone: the window keys below cannot be pressed, only dispatched"
+fi
+note "before the window keys: active '$(o_active .class)', cursor $(hq cursorpos 2>/dev/null), monitors $(hq monitors -j 2>/dev/null | jq -c '[.[] | {name, focused, ws: .activeWorkspace.id}]'), layers $(hq layers -j 2>/dev/null | jq -c '[.. | objects | select(has("namespace")) | .namespace] | unique' 2>/dev/null)"
 if o_win ergon-t1 && o_win ergon-t2; then
   ok "two windows opened on workspace 7"
   o_focus ergon-t2 || note "could not focus ergon-t2 before pop"
-  # --- ERGON-89: pop out -----------------------------------------------------
-  usr "ergon-window pop" >/dev/null 2>&1
+  # --- ERGON-89: pop out, SUPER+O ------------------------------------------
+  o_key 125:1 24:1 24:0 125:0
   pop_on() { [ "$(o_active .floating)" = true ] && [ "$(o_active .pinned)" = true ]; }
-  if o_until 5 pop_on; then ok "ergon-window pop floats and pins the focused window"
-  else bad "ergon-window pop: floating=$(o_active .floating) pinned=$(o_active .pinned)"; fi
-  usr "ergon-window pop" >/dev/null 2>&1
+  if o_until 5 pop_on; then ok "SUPER+O (ergon-window pop) floats and pins the focused window"
+  else bad "SUPER+O: floating=$(o_active .floating) pinned=$(o_active .pinned) on '$(o_active .class)'"; fi
+  o_key 125:1 24:1 24:0 125:0
   pop_off() { [ "$(o_active .floating)" = false ] && [ "$(o_active .pinned)" = false ]; }
-  if o_until 5 pop_off; then ok "ergon-window pop again puts it back in the tiling"
-  else bad "ergon-window pop again: floating=$(o_active .floating) pinned=$(o_active .pinned)"; fi
+  if o_until 5 pop_off; then ok "SUPER+O again puts it back in the tiling"
+  else bad "SUPER+O again: floating=$(o_active .floating) pinned=$(o_active .pinned)"; fi
 
-  # --- ERGON-89: swap (the dispatch SUPER+ALT+H/L issues) --------------------
-  # t2 was opened last, so it is focused and sits right of t1 in dwindle.
+  # --- ERGON-89: swap, SUPER+ALT+H -----------------------------------------
   o_focus ergon-t2 || note "could not focus ergon-t2"
   _x1=$(o_field ergon-t1 '.at[0]'); _x2=$(o_field ergon-t2 '.at[0]')
   if [ "${_x1:-0}" -lt "${_x2:-0}" ]; then
-    o_dsp 'hl.dsp.window.swap({ direction = "l" })'
+    o_key 125:1 56:1 35:1 35:0 56:0 125:0
     swapped() { [ "$(o_field ergon-t1 '.at[0]')" -gt "$(o_field ergon-t2 '.at[0]')" ]; }
-    if o_until 5 swapped; then ok "window.swap direction \"l\" exchanged the two tiles (t1 x $_x1 -> $(o_field ergon-t1 '.at[0]'))"
-    else bad "window.swap direction \"l\" moved nothing (t1 x=$(o_field ergon-t1 '.at[0]'), t2 x=$(o_field ergon-t2 '.at[0]'))"; fi
-      note "swap dispatch said: $O_OUT; focused now: $(o_active .class); a swap with direction=left: $(hq "dispatch 'hl.dsp.window.swap({ direction = \"left\" })'" 2>&1) t1 x=$(o_field ergon-t1 '.at[0]')"
+    if o_until 5 swapped; then ok "SUPER+ALT+H swapped the focused window with the one on its left (t1 x $_x1 -> $(o_field ergon-t1 '.at[0]'))"
+    else bad "SUPER+ALT+H moved nothing (t1 x=$(o_field ergon-t1 '.at[0]'), t2 x=$(o_field ergon-t2 '.at[0]'), focused '$(o_active .class)')"; fi
   else
     bad "precondition: t1 not left of t2 (x $_x1 vs $_x2), swap not tested"
   fi
 
-  # --- ERGON-89: ALT+TAB closure (cycle_next + bring_to_top) ----------------
+  # --- ERGON-89: ALT+TAB (cycle_next + bring_to_top) -----------------------
   _a0=$(o_active .class)
-  o_dsp 'hl.dsp.window.cycle_next({ next = true })'
-  o_dsp 'hl.dsp.window.bring_to_top()'
+  o_key 56:1 15:1 15:0 56:0
   cyc() { [ "$(o_active .class)" != "$_a0" ]; }
-  if o_until 4 cyc; then ok "window.cycle_next + bring_to_top moved focus ($_a0 -> $(o_active .class))"
-  else bad "window.cycle_next left focus on $_a0 (dispatch name wrong, or rejected)"; fi
-  note "cycle said: $O_OUT; next=false -> $(hq "dispatch 'hl.dsp.window.cycle_next({ next = false })'" 2>&1) / $(o_active .class); {} -> $(hq "dispatch 'hl.dsp.window.cycle_next({})'" 2>&1) / $(o_active .class)"
+  if [ "$_a0" != null ] && o_until 4 cyc; then ok "ALT+TAB moved focus to the next window ($_a0 -> $(o_active .class))"
+  else bad "ALT+TAB left focus on '$_a0'"; fi
 
-  # --- ERGON-88: the dispatch SUPER+C sends, down, then up from hl.timer ------
-  # F5 with CTRL rather than Ctrl+Insert: foot binds the latter to copy and
-  # would consume it. What is proven is the mechanism (send_key_state reaching
-  # the focused client, and hl.timer firing the release), not foot's bindings.
+  # --- ERGON-88: SUPER+C copies a selection in foot to the clipboard -------
+  # A double-click selects the word (foot: pad 8, first row); SUPER+C sends
+  # Ctrl+Insert, which foot.ini binds to clipboard-copy.
+  printf '#!/bin/sh\necho ergonclipprobe\nexec sleep 900\n' > /tmp/o-clip.sh; chmod 755 /tmp/o-clip.sh
+  o_win ergon-t4 /tmp/o-clip.sh; sleep 1
+  usr "printf before | wl-copy" >/dev/null 2>&1
+  _ax=$(o_field ergon-t4 '.at[0]'); _ay=$(o_field ergon-t4 '.at[1]')
+  o_click $((_ax + 40)) $((_ay + 16)) 2
+  [ "$(o_active .class)" = ergon-t4 ] || note "the double-click left focus on '$(o_active .class)'"
+  o_key 125:1 46:1 46:0 125:0
+  clip() { [ "$(usr 'timeout 3 wl-paste -n' 2>/dev/null)" = ergonclipprobe ]; }
+  if o_until 4 clip; then ok "SUPER+C copied foot's selection to the clipboard (wl-paste: ergonclipprobe)"
+  else bad "SUPER+C: wl-paste gives '$(usr 'timeout 3 wl-paste -n' 2>&1 | head -c 60)', primary '$(usr 'timeout 3 wl-paste -p -n' 2>&1 | head -c 60)'"; fi
+
+  # --- ERGON-88: SUPER+V pastes the clipboard into foot --------------------
   rm -f /tmp/o-keys.out
-  cat > /tmp/o-keys.sh <<'KEYS'
-#!/bin/sh
-exec cat -v > /tmp/o-keys.out
-KEYS
-  chmod 755 /tmp/o-keys.sh
+  printf '#!/bin/sh\nexec cat -v > /tmp/o-keys.out\n' > /tmp/o-keys.sh; chmod 755 /tmp/o-keys.sh
   o_win ergon-t3 /tmp/o-keys.sh; sleep 1
   o_focus ergon-t3 || note "could not focus ergon-t3"
-  hq "eval 'hl.dispatch(hl.dsp.send_key_state({ mods = \"CTRL\", key = \"F5\", state = \"down\" })); hl.timer(function() hl.dispatch(hl.dsp.send_key_state({ mods = \"CTRL\", key = \"F5\", state = \"up\" })) end, { timeout = 50, type = \"oneshot\" })'" >/dev/null 2>&1
-  keyseen() { grep -q '15;5~' /tmp/o-keys.out 2>/dev/null; }
-  if o_until 5 keyseen; then ok "send_key_state + hl.timer delivered Ctrl+F5 to the focused client"
-  else bad "send_key_state delivered nothing to the focused client (cat -v saw: '$(head -c 60 /tmp/o-keys.out 2>/dev/null)')"; fi
+  usr "printf ergonpasteprobe | wl-copy" >/dev/null 2>&1
+  o_key 125:1 47:1 47:0 125:0
+  o_key 28:1 28:0
+  pasted() { grep -q ergonpasteprobe /tmp/o-keys.out 2>/dev/null; }
+  if o_until 5 pasted; then ok "SUPER+V pasted the clipboard into foot"
+  else bad "SUPER+V: the client read '$(head -c 60 /tmp/o-keys.out 2>/dev/null | tr '\n' ' ')' (focused '$(o_active .class)')"; fi
+  note "SUPER+X (cut) is not pressed: a terminal has nothing to cut, and no GTK/Qt app is in the image"
+  pkill -u "$U" -f 'app-id=ergon-t[34]' 2>/dev/null; sleep 1
 
   # --- ERGON-90: layout cycle ------------------------------------------------
   o_dsp 'hl.dsp.focus({ workspace = 7 })'
@@ -3103,25 +3137,46 @@ o_until 6 no_inh && ok "ergon-awake off: the inhibitor is gone" || bad "ergon-aw
 # --- ERGON-85: layout cycle changes the active keymap -----------------------
 _kb_save=$(kb_main)
 hq "eval 'hl.config({ input = { kb_layout = \"us,es\", kb_variant = \"\" } })'" >/dev/null
-have2() { [ "$(hq devices -j | jq -r '(.keyboards | map(select(.main)) + .)[0].layout')" = "us,es" ]; }
+# Any keyboard, not the main one: main is whichever sent the last key, and after
+# the typing above that is a virtual keyboard kb_layout never reaches (fcitx5's,
+# or ydotool's). ergon-layout reads a keyboard that carries the list for that
+# reason, and kidx reads the one it reads.
+note "keyboards: $(hq devices -j | jq -c '[.keyboards[] | {name, layout, main}]')"
+have2() { hq devices -j | jq -e 'any(.keyboards[]; .layout == "us,es")' >/dev/null; }
 if o_until 8 have2; then
-  kidx() { hq devices -j | jq -r '(.keyboards | map(select(.main)) + .)[0].active_layout_index'; }
+  kidx() { hq devices -j | jq -r '(.keyboards | map(select(.layout | contains(","))) + .)[0].active_layout_index'; }
   _i0=$(kidx)
   usr "ergon-layout" >/dev/null 2>&1
   moved() { [ "$(kidx)" != "$_i0" ]; }
   if o_until 5 moved; then ok "ergon-layout cycled the active layout (index $_i0 -> $(kidx))"
   else bad "ergon-layout left the active layout index at $_i0"; fi
   _wb=$(usr "ergon-layout --waybar")
-  grep -q 'es\|us' <<<"$_wb" && ok "ergon-layout --waybar names the active layout: $_wb" || bad "ergon-layout --waybar: $_wb"
+  jq -e '.text | test("us|es")' <<<"$_wb" >/dev/null 2>&1 && ok "ergon-layout --waybar names the active layout: $_wb" || bad "ergon-layout --waybar: $_wb"
 else
   bad "could not give the compositor kb_layout us,es (keyboards: $(hq devices -j | jq -c '[.keyboards[] | {layout, variant, main}]'))"
 fi
 IFS=$'\t' read -r _kl _kv <<<"$_kb_save"; set_layout "$_kl" "$_kv" || true
 
 # --- ERGON-86: a crashing program of the user's raises a notification -------
+# Runs 1-4: the service was active and the entry was there, readable by the
+# user, and nothing was announced. So the follower's pipeline is also run by
+# hand, as the user, around the crash, stage by stage, and what each stage saw
+# is printed whatever the outcome.
+CID=fc2e22bc6ee647b6b90729ab34a250b1
 if su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active ergon-crash-notify.service" >/dev/null 2>&1; then
   ok "ergon-crash-notify.service is running in the user manager"
   note "core_pattern: $(cut -c1-70 /proc/sys/kernel/core_pattern); coredumpctl: $(command -v coredumpctl || echo missing)"
+  cat > /tmp/o-follow.sh <<FOLLOW
+#!/bin/bash
+# A: the service's first stage. B: A through its jq. C: no _UID. D: no --lines=0.
+cd /tmp; echo \$\$ > /tmp/o-follow.sid
+journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID _UID=1000 > /tmp/o-fA.out 2>&1 & echo \$! >> /tmp/o-follow.pids
+journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID _UID=1000 2>/tmp/o-fB.err | jq --unbuffered -r '[.COREDUMP_PID, .COREDUMP_EXE, .COREDUMP_COMM, .COREDUMP_SIGNAL_NAME] | @tsv' > /tmp/o-fB.out 2>&1 & echo \$! >> /tmp/o-follow.pids
+journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID > /tmp/o-fC.out 2>&1 & echo \$! >> /tmp/o-follow.pids
+journalctl --quiet --follow --lines=1 --output=cat MESSAGE_ID=$CID _UID=1000 > /tmp/o-fD.out 2>&1 & echo \$! >> /tmp/o-follow.pids
+FOLLOW
+  chmod 755 /tmp/o-follow.sh; rm -f /tmp/o-f?.out /tmp/o-follow.pids /tmp/o-follow.sid
+  usr "setsid /tmp/o-follow.sh" >/dev/null 2>&1; sleep 3
   cat > /tmp/o-crash.sh <<'CRASH'
 #!/bin/bash
 ulimit -c unlimited
@@ -3135,14 +3190,23 @@ CRASH
     kill -SEGV "$_cp"
     crashed() { { usr "makoctl list; makoctl history" 2>/dev/null; } | grep -qi 'crashed'; }
     if o_until 20 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification"
-    else
-      bad "a SIGSEGV'd program raised no notification within 20s"
-      note "follower: $(pgrep -af 'journalctl.*fc2e22' | head -2 | tr '\n' ';'); _UID match: $(usr "journalctl --no-pager -o cat -n 1 MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1 _UID=1000" 2>&1 | head -c 120); unit: $(usr "systemctl --user status ergon-crash-notify --no-pager -n 8" 2>&1 | tr '\n' ';' | cut -c1-600)"
-      note "id: $(id $U); coredumpctl: $(coredumpctl list --no-pager 2>&1 | tail -3 | tr '\n' ';'); mako: $(usr "makoctl list" 2>&1 | head -5 | tr '\n' ';')"
-      usr "journalctl --user -u ergon-crash-notify -n 8 --no-pager -o cat" 2>&1 | sed 's/^/     /'
-      journalctl -b --no-pager -o cat MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1 2>&1 | tail -3 | sed 's/^/     coredump: /'
-      note "entry fields: $(journalctl -b --no-pager -o json -n 1 MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1 2>/dev/null | jq -c '{_UID,COREDUMP_UID,OBJECT_UID,COREDUMP_COMM}' 2>&1); as user: $(usr "journalctl --no-pager -o cat -n 1 MESSAGE_ID=fc2e22bc6ee647b6b90729ab34a250b1" 2>&1 | head -c 200)"
-    fi
+    else bad "a SIGSEGV'd program raised no notification within 20s"; fi
+    for _s in A B C D; do
+      note "by hand, stage $_s: $(wc -l </tmp/o-f$_s.out 2>/dev/null) line(s): $(head -c 160 /tmp/o-f$_s.out 2>/dev/null | tr '\n' ' ')"
+    done
+    [ -s /tmp/o-fB.err ] && note "stage B stderr: $(head -c 200 /tmp/o-fB.err)"
+    _jp=$(pgrep -u "$U" -f "journalctl.*$CID" | head -1)
+    _sp=$(su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user show -p MainPID --value ergon-crash-notify.service" 2>/dev/null)
+    _sj=$(pgrep -P "${_sp:-0}" -x journalctl | head -1)
+    note "journal files the service's journalctl ($_sj) holds: $(ls -l /proc/${_sj:-0}/fd 2>/dev/null | grep -o '/[^ ]*\.journal[~]*' | sort -u | tr '\n' ' '); a hand one ($_jp): $(ls -l /proc/${_jp:-0}/fd 2>/dev/null | grep -o '/[^ ]*\.journal[~]*' | sort -u | tr '\n' ' ')"
+    for _jf in /var/log/journal/*/*.journal /run/log/journal/*/*.journal; do
+      [ -e "$_jf" ] || continue
+      journalctl --file="$_jf" -q -o cat -n 1 MESSAGE_ID=$CID COREDUMP_COMM=sleep 2>/dev/null | grep -q . && note "the entry is in $_jf ($(stat -c '%U %a' "$_jf"))"
+    done
+    note "entry fields: $(journalctl -b --no-pager -o json -n 1 MESSAGE_ID=$CID 2>/dev/null | jq -c '{_UID,_GID,COREDUMP_UID,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,_TRANSPORT}' 2>&1)"
+    note "the service's own lines: $(journalctl --no-pager -o cat -n 5 _SYSTEMD_USER_UNIT=ergon-crash-notify.service 2>&1 | tr '\n' ';' | head -c 300)"
+    note "mako: $(usr "makoctl list" 2>&1 | head -4 | tr '\n' ';')"
+    pkill -s "$(cat /tmp/o-follow.sid 2>/dev/null || echo 999999)" 2>/dev/null   # the hand followers only: their own session
   else
     bad "the crash probe process did not start"
   fi
