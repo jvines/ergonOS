@@ -201,6 +201,10 @@ jobs:
       - name: The timezone is detected, or picked, never assumed
         run: cd "$CI_DIR" && ./bin/test-timezone.sh
 
+      # ERGON-97: the PAM edit behind `ergon fido2` -- sufficient, validated, reversible.
+      - name: The security-key PAM edit adds idempotently and removes byte-identically
+        run: cd "$CI_DIR" && ./bin/test-fido2.sh
+
       # lib/ -- the science tooling, which until now was the only part of this
       # repo with no gate at all. Every step above this line tests the desktop,
       # the installer or the system; none of them imports a single line of the
