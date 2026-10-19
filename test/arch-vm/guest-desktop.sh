@@ -1293,10 +1293,12 @@ if [ "$NB" -gt 20 ]; then ok "$NB keybindings registered"; else bad "only $NB ke
 # terminal to draw on -- so a stamp beside a window proves the page ran there.
 # Closed again straight away: every check below was written for a screen with
 # nothing on it, and the screenshot is meant to show the desktop.
-welcome_n() { hq clients -j 2>/dev/null | jq '[.[] | select(.class == "ergon-tui-ergon-welcome")] | length' 2>/dev/null || echo 0; }
+# ERGON-55: the first login opens the marimo notebook in the browser (or, without marimo or a
+# browser, the terminal page), so either window counts as the welcome.
+welcome_n() { hq clients -j 2>/dev/null | jq '[.[] | select(.class == "ergon-tui-ergon-welcome" or (.class | test("^(firefox|chromium|librewolf)$"; "i")))] | length' 2>/dev/null || echo 0; }
 for _ in $(seq 1 30); do [ "$(welcome_n)" -ge 1 ] && break; sleep 1; done
 if [ "$(welcome_n)" -ge 1 ]; then
-  ok "the first login opened the welcome window"
+  ok "the first login opened the welcome window ($(hq clients -j | jq -r '[.[].class] | join(",")'); notebook server on 2730: $(timeout -k 2 5 curl -s -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:2730/ </dev/null 2>/dev/null))"
 else
   bad "the first login opened no welcome window (autostart: ergon-welcome --first-run)"
   usr "makoctl list" 2>&1 | head -8 | sed 's/^/     mako: /'
@@ -1309,7 +1311,8 @@ _wel=$(usr "ergon-welcome" </dev/null 2>&1); _wkeys=$(usr "ergon-keys --print" 2
 [ -n "$_wkeys" ] && [[ $_wel == *"$_wkeys"* ]] && ok "the welcome page carries what ergon-keys prints in this session" \
   || bad "the welcome page does not carry ergon-keys' output: $(grep -A2 '^## Keys' <<<"$_wel" | tr '\n' ' ')"
 welcome_close() {
-  for _p in $(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-tui-ergon-welcome") | .pid'); do kill "$_p"; done
+  for _p in $(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-tui-ergon-welcome" or (.class | test("^(firefox|chromium|librewolf)$"; "i"))) | .pid'); do kill "$_p"; done
+  pkill -u "$U" -f 'marimo run --headless --no-token --port 2730' 2>/dev/null; pkill -u "$U" -x firefox 2>/dev/null
   for _ in $(seq 1 10); do [ "$(welcome_n)" = 0 ] && break; sleep 1; done
 }
 welcome_close
@@ -3646,6 +3649,8 @@ _yt="$_A/YouTube.desktop"
 _ycls=$(sed -n 's/^StartupWMClass=//p' "$_yt" 2>/dev/null | head -1)
 _yurl=$(sed -n 's/^Exec=ergon-webapp launch "\(.*\)"$/\1/p' "$_yt" 2>/dev/null | head -1)
 if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
+  # uwsm gives the user manager the compositor's WAYLAND_DISPLAY; this harness starts Hyprland directly, so do what uwsm does.
+  usr "systemctl --user set-environment WAYLAND_DISPLAY=$WLD" >/dev/null 2>&1 </dev/null
   usr "setsid -f ergon-webapp launch $_yurl </dev/null >/tmp/wa118l.out 2>&1" </dev/null >/dev/null 2>&1
   if o_until 45 o_has "$_ycls"; then
     ok "ERGON-118: launching YouTube mapped a client of class $_ycls (the entry's StartupWMClass)"
@@ -3662,6 +3667,7 @@ if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
     bad "ERGON-118: no client of class $_ycls after 45s; classes now: $(hq clients -j | jq -r '[.[].class] | join(",")'); launcher said: $(head -c 200 /tmp/wa118l.out); chromium: $(pidof chromium >/dev/null && echo running || echo not running)"
   fi
   _close_class "$_ycls"; sleep 1; pkill -u "$U" -x chromium 2>/dev/null; sleep 1
+  usr "systemctl --user unset-environment WAYLAND_DISPLAY" >/dev/null 2>&1 </dev/null
 else bad "ERGON-118: cannot derive class/URL from $_yt (class '$_ycls', url '$_yurl')"; fi
 rm -f /tmp/wa118l.out
 # LocalSend: firewall, package, float rule
@@ -3675,15 +3681,18 @@ else bad "ERGON-118: nft 53317 rules: '$(head -c 300 <<<"$_l53")'"; fi
 if pacman -Q localsend-bin >/dev/null 2>&1; then
   ok "ERGON-118: localsend-bin is installed ($(pacman -Q localsend-bin))"
   pkill -u "$U" -x imv 2>/dev/null
-  usr "setsid -f localsend_app </dev/null >/tmp/ls118.log 2>&1" </dev/null >/dev/null 2>&1
+  # the package's own launcher says what to run
+  _lsx=$(grep -h '^Exec=' /usr/share/applications/*ocalsend*.desktop /usr/share/applications/*ocalSend*.desktop 2>/dev/null | head -1)
+  _lsx=${_lsx#Exec=}; _lsx=${_lsx%% *}
+  usr "setsid -f ${_lsx:-localsend_app} </dev/null >/tmp/ls118.log 2>&1" </dev/null >/dev/null 2>&1
   _lsc=""
   for _i in $(seq 1 90); do _lsc=$(_cls_re 'localsend' | head -1); [ -n "$_lsc" ] && break; sleep 0.5; done
   if [ -n "$_lsc" ]; then
     _fl=$(o_field "$_lsc" '.floating')
     [ "$_fl" = true ] && ok "ERGON-118: the LocalSend window ($_lsc) floats" || bad "ERGON-118: LocalSend window $_lsc floating=$_fl"
     _close_class "$_lsc"; sleep 1
-  else bad "ERGON-118: localsend_app mapped no window in 45s; classes: $(hq clients -j | jq -r '[.[].class] | join(",")'); running: $(pidof localsend_app >/dev/null && echo yes || echo no); binary: $(command -v localsend_app || echo none); log: $(tail -c 300 /tmp/ls118.log | tr '\n' '|')"; fi
-  pkill -u "$U" -x localsend_app 2>/dev/null; rm -f /tmp/ls118.log
+  else bad "ERGON-118: localsend_app mapped no window in 45s; classes: $(hq clients -j | jq -r '[.[].class] | join(",")'); exec '${_lsx:-none}'; package files: $(pacman -Ql localsend-bin 2>/dev/null | grep -E '/bin/|\.desktop' | awk '{print $2}' | head -6 | tr '\n' ' '); log: $(tail -c 300 /tmp/ls118.log | tr '\n' '|')"; fi
+  pkill -u "$U" -f "${_lsx:-localsend_app}" 2>/dev/null; rm -f /tmp/ls118.log
 else note "ERGON-118: localsend-bin is not installed in the guest (the AUR build did not land: $(pacman -Q localsend-bin 2>&1 | head -c 100)); the firewall rule was checked, the window float is unproven"; fi
 
 # 106b: the managed block is last, so a user's earlier stanza wins
@@ -3769,11 +3778,14 @@ o_until 20 _sn && ok "ERGON-55: the welcome stamp was written" || bad "ERGON-55:
 # the same notebook exported to HTML carries what its cells printed.
 _nb="$G/marimo/welcome.py"
 usr "ERGON=$G PATH=$G/bin:\$PATH timeout -k 5 180 \$HOME/.local/share/pyfleet/bin/marimo export html $_nb -o /tmp/wel55x.html --force" >/tmp/wel55.out 2>&1 </dev/null; _ex=$?
-usr "timeout -k 2 20 ergon --help" >/tmp/wel55h.out 2>&1 </dev/null
-_probe=$(awk -F' {2,}' 'length($3) > 20 && $3 !~ /[<>&"'"'"'\\]/ {print $3; exit}' /tmp/wel55h.out)   # a summary phrase: single-spaced words
-if [ "$_ex" = 0 ] && [ -n "$_probe" ] && grep -qF -- "$_probe" /tmp/wel55x.html 2>/dev/null; then
-  ok "ERGON-55: the exported notebook contains output of a real ergon command ('$(head -c 60 <<<"$_probe")')"
-else bad "ERGON-55: export rc $_ex, probe '$(head -c 60 <<<"$_probe")' found $(grep -cF -- "$_probe" /tmp/wel55x.html 2>/dev/null) times in $(wc -c < /tmp/wel55x.html 2>/dev/null) bytes; markers: $(grep -o 'It failed[^<\\]\{0,80\}\|No answer within[^<\\]\{0,20\}' /tmp/wel55x.html 2>/dev/null | head -3 | tr '\n' '|'); $(tail -c 200 /tmp/wel55.out)"; fi
+_pw=$(grep -oE '[A-Za-z]{10,}' "$G/knowledge/welcome.md" | sort -u | awk '{print length($0), $0}' | sort -rn | awk '{print $2}' | head -8)
+_pf=0; _pt=0; for _w in $_pw; do _pt=$((_pt+1)); grep -qF -- "$_w" /tmp/wel55x.html 2>/dev/null && _pf=$((_pf+1)); done
+if [ "$_ex" = 0 ] && [ "$_pt" -ge 4 ] && [ "$_pf" -ge $((_pt - 1)) ]; then
+  ok "ERGON-55: the exported notebook carries the output of ergon explain welcome ($_pf of its $_pt longest words, $(wc -c < /tmp/wel55x.html) bytes)"
+else bad "ERGON-55: export rc $_ex, $_pf of $_pt welcome.md words found in $(wc -c < /tmp/wel55x.html 2>/dev/null) bytes; words: $(tr '\n' ' ' <<<"$_pw"); $(tail -c 200 /tmp/wel55.out)"; fi
+# and a command section: the accordion title is typed, the body is what `ergon bundle list` printed
+_bl=$(usr "timeout -k 2 30 ergon bundle list" 2>/dev/null </dev/null | awk 'NF {print $1; exit}')
+[ -n "$_bl" ] && grep -qF -- "$_bl" /tmp/wel55x.html && ok "ERGON-55: the notebook export also names '$_bl', the first thing ergon bundle list prints" || note "ERGON-55: first token of ergon bundle list ('$_bl') not found in the export (too generic a probe to fail on)"
 # close what we opened
 for _a in $(_new_clients); do o_dsp "hl.dsp.window.close({ window = \"address:$_a\" })"; done
 sleep 2
