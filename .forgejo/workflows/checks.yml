@@ -193,6 +193,10 @@ jobs:
       - name: The tiling key cycles a workspace's layout
         run: cd "$CI_DIR" && ./bin/test-tiling.sh
 
+      # ERGON-103: links go to the default browser and raise its window, stubs.
+      - name: Links open in the default browser and raise it
+        run: cd "$CI_DIR" && ./bin/test-browser.sh
+
       # ERGON-87: the emoji list parsed from Unicode's own file; the pick copied and typed.
       - name: The emoji picker copies and types the pick
         run: cd "$CI_DIR" && ./bin/test-emoji.sh
