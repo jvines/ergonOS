@@ -1,0 +1,13 @@
+[Unit]
+Description=Save files sent to this machine with Taildrop
+# Tailscale not installed: nothing to run, and nothing reported.
+ConditionPathExists=/usr/bin/tailscale
+
+[Service]
+ExecStart=%h/ergonOS/bin/ergon-taildrop receive
+Restart=on-failure
+RestartSec=10s
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
+
+[Install]
+WantedBy=default.target

@@ -3230,6 +3230,182 @@ _ao=$(usr "timeout 10 ergon-audio-output" 2>&1); _ao_rc=$?
 if [ "$_ao_rc" -lt 124 ]; then ok "ergon-audio-output ended (rc $_ao_rc) without hanging: $(head -c 100 <<<"$_ao" | tr '\n' ' ')"
 else bad "ergon-audio-output hung with the VM's sinks"; fi
 
+# ============================================================================
+echo "--- ERGON-94..103 ---"
+# fuzzel from an earlier section holds the keyboard; nothing here needs it.
+pkill -u "$U" -x fuzzel 2>/dev/null
+# The harness's passwordless sudo was removed after provisioning; the language
+# step uses sudo exactly as a user would, so give it back for this section only.
+echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99-harness; chmod 440 /etc/sudoers.d/99-harness
+
+# --- ERGON-102: ergon language ----------------------------------------------
+_lc_bak=/tmp/locale.conf.bak; _lg_bak=/tmp/locale.gen.bak
+cp -p /etc/locale.conf "$_lc_bak" 2>/dev/null || : > "$_lc_bak.none"
+cp -p /etc/locale.gen "$_lg_bak"
+_lang_out=$(usr "timeout 300 ergon language en_US.UTF-8 --formats en_DK.UTF-8" 2>&1); _lang_rc=$?
+if [ "$_lang_rc" = 0 ]; then ok "ergon language en_US.UTF-8 --formats en_DK.UTF-8 exited 0"
+else bad "ergon language rc $_lang_rc"; echo "$_lang_out" | tail -8 | sed 's/^/     /'; fi
+for _kv in LANG=en_US.UTF-8 LC_TIME=en_DK.UTF-8 LC_NUMERIC=C.UTF-8; do
+  grep -qxF "$_kv" /etc/locale.conf && ok "/etc/locale.conf has $_kv" || bad "/etc/locale.conf lacks $_kv: $(tr '\n' ' ' </etc/locale.conf)"
+done
+_uenv=$(usr "systemctl --user show-environment" 2>&1)
+for _kv in LANG=en_US.UTF-8 LC_TIME=en_DK.UTF-8 LC_NUMERIC=C.UTF-8; do
+  grep -qxF "$_kv" <<<"$_uenv" && ok "the user manager environment has $_kv" || bad "user manager environment lacks $_kv"
+done
+_pf=$(env -i LANG=en_US.UTF-8 LC_TIME=en_DK.UTF-8 LC_NUMERIC=C.UTF-8 bash -c "printf '%.1f' 1.5")
+[ "$_pf" = 1.5 ] && ok "printf '%.1f' 1.5 under that locale prints 1.5 (decimal point kept)" || bad "printf '%.1f' 1.5 printed '$_pf'"
+# Restore, so nothing after sees a different locale.
+if [ -e "$_lc_bak.none" ]; then rm -f /etc/locale.conf; else cp -p "$_lc_bak" /etc/locale.conf; fi
+cp -p "$_lg_bak" /etc/locale.gen
+for _v in LANG LC_TIME LC_NUMERIC LC_MONETARY LC_PAPER LC_MEASUREMENT; do
+  _orig=$(sed -n "s/^$_v=//p" /etc/locale.conf 2>/dev/null | head -1)
+  if [ -n "$_orig" ]; then usr "systemctl --user set-environment $_v=$_orig" >/dev/null 2>&1
+  else usr "systemctl --user unset-environment $_v" >/dev/null 2>&1; fi
+done
+
+# --- ERGON-103: BROWSER and xdg-open ----------------------------------------
+_hpid=$(pgrep -u "$U" -x Hyprland | head -1)
+_benv=$(tr '\0' '\n' < "/proc/${_hpid:-0}/environ" 2>/dev/null | sed -n 's/^BROWSER=//p')
+_uenvb=$(usr "systemctl --user show-environment" 2>&1 | sed -n 's/^BROWSER=//p')
+if [ "$_benv" = ergon-browser ] || [ "$_uenvb" = ergon-browser ]; then
+  ok "BROWSER=ergon-browser is in the session environment (Hyprland: '${_benv:-unset}', user manager: '${_uenvb:-unset}')"
+else bad "BROWSER is not ergon-browser in the session (Hyprland: '${_benv:-unset}', user manager: '${_uenvb:-unset}')"; fi
+_mime_bak=/tmp/mimeapps.bak; _stub_desktop="$H/.local/share/applications/ergon-stubbrowser.desktop"
+cp -p "$H/.config/mimeapps.list" "$_mime_bak" 2>/dev/null || : > "$_mime_bak.none"
+if command -v firefox >/dev/null 2>&1; then
+  _bclass=firefox; _bmode=firefox   # the real one, with whatever default the image has
+else
+  _bclass=ergon-stubbrowser; _bmode=stub
+  mkdir -p "$H/.local/share/applications"
+  cat > /tmp/stubbrowser.sh <<'STUB'
+#!/bin/sh
+echo "$@" >> /tmp/stubbrowser.log
+exec foot --app-id=ergon-stubbrowser sleep 60
+STUB
+  chmod 755 /tmp/stubbrowser.sh; : > /tmp/stubbrowser.log; chmod 666 /tmp/stubbrowser.log
+  printf '[Desktop Entry]\nType=Application\nName=Stub\nExec=/tmp/stubbrowser.sh %%u\nStartupWMClass=ergon-stubbrowser\nMimeType=x-scheme-handler/https;x-scheme-handler/http;\n' > "$_stub_desktop"
+  chown "$U" "$_stub_desktop"
+  usr "xdg-mime default ergon-stubbrowser.desktop x-scheme-handler/https x-scheme-handler/http" >/dev/null 2>&1
+fi
+usr "pkill -x firefox" >/dev/null 2>&1
+# Stock xdg-open (xdg-utils 1.2) runs the x-scheme-handler default itself and
+# only falls back to $BROWSER, so it can bypass ergon-browser, and it stays in
+# the foreground while a FIRST browser instance lives. Neither is a hang: this
+# part records which path it took and that a window opens; ergon-browser's own
+# contract (returns, window focused) is asserted on a direct call below.
+_hasb() { o_has "$_bclass"; }
+_focb() { [ "$(o_active .class)" = "$_bclass" ]; }
+usr "BROWSER=ergon-browser timeout 90 xdg-open https://example.invalid" >/tmp/xdg-open.log 2>&1 &
+_xpid=$!
+if o_until 60 _hasb; then
+  ok "xdg-open https://example.invalid opened a $_bmode '$_bclass' window"
+  _tree=$(ps -u "$U" -o args --forest 2>/dev/null | grep -E 'xdg-open|ergon-browser' | grep -v grep | cut -c1-90 | tr '\n' '|')
+  if grep -q ergon-browser <<<"$_tree"; then ok "xdg-open went through ergon-browser"
+  else note "ERGON-103: xdg-open launched the handler itself and did not consult BROWSER=ergon-browser ($_tree)"; fi
+else
+  bad "no '$_bclass' window after xdg-open (log: $(head -c 300 /tmp/xdg-open.log))"
+fi
+kill "$_xpid" 2>/dev/null
+usr "pkill -x firefox" >/dev/null 2>&1; pkill -u "$U" -f ergon-stubbrowser 2>/dev/null; sleep 3
+# ergon-browser itself: returns once the browser is launched, and the window is raised.
+_t0=$SECONDS
+usr "timeout 60 ergon-browser https://example.invalid" >/tmp/ergon-browser.log 2>&1; _eb=$?
+if [ "$_eb" -lt 124 ]; then ok "ergon-browser URL returned in $((SECONDS - _t0))s (rc $_eb) while the browser stays up"
+else bad "ergon-browser held its caller for 60s (rc $_eb)"; fi
+if o_until 30 _hasb; then
+  ok "ergon-browser opened a $_bmode '$_bclass' window"
+  o_until 15 _focb
+  _ac=$(o_active .class)
+  [ "$_ac" = "$_bclass" ] && ok "the browser window is focused" || bad "browser window exists but focus is on '$_ac'"
+  if [ "$_bmode" = stub ]; then
+    grep -q 'example.invalid' /tmp/stubbrowser.log && ok "the stub browser was handed the URL" || bad "stub browser log lacks the URL: $(cat /tmp/stubbrowser.log)"
+  fi
+else
+  bad "no '$_bclass' window after ergon-browser (log: $(head -c 300 /tmp/ergon-browser.log))"
+fi
+usr "pkill -x firefox" >/dev/null 2>&1; pkill -u "$U" -f ergon-stubbrowser 2>/dev/null; sleep 1
+rm -f "$_stub_desktop" /tmp/stubbrowser.sh
+if [ -e "$_mime_bak.none" ]; then rm -f "$H/.config/mimeapps.list"; else cp -p "$_mime_bak" "$H/.config/mimeapps.list"; fi
+
+# --- ERGON-95: ergon-wifi on real nmcli output -------------------------------
+if command -v nmcli >/dev/null 2>&1; then
+  _wl=$(usr "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list" 2>&1); _wl_rc=$?
+  _wf=$(printf '%s\n' "$_wl" | usr "timeout 10 ergon-wifi --format" 2>&1); _wf_rc=$?
+  if [ "$_wf_rc" = 0 ]; then ok "ergon-wifi --format on the guest's nmcli output exited 0 (nmcli rc $_wl_rc: $(head -c 80 <<<"$_wl" | tr '\n' ' '); menu lines: $(grep -c . <<<"$_wf"))"
+  else bad "ergon-wifi --format rc $_wf_rc on: $(head -c 200 <<<"$_wl")"; fi
+  _wf0=$(usr "timeout 10 ergon-wifi --format </dev/null" 2>&1); _wf0_rc=$?
+  [ "$_wf0_rc" = 0 ] && ok "ergon-wifi --format on empty input exits 0" || bad "ergon-wifi --format on empty input rc $_wf0_rc: $_wf0"
+else note "ERGON-95: nmcli is not installed in the guest; ergon-wifi unproven here"; fi
+
+# --- ERGON-98: ergon report is scrubbed --------------------------------------
+rm -f /tmp/r.txt
+_rep=$(usr "timeout 240 ergon report --out /tmp/r.txt" 2>&1); _rep_rc=$?
+if [ "$_rep_rc" = 0 ]; then ok "ergon report finished inside 240s"; else bad "ergon report rc $_rep_rc"; echo "$_rep" | tail -5 | sed 's/^/     /'; fi
+if [ -s /tmp/r.txt ]; then
+  ok "the report is non-empty ($(wc -l </tmp/r.txt) lines)"
+  head -5 /tmp/r.txt | grep -qi 'ergon' && ok "the report has a header" || bad "no header in: $(head -3 /tmp/r.txt)"
+  grep -q '===== ergon-doctor =====' /tmp/r.txt && ok "the report has an ergon-doctor section" || bad "no ergon-doctor section"
+  _hn=$(hostname); _leaks=""
+  [ -n "$_hn" ] && grep -qF -- "$_hn" /tmp/r.txt && _leaks="$_leaks hostname($_hn)"
+  grep -qF -- "$U" /tmp/r.txt && _leaks="$_leaks username($U)"
+  for _ip in $(ip -4 -o addr show | awk '{print $4}' | cut -d/ -f1 | grep -v '^127\.'); do
+    grep -qF -- "$_ip" /tmp/r.txt && _leaks="$_leaks ip($_ip)"
+  done
+  if [ -z "$_leaks" ]; then ok "the report holds no hostname, username or guest IPv4"
+  else bad "the report leaks:$_leaks"; for _w in "$_hn" "$U"; do grep -nF -- "$_w" /tmp/r.txt | head -3 | sed 's/^/     /'; done; fi
+else bad "ergon report left no file at /tmp/r.txt"; fi
+rm -f /tmp/r.txt
+
+# --- ERGON-97: ergon fido2 with no key ---------------------------------------
+_pam_sum() { sha256sum /etc/pam.d/sudo /etc/pam.d/polkit-1 2>&1; }
+_pam0=$(_pam_sum)
+_fo=$(usr "timeout 30 ergon fido2" 2>&1 </dev/null); _fo_rc=$?
+if [ "$_fo_rc" != 0 ] && [ "$_fo_rc" -lt 124 ]; then ok "ergon fido2 with no key refused (rc $_fo_rc): $(head -c 120 <<<"$_fo" | tr '\n' ' ')"
+else bad "ergon fido2 with no key: rc $_fo_rc, said: $_fo"; fi
+[ "$(_pam_sum)" = "$_pam0" ] && ok "/etc/pam.d/sudo and polkit-1 are byte-identical after the refusal" || bad "PAM files changed after a refused ergon fido2"
+grep -q pam_u2f /etc/pam.d/sudo && bad "pam_u2f got into sudo's PAM stack" || ok "sudo's PAM stack mentions no pam_u2f"
+
+# --- ERGON-96: taildrop and yazi ----------------------------------------------
+_td=$(usr "systemctl --user show ergon-taildrop.service -p ActiveState -p LoadState -p Result" 2>&1 | tr '\n' ' ')
+case "$_td" in
+  *ActiveState=failed*|*Result=exit-code*) bad "ergon-taildrop.service is failed: $_td"; usr "journalctl --user -u ergon-taildrop -n 10 --no-pager -o cat" 2>&1 | sed 's/^/     /' ;;
+  *) ok "ergon-taildrop.service is not failed ($_td)" ;;
+esac
+_tdo=$(usr "timeout 30 ergon-taildrop send /etc/hostname" 2>&1 </dev/null); _td_rc=$?
+if ! command -v tailscale >/dev/null 2>&1; then
+  if [ "$_td_rc" = 0 ] && [ -z "$_tdo" ]; then ok "ergon-taildrop send with tailscale absent: rc 0, silent"; else bad "ergon-taildrop send, tailscale absent: rc $_td_rc '$_tdo'"; fi
+else
+  [ "$_td_rc" -lt 124 ] && ok "ergon-taildrop send with tailscale installed but not logged in did not hang (rc $_td_rc: $(head -c 100 <<<"$_tdo"))" || bad "ergon-taildrop send hung"
+  note "ERGON-96: tailscale is installed here; send without a login notifies and exits $_td_rc"
+fi
+usr "pkill -x fuzzel" >/dev/null 2>&1
+if command -v yazi >/dev/null 2>&1; then
+  for _f in keymap.toml theme.toml yazi.toml; do
+    [ -s "$H/.config/yazi/$_f" ] && ok "yazi $_f is installed" || note "yazi $_f is absent from $H/.config/yazi"
+  done
+  # Yazi parses all its config before it draws; a parse error prints and exits.
+  _yz=$(su - "$U" -s /bin/bash -c "TERM=xterm-256color XDG_RUNTIME_DIR=/run/user/1000 timeout 6 script -qec \"stty cols 120 rows 40; yazi\" /dev/null </dev/null" 2>&1 | tr -d '\000' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')
+  if grep -qE "Failed to parse|TOML parse error|panicked" <<<"$_yz"; then
+    bad "yazi complained about its config: $(grep -A4 -E "Failed to parse|TOML parse error|panicked" <<<"$_yz" | head -8 | tr '\n' ' ')"
+  else ok "yazi started with keymap.toml ([mgr]) and theme.toml and printed no config error"; fi
+  note "yazi $(yazi --version 2>&1 | head -1)"
+  usr "pkill -x yazi" >/dev/null 2>&1
+else note "ERGON-96: yazi is not installed in the guest"; fi
+
+# --- ERGON-94: ergon drive on the guest's real lsblk ------------------------
+_dl=$(usr "ergon drive list --why" 2>&1); _dl_rc=$?
+[ "$_dl_rc" = 0 ] && ok "ergon drive list --why exited 0: $(head -c 150 <<<"$_dl" | tr '\n' '|')" || bad "ergon drive list --why rc $_dl_rc: $_dl"
+_sysdisk=$(lsblk -nspo NAME,TYPE "$(findmnt -no SOURCE -T / | sed "s/\[.*//")" 2>/dev/null | awk '$2=="disk"{print $1; exit}')
+if usr 'ergon drive list' 2>/dev/null | grep -qF -- "$_sysdisk"; then bad "the system disk $_sysdisk is OFFERED for formatting"
+else ok "the system disk $_sysdisk is not offered by ergon drive list"; fi
+_df=$(usr "ergon drive format $_sysdisk" 2>&1 </dev/null); _df_rc=$?
+if [ "$_df_rc" != 0 ] && grep -qiE 'not on the list|not a removable|mounted' <<<"$_df" && ! grep -q 'About to ERASE' <<<"$_df"; then
+  ok "ergon drive format $_sysdisk is refused with a reason: $(head -c 130 <<<"$_df" | tr '\n' '|')"
+else bad "ergon drive format $_sysdisk was not cleanly refused (rc $_df_rc): $_df"; fi
+note "ERGON-94: the harness hot-adds no second disk, so a removable disk being listed, and the format itself, are unproven here"
+
+rm -f /etc/sudoers.d/99-harness
+
 # ERGON-70, measured rather than asserted: does a user manager that has made a
 # tmux pane scope spin when a unit directory changes under it with no reload,
 # and a second pane is asked for? Seen at ~90% CPU in a container (systemd 262,

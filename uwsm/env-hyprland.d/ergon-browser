@@ -1,0 +1,5 @@
+# ERGON-103. xdg-open runs DE-less on this desktop and, for a web link, tries
+# $BROWSER before the mimeapps default. ergon-browser resolves that default
+# itself and raises the window the link landed in, so CLI tools (gh, git,
+# python -m webbrowser) and portal-opened links behave like SUPER+B.
+export BROWSER=ergon-browser

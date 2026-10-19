@@ -972,12 +972,26 @@ say "tailscale"
 # daemon left running that `systemctl disable --now tailscaled` ends.
 if [ "${TAILSCALE:-0}" = 1 ]; then
   sudo systemctl enable --now tailscaled >/dev/null 2>&1 \
-    && ok "tailscaled (TAILSCALE=1) -- join with: sudo tailscale up" \
+    && ok "tailscaled (TAILSCALE=1) -- join with: sudo tailscale up --operator=$USER" \
     || warn "tailscaled would not enable"
 elif systemctl is-enabled --quiet tailscaled 2>/dev/null; then
   skip "tailscaled is enabled although TAILSCALE=0 -- left running; stop it with: sudo systemctl disable --now tailscaled"
 else
   skip "TAILSCALE=0 -- no tailscaled (set TAILSCALE=1 in $HOSTENV to join a tailnet)"
+fi
+
+# ERGON-96: Taildrop's `tailscale file` runs as the user, which tailscaled only
+# allows for its operator. Set once, and only on a machine that has tailscale
+# and is logged in -- before that there is nothing to set it on.
+if command -v tailscale >/dev/null 2>&1 \
+   && [ "$(tailscale status --json 2>/dev/null | jq -r '.BackendState // empty' 2>/dev/null)" = Running ]; then
+  if [ "$(tailscale debug prefs 2>/dev/null | jq -r '.OperatorUser // empty' 2>/dev/null)" = "$ME" ]; then
+    skip "tailscale operator is already $ME"
+  else
+    sudo tailscale set --operator="$ME" >/dev/null 2>&1 \
+      && ok "tailscale operator = $ME (Taildrop without sudo)" \
+      || warn "could not set the tailscale operator; run: sudo tailscale set --operator=$ME"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
