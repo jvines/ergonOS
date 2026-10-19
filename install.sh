@@ -205,6 +205,12 @@ else
         }
       ' "$MIMEAPPS" > "$MIMEAPPS.new" && mv "$MIMEAPPS.new" "$MIMEAPPS"
     }
+    # ERGON-118: chromium is in the base now, and with no default browser set xdg-open takes the first
+    # handler it finds, which is chromium. Firefox stays the default (ergon-webapp uses chromium only for
+    # web apps); a pick the user already made is kept by _mimedefault.
+    _mimedefault x-scheme-handler/https firefox.desktop
+    _mimedefault x-scheme-handler/http firefox.desktop
+    _mimedefault text/html firefox.desktop
     _mimedefault image/fits "cl.jvines.theia.desktop;ds9.desktop" ds9.desktop
     _mimedefault application/fits "cl.jvines.theia.desktop;topcat.desktop"
     _mimedefault application/vnd.apache.parquet "com.columna.Columna.desktop;topcat.desktop" topcat.desktop

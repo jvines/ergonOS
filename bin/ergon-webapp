@@ -222,11 +222,13 @@ cmd_launch() {
       hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1 && exit 0
     fi
   fi
+  # Chromium picks X11 unless told to look for Wayland, and fails outright where there is no
+  # XWayland ("Missing X server or $DISPLAY"); the hint is ignored by builds that already default to it.
   browser=$(chromium_exec)
   if command -v uwsm-app >/dev/null 2>&1; then
-    exec uwsm-app -- "$browser" --app="$url"
+    exec uwsm-app -- "$browser" --ozone-platform-hint=auto --app="$url"
   fi
-  exec "$browser" --app="$url"
+  exec "$browser" --ozone-platform-hint=auto --app="$url"
 }
 
 # --- host.env, the installer, provisioning ----------------------------------
