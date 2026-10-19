@@ -3444,6 +3444,159 @@ else
 fi
 note "ERGON-104: a real webcam recording and the Open button on mako are unproven here"
 
+# --- ERGON-105..116: locale, ssh-agent, remind, zoom, width, db, speedtest, text size, keymap
+echo "--- ERGON-105..116 ---"
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
+# 106: the session has an agent socket, systemd owns it, and a key round-trips.
+_se=$(usr "systemctl --user show-environment" 2>/dev/null </dev/null)
+grep -qx 'SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket' <<<"$_se" && ok "ERGON-106: the user manager's environment has SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket" \
+  || bad "ERGON-106: SSH_AUTH_SOCK in the user manager: '$(grep SSH_AUTH <<<"$_se")'"
+_sa=$(usr "systemctl --user is-active ssh-agent.socket" 2>/dev/null </dev/null)
+[ "$_sa" = active ] && ok "ERGON-106: ssh-agent.socket is active" || bad "ERGON-106: ssh-agent.socket is '$_sa'"
+usr "SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket timeout -k 2 10 ssh-add -l" >/tmp/sa106.out 2>&1 </dev/null; _sa_rc=$?
+[ "$_sa_rc" = 1 ] && ok "ERGON-106: ssh-add -l on the socket exits 1 (agent answers, no keys): $(head -c 80 /tmp/sa106.out)" || bad "ERGON-106: ssh-add -l rc $_sa_rc: $(head -c 150 /tmp/sa106.out)"
+rm -f /tmp/k106 /tmp/k106.pub
+usr "ssh-keygen -q -t ed25519 -N '' -C ergon106 -f /tmp/k106" >/dev/null 2>&1 </dev/null
+usr "SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket timeout -k 2 10 ssh-add /tmp/k106" >/tmp/sa106.out 2>&1 </dev/null
+usr "SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket timeout -k 2 10 ssh-add -l" >/tmp/sa106.out 2>&1 </dev/null
+grep -q ergon106 /tmp/sa106.out && ok "ERGON-106: a key added to the agent is listed" || bad "ERGON-106: ssh-add -l after adding: $(head -c 150 /tmp/sa106.out)"
+_ssh_row=$(doctor_row ssh-agent su - "$U" -c "XDG_RUNTIME_DIR=/run/user/1000 SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket timeout -k 2 120 $G/bin/ergon-doctor --json </dev/null")
+case "$_ssh_row" in *'"state":"ok"'*) ok "ERGON-106: ergon-doctor's ssh-agent row is ok: $(head -c 120 <<<"$_ssh_row")" ;; *) bad "ERGON-106: ssh-agent row: '$_ssh_row'" ;; esac
+usr "SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket ssh-add -d /tmp/k106.pub" >/dev/null 2>&1 </dev/null
+rm -f /tmp/k106 /tmp/k106.pub /tmp/sa106.out
+
+# 107: ergon remind. A 5s reminder fires as a notification; a 1h one lists and clears.
+_t0=$SECONDS
+usr "timeout -k 2 20 ergon remind 5s vmremind" >/tmp/rm107.out 2>&1 </dev/null; _rm_rc=$?
+[ "$_rm_rc" = 0 ] && [ $((SECONDS - _t0)) -lt 10 ] && ok "ERGON-107: ergon remind 5s returned in $((SECONDS - _t0))s: $(head -c 80 /tmp/rm107.out)" || bad "ERGON-107: ergon remind 5s rc $_rm_rc after $((SECONDS - _t0))s: $(head -c 150 /tmp/rm107.out)"
+_mk_has() { { usr "timeout -k 2 5 makoctl list" 2>/dev/null </dev/null; usr "timeout -k 2 5 makoctl history" 2>/dev/null </dev/null; } | grep -q vmremind; }
+if o_until 14 _mk_has; then ok "ERGON-107: the reminder arrived as a notification with body vmremind"
+else bad "ERGON-107: no notification with vmremind in mako list/history: $(usr 'timeout 5 makoctl history' 2>&1 </dev/null | head -c 300)"; fi
+usr "timeout 5 makoctl dismiss -a" >/dev/null 2>&1 </dev/null
+sleep 2
+_lu=$(usr "systemctl --user list-units --all --plain --no-legend 'ergon-remind-*'" 2>/dev/null </dev/null)
+[ -z "$_lu" ] && ok "ERGON-107: no ergon-remind-* unit lingers after the reminder fired" || bad "ERGON-107: lingering units: $_lu"
+usr "timeout -k 2 20 ergon remind 1h hourly107" >/tmp/rm107.out 2>&1 </dev/null
+usr "timeout -k 2 20 ergon remind list" >/tmp/rm107.out 2>&1 </dev/null
+_rid=$(awk -F'\t' '/hourly107/ {print $1; exit}' /tmp/rm107.out)
+if [ -n "$_rid" ]; then
+  ok "ERGON-107: a 1h reminder is in ergon remind list (id $_rid)"
+  usr "timeout -k 2 20 ergon remind clear $_rid" >/tmp/rm107.out 2>&1 </dev/null
+  _lt=$(usr "systemctl --user list-timers --all --plain --no-legend 'ergon-remind-*'" 2>/dev/null </dev/null)
+  [ -z "$_lt" ] && ok "ERGON-107: clear $_rid removed the timer ($(head -c 60 /tmp/rm107.out))" || bad "ERGON-107: timers left after clear: $_lt"
+else bad "ERGON-107: ergon remind list lacks the 1h reminder: $(head -c 200 /tmp/rm107.out)"; fi
+usr "timeout -k 2 20 ergon remind clear all" >/dev/null 2>&1 </dev/null; rm -f /tmp/rm107.out
+
+# 108: zoom, through the real binds.
+_zoom() { hq "getoption cursor:zoom_factor -j" | jq -r '.float // .int // empty' 2>/dev/null; }
+_z0=$(_zoom)
+if [[ "$_z0" =~ ^[0-9.]+$ ]]; then
+  ok "ERGON-108: cursor:zoom_factor reads back as a number ($_z0)"
+  if [ -S "$YSOCK" ]; then
+    o_key 125:1 29:1 44:1 44:0 29:0 125:0; o_key 125:1 29:1 44:1 44:0 29:0 125:0
+    _z1=$(_zoom)
+    awk -v z="$_z1" 'BEGIN{exit !(z > 2.24 && z < 2.26)}' && ok "ERGON-108: SUPER+CTRL+Z twice reads back $_z1" || bad "ERGON-108: after two SUPER+CTRL+Z the zoom is '$_z1' (ergon-zoom said: $(head -c 150 /tmp/ydotool.out))"
+    o_key 125:1 29:1 56:1 44:1 44:0 56:0 29:0 125:0
+    _z2=$(_zoom)
+    awk -v z="$_z2" 'BEGIN{exit !(z > 0.99 && z < 1.01)}' && ok "ERGON-108: SUPER+CTRL+ALT+Z resets to $_z2" || bad "ERGON-108: reset left zoom at '$_z2'"
+  else note "ERGON-108: no ydotool socket; the zoom binds are unpressed"; fi
+  usr "ergon-zoom reset" >/dev/null 2>&1 </dev/null
+else bad "ERGON-108: zoom_factor is not numeric: '$_z0' ($(hq 'getoption cursor:zoom_factor -j' | head -c 150))"; fi
+
+# 113: ergon-window width save and restore through the binds.
+if [ -S "$YSOCK" ]; then
+  o_win w113a && o_win w113b
+  if o_has w113a && o_has w113b && o_focus w113b; then
+    _a=$(o_addr w113b); _w0=$(o_field w113b '.size[0]')
+    o_key 125:1 56:1 102:1 102:0 56:0 125:0
+    o_dsp "hl.dsp.window.resize({ window = \"address:$_a\", x = -200, y = 0, relative = true })"; sleep 1
+    _w1=$(o_field w113b '.size[0]')
+    if [ "$_w1" != "$_w0" ]; then
+      o_focus w113b >/dev/null
+      o_key 125:1 102:1 102:0 125:0; sleep 1
+      _w2=$(o_field w113b '.size[0]')
+      [ -n "$_w2" ] && [ "${_w2#-}" -ge $((_w0 - 2)) ] && [ "$_w2" -le $((_w0 + 2)) ] && ok "ERGON-113: width $_w0 saved, resized to $_w1, SUPER+Home restored $_w2" \
+        || bad "ERGON-113: saved $_w0, resized to $_w1, restore gave '$_w2'"
+    else bad "ERGON-113: the resize dispatch left the width at $_w0 (cannot test restore)"; fi
+  else bad "ERGON-113: could not open and focus two foot windows"; fi
+  for _c in w113a w113b; do o_dsp "hl.dsp.window.close({ window = \"address:$(o_addr $_c)\" })"; done
+  pkill -u "$U" -f 'foot --app-id=w113' 2>/dev/null; sleep 1
+else note "ERGON-113: no ydotool socket; width save/restore unproven"; fi
+
+# 114: ergon db, redis, over a real docker.
+if timeout -k 3 20 sudo docker info >/dev/null 2>&1 </dev/null; then
+  usr "timeout -k 5 240 ergon db add redis" >/tmp/db114.out 2>&1 </dev/null; _db_rc=$?
+  if [ "$_db_rc" != 0 ] && grep -qiE 'pull|resolve|network|dial|lookup|timeout|no such host|unable to find image' /tmp/db114.out; then
+    note "ERGON-114: no route to pull redis:7 here, skipped ($(tail -c 160 /tmp/db114.out | tr '\n' ' '))"
+  elif [ "$_db_rc" = 0 ]; then
+    ok "ERGON-114: ergon db add redis exited 0"
+    sleep 3
+    printf 'AUTH ergon-dev\r\nPING\r\n' | timeout -k 2 5 nc -q1 127.0.0.1 6379 >/tmp/db114.out 2>&1
+    grep -q '+PONG' /tmp/db114.out && ok "ERGON-114: redis answers +PONG after AUTH ergon-dev" || bad "ERGON-114: redis said: $(head -c 150 /tmp/db114.out)"
+    _ss=$(ss -ltnH 2>/dev/null | awk '{print $4}' | grep ':6379$' | tr '\n' ' ')
+    [ "$_ss" = "127.0.0.1:6379 " ] && ok "ERGON-114: 6379 listens on 127.0.0.1 only" || bad "ERGON-114: 6379 listeners: '$_ss'"
+    usr "timeout -k 2 30 ergon db list" >/tmp/db114.out 2>&1 </dev/null
+    grep -q 'ergon-redis' /tmp/db114.out && ok "ERGON-114: ergon db list shows ergon-redis" || bad "ERGON-114: db list: $(head -c 200 /tmp/db114.out)"
+    printf 'ergon-redis\nn\n' | usr "timeout -k 2 60 ergon db rm ergon-redis" >/tmp/db114.out 2>&1
+    [ -z "$(sudo docker ps -aq --filter name=ergon-redis)" ] && ok "ERGON-114: rm with the typed name removed the container" || bad "ERGON-114: container survived rm: $(head -c 200 /tmp/db114.out)"
+    sudo docker volume inspect ergon-redis-data >/dev/null 2>&1 && ok "ERGON-114: rm kept the ergon-redis-data volume" || bad "ERGON-114: volume ergon-redis-data is gone after a plain rm"
+  else bad "ERGON-114: ergon db add redis rc $_db_rc: $(tail -c 300 /tmp/db114.out)"; fi
+  sudo docker ps -aq --filter label=ergon.db=redis | xargs -r sudo docker rm -f >/dev/null 2>&1   # ours: the label is ergon-db's own
+  sudo docker volume rm ergon-redis-data >/dev/null 2>&1
+  rm -f /tmp/db114.out
+else note "ERGON-114: docker is not reachable by sudo in the guest; ergon db unproven"; fi
+
+# 115: ergon speedtest.
+usr "ERGON_SPEEDTEST_SIZE=256M timeout -k 5 150 ergon speedtest disk" >/tmp/st115.out 2>&1 </dev/null; _st_rc=$?
+if [ "$_st_rc" = 0 ] && [ "$(grep -cE 'sequential|4k random' /tmp/st115.out)" = 4 ]; then ok "ERGON-115: speedtest disk exited 0 with 4 result lines: $(grep -E 'sequential|4k random' /tmp/st115.out | tr -s ' ' | tr '\n' '|')"
+else bad "ERGON-115: speedtest disk rc $_st_rc: $(tail -c 300 /tmp/st115.out)"; fi
+ls -d "$H"/.ergon-speedtest.* >/dev/null 2>&1 && bad "ERGON-115: scratch directory left in $H" || ok "ERGON-115: no ~/.ergon-speedtest.* left behind"
+usr "timeout -k 5 90 ergon speedtest net" >/tmp/st115.out 2>&1 </dev/null; _sn_rc=$?
+if grep -q 'Mbit/s' /tmp/st115.out; then ok "ERGON-115: speedtest net printed results"
+elif grep -qi 'offline' /tmp/st115.out; then ok "ERGON-115: speedtest net with no route says so: $(tail -c 100 /tmp/st115.out)"
+else bad "ERGON-115: speedtest net rc $_sn_rc: $(tail -c 200 /tmp/st115.out)"; fi
+rm -f /tmp/st115.out
+
+# 116: text size.
+_gen_sz() {  # the sizes the generator wrote: foot mako fuzzel waybar
+  local f m z w
+  f=$(grep -o 'size=[0-9]*' "$G/foot/foot.ini" 2>/dev/null | head -1)
+  m=$(grep -o 'Nerd Font [0-9]*' "$G/mako/config" 2>/dev/null | head -1)
+  z=$(grep -o 'size=[0-9]*' "$G/fuzzel/fuzzel.ini" 2>/dev/null | head -1)
+  w=$(grep -o 'font-size: [0-9]*px' "$G/waybar/style.css" 2>/dev/null | head -1)
+  echo "${f#size=},${m##* },${z#size=},${w//[^0-9]/}"
+}
+_ts0=$(_gen_sz)
+usr "timeout -k 5 90 ergon text-size large" >/tmp/ts116.out 2>&1 </dev/null; _ts_rc=$?
+_gs=$(usr "gsettings get org.gnome.desktop.interface text-scaling-factor" 2>/dev/null </dev/null)
+[ "$_ts_rc" = 0 ] && awk -v g="$_gs" 'BEGIN{exit !(g > 1.25 && g < 1.30)}' && ok "ERGON-116: text-size large set text-scaling-factor $_gs" || bad "ERGON-116: text-size large rc $_ts_rc, scaling '$_gs': $(tail -c 200 /tmp/ts116.out)"
+_ts1=$(_gen_sz)
+[ "$_ts1" = "14,14,15,17" ] && ok "ERGON-116: foot/mako/fuzzel/waybar at $_ts1 (was $_ts0)" || bad "ERGON-116: generated sizes '$_ts1', expected 14,14,15,17 (was $_ts0)"
+_pal=$(usr "ergon theme --list 2>/dev/null | head -20" </dev/null | tr -s ' ' '\n' | grep -E '^(gruvbox|nord|cool)$' | head -1)
+if [ -n "$_pal" ]; then
+  usr "timeout -k 5 120 ergon theme $_pal" >/tmp/ts116.out 2>&1 </dev/null
+  [ "$(_gen_sz)" = "14,14,15,17" ] && ok "ERGON-116: switching to $_pal kept the sizes" || bad "ERGON-116: after theme $_pal the sizes are $(_gen_sz): $(tail -c 150 /tmp/ts116.out)"
+else note "ERGON-116: could not pick a second palette from ergon theme --list"; fi
+usr "timeout -k 5 90 ergon text-size normal" >/tmp/ts116.out 2>&1 </dev/null
+[ "$(_gen_sz)" = "11,11,12,13" ] && ok "ERGON-116: text-size normal restored 11,11,12,13" || bad "ERGON-116: after normal the sizes are $(_gen_sz)"
+rm -f /tmp/ts116.out
+
+# 105: a locale with a decimal comma must not change doctor's package count.
+if locale -a 2>/dev/null | grep -qi '^es_CL\.utf-\?8$'; then
+  _r_c=$(doctor_row arch-date su - "$U" -c "LC_ALL=C XDG_RUNTIME_DIR=/run/user/1000 timeout -k 2 120 $G/bin/ergon-doctor --json </dev/null")
+  _r_es=$(doctor_row arch-date su - "$U" -c "LC_ALL=es_CL.UTF-8 LANG=es_CL.UTF-8 XDG_RUNTIME_DIR=/run/user/1000 timeout -k 2 120 $G/bin/ergon-doctor --json </dev/null")
+  _n_c=$(grep -o '[0-9]* installed package' <<<"$_r_c"); _n_es=$(grep -o '[0-9]* installed package' <<<"$_r_es")
+  if [ -n "$_r_c" ] && [ "$_n_c" = "$_n_es" ]; then ok "ERGON-105: the arch-date row is the same under es_CL.UTF-8 and C (newer packages: '${_n_c:-none}')"
+  else bad "ERGON-105: arch-date differs by locale. C: $_r_c ; es_CL: $_r_es"; fi
+else note "ERGON-105: the es_CL.UTF-8 locale is not generated in the guest; locale-safe parsing unproven here"; fi
+
+# 112: the console keymap the initramfs carries.
+_vk=$(awk -F= '/^KEYMAP=/ {gsub(/"/,"",$2); print $2}' /etc/vconsole.conf 2>/dev/null)
+_ek=$(awk -F= '/^ERGON_KEYMAP=/ {gsub(/"/,"",$2); print $2}' /etc/vconsole.conf 2>/dev/null)
+if [ -n "$_vk" ] && . "$G/lib/bootkeymap.sh" 2>/dev/null && bootkeymap_latin "$_vk"; then
+  ok "ERGON-112: /etc/vconsole.conf KEYMAP=$_vk is a Latin keymap${_ek:+ (ERGON_KEYMAP=$_ek kept for the desktop)}"
+else bad "ERGON-112: /etc/vconsole.conf KEYMAP='$_vk' is empty or not Latin: $(head -c 150 /etc/vconsole.conf)"; fi
+
 # --- ERGON-100: dictation. Bundle, bind, model download, a real record/stop cycle, typing
 echo "--- ERGON-100 ---"
 if grep -qx 'dictation pacman whisper-cpp' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null; then
