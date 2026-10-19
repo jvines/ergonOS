@@ -3644,7 +3644,7 @@ rm -f "$_A/Handmade118.desktop" /tmp/wa118.out
 # launch: a client whose class is the entry's StartupWMClass, then focus-not-duplicate
 _yt="$_A/YouTube.desktop"
 _ycls=$(sed -n 's/^StartupWMClass=//p' "$_yt" 2>/dev/null | head -1)
-_yurl=$(grep -o -- '--app=[^ "]*' "$_yt" 2>/dev/null | head -1); _yurl=${_yurl#--app=}
+_yurl=$(sed -n 's/^Exec=ergon-webapp launch "\(.*\)"$/\1/p' "$_yt" 2>/dev/null | head -1)
 if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
   usr "setsid -f ergon-webapp launch $_yurl </dev/null >/tmp/wa118l.out 2>&1" </dev/null >/dev/null 2>&1
   if o_until 45 o_has "$_ycls"; then
@@ -3667,20 +3667,23 @@ rm -f /tmp/wa118l.out
 # LocalSend: firewall, package, float rule
 _nft=$(timeout -k 2 10 nft list ruleset 2>&1 </dev/null)
 _l53=$(grep -E '53317' <<<"$_nft")
-if grep -E 'saddr' <<<"$_l53" | grep -E 'tcp' | grep -E 'udp' | grep -q accept && ! grep -v saddr <<<"$_l53" | grep -q accept; then
-  ok "ERGON-118: nft accepts 53317 tcp+udp only with a saddr set: $(head -1 <<<"$_l53" | tr -s ' ' | head -c 160)"
+_l53a=$(grep -E 'accept' <<<"$_l53"); _l53s=$(grep -E 'saddr' <<<"$_l53a"); _l53u=$(grep -v 'saddr' <<<"$_l53a")
+case "$_l53s" in *tcp*udp*|*udp*tcp*) _l53ok=1 ;; *) _l53ok=0 ;; esac
+if [ "$_l53ok" = 1 ] && [ -z "$_l53u" ]; then
+  ok "ERGON-118: nft accepts 53317 tcp+udp only from a saddr set: $(head -1 <<<"$_l53s" | tr -s ' \t' ' ' | head -c 200)"
 else bad "ERGON-118: nft 53317 rules: '$(head -c 300 <<<"$_l53")'"; fi
 if pacman -Q localsend-bin >/dev/null 2>&1; then
   ok "ERGON-118: localsend-bin is installed ($(pacman -Q localsend-bin))"
-  usr "setsid -f localsend_app </dev/null >/dev/null 2>&1" </dev/null >/dev/null 2>&1
+  pkill -u "$U" -x imv 2>/dev/null
+  usr "setsid -f localsend_app </dev/null >/tmp/ls118.log 2>&1" </dev/null >/dev/null 2>&1
   _lsc=""
-  for _i in $(seq 1 40); do _lsc=$(_cls_re 'localsend' | head -1); [ -n "$_lsc" ] && break; sleep 0.5; done
+  for _i in $(seq 1 90); do _lsc=$(_cls_re 'localsend' | head -1); [ -n "$_lsc" ] && break; sleep 0.5; done
   if [ -n "$_lsc" ]; then
     _fl=$(o_field "$_lsc" '.floating')
     [ "$_fl" = true ] && ok "ERGON-118: the LocalSend window ($_lsc) floats" || bad "ERGON-118: LocalSend window $_lsc floating=$_fl"
     _close_class "$_lsc"; sleep 1
-  else bad "ERGON-118: localsend_app mapped no window in 20s; classes: $(hq clients -j | jq -r '[.[].class] | join(",")')"; fi
-  pkill -u "$U" -x localsend_app 2>/dev/null
+  else bad "ERGON-118: localsend_app mapped no window in 45s; classes: $(hq clients -j | jq -r '[.[].class] | join(",")'); running: $(pidof localsend_app >/dev/null && echo yes || echo no); binary: $(command -v localsend_app || echo none); log: $(tail -c 300 /tmp/ls118.log | tr '\n' '|')"; fi
+  pkill -u "$U" -x localsend_app 2>/dev/null; rm -f /tmp/ls118.log
 else note "ERGON-118: localsend-bin is not installed in the guest (the AUR build did not land: $(pacman -Q localsend-bin 2>&1 | head -c 100)); the firewall rule was checked, the window float is unproven"; fi
 
 # 106b: the managed block is last, so a user's earlier stanza wins
@@ -3739,7 +3742,8 @@ else
   _nv=$(grep -i '"name":"[^"]*nvidia' <<<"$_dj" | grep '"state":"fail"')
   [ -n "$_dj" ] && [ -z "$_nv" ] && ok "ERGON-36: ergon doctor has no failing NVIDIA row on a non-NVIDIA guest ($(grep -ci nvidia <<<"$_dj") NVIDIA rows of $(wc -l <<<"$_dj"))" || bad "ERGON-36: doctor rows ($(wc -l <<<"$_dj") total), NVIDIA failures: $_nv"
   [ ! -e /etc/modprobe.d/ergon-nvidia.conf ] && [ ! -e /etc/mkinitcpio.conf.d/ergon-nvidia.conf ] && ok "ERGON-36: no ergon-nvidia modprobe or initramfs drop-in on this guest" || bad "ERGON-36: NVIDIA drop-ins exist: $(ls /etc/modprobe.d/ergon-nvidia.conf /etc/mkinitcpio.conf.d/ergon-nvidia.conf 2>&1 | tr '\n' ' ')"
-  cat /etc/mkinitcpio.conf /etc/mkinitcpio.conf.d/*.conf 2>/dev/null | grep -E '^HOOKS' | grep -qw kms && ok "ERGON-36: the kms hook is still in the initramfs HOOKS" || bad "ERGON-36: kms hook missing from HOOKS: $(cat /etc/mkinitcpio.conf /etc/mkinitcpio.conf.d/*.conf 2>/dev/null | grep -E '^HOOKS' | head -c 200)"
+  _hooks=$(cat /etc/mkinitcpio.conf /etc/mkinitcpio.conf.d/*.conf 2>/dev/null | grep -E '^HOOKS')   # captured: grep -q in a pipe would SIGPIPE cat under pipefail
+  case " $_hooks " in *[' ()=']kms[' )']*) ok "ERGON-36: the kms hook is still in the initramfs HOOKS" ;; *) bad "ERGON-36: kms hook missing from HOOKS: $(head -c 200 <<<"$_hooks")" ;; esac
 fi
 rm -f /tmp/gpu36.out
 
@@ -3766,10 +3770,10 @@ o_until 20 _sn && ok "ERGON-55: the welcome stamp was written" || bad "ERGON-55:
 _nb="$G/marimo/welcome.py"
 usr "ERGON=$G PATH=$G/bin:\$PATH timeout -k 5 180 \$HOME/.local/share/pyfleet/bin/marimo export html $_nb -o /tmp/wel55x.html --force" >/tmp/wel55.out 2>&1 </dev/null; _ex=$?
 usr "timeout -k 2 20 ergon --help" >/tmp/wel55h.out 2>&1 </dev/null
-_probe=$(awk 'length > 40 && !/[<>&"'"'"']/ {sub(/^ +/, ""); print; exit}' /tmp/wel55h.out)
+_probe=$(awk -F' {2,}' 'length($3) > 20 && $3 !~ /[<>&"'"'"'\\]/ {print $3; exit}' /tmp/wel55h.out)   # a summary phrase: single-spaced words
 if [ "$_ex" = 0 ] && [ -n "$_probe" ] && grep -qF -- "$_probe" /tmp/wel55x.html 2>/dev/null; then
   ok "ERGON-55: the exported notebook contains output of a real ergon command ('$(head -c 60 <<<"$_probe")')"
-else bad "ERGON-55: export rc $_ex, probe '$(head -c 60 <<<"$_probe")' found $(grep -cF -- "$_probe" /tmp/wel55x.html 2>/dev/null) times; $(tail -c 200 /tmp/wel55.out)"; fi
+else bad "ERGON-55: export rc $_ex, probe '$(head -c 60 <<<"$_probe")' found $(grep -cF -- "$_probe" /tmp/wel55x.html 2>/dev/null) times in $(wc -c < /tmp/wel55x.html 2>/dev/null) bytes; markers: $(grep -o 'It failed[^<\\]\{0,80\}\|No answer within[^<\\]\{0,20\}' /tmp/wel55x.html 2>/dev/null | head -3 | tr '\n' '|'); $(tail -c 200 /tmp/wel55.out)"; fi
 # close what we opened
 for _a in $(_new_clients); do o_dsp "hl.dsp.window.close({ window = \"address:$_a\" })"; done
 sleep 2
