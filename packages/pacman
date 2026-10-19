@@ -45,7 +45,7 @@ man-pages
 
 # --- system ----------------------------------------------------------------
 inetutils           # hostname(1); arch-bootstrap writes /etc/hostname
-networkmanager      # nmtui is the network UI; waybar's network module reads it
+networkmanager      # nmcli/nmtui; bin/ergon-wifi is the picker, waybar's network module reads it
 pacman-contrib      # paccache, checkupdates, pacdiff
 rebuild-detector    # checkrebuild: which installed packages link a shared
                     # library that is no longer on disk. Nothing else on an
@@ -146,6 +146,9 @@ gnome-keyring       # Secret Service for Chromium/Electron apps (Discord, VS Cod
                     # Not Firefox, which keeps logins in its own key4.db.
 libsecret
 udiskie             # automount removable media
+udisks2             # unmount and power-off of removable media; ergon drive (ERGON-94)
+exfatprogs          # mkfs.exfat for ergon drive
+cryptsetup          # LUKS for ergon drive
 gvfs
 brightnessctl
 ddcutil             # brightness on EXTERNAL monitors over DDC/CI. brightnessctl
@@ -156,6 +159,8 @@ fprintd             # the fingerprint reader. hypr/hyprlock.conf declares a
                     # without this -- it talks to fprintd over D-Bus.
 power-profiles-daemon   # PPD, never TLP: the two conflict. ergon-hardware adds the
                         # drop-in that stops it desaturating an amdgpu panel.
+libfido2            # fido2-token: detects a security key. `ergon fido2`
+pam-u2f             # pamu2fcfg + pam_u2f.so: the key answers sudo/polkit.
 fwupd                   # firmware updates from LVFS (BIOS, fingerprint reader,
                         # docks, SSDs). ergon-sleep check reports pending ones.
 restic                  # ergon backup: /home off this disk. Snapshots share the
@@ -238,5 +243,6 @@ foot                # NOT the daily terminal -- wezterm is, for its tmux -CC
 firefox
 zathura             # PDF; vim keys, opens papers in a tenth of a second
 zathura-pdf-mupdf
-imv                 # images
+imv                 # images; also shows the Wi-Fi share QR (bin/ergon-wifi)
+qrencode            # bin/ergon-wifi: the "share this network" QR code
 mpv

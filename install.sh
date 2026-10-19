@@ -290,6 +290,8 @@ else
   # env-hyprland itself: that is where uwsm has users put their own variables,
   # and linking over it replaced a stow symlink and stopped at a real file.
   link uwsm/env-hyprland.d/ergon-keyring .config/uwsm/env-hyprland.d/ergon-keyring
+  # ERGON-103: $BROWSER, so xdg-open and CLI tools use the default browser and raise it.
+  link uwsm/env-hyprland.d/ergon-browser .config/uwsm/env-hyprland.d/ergon-browser
 
   # ERGON-79: fcitx5, which press-and-hold accents run inside. File by file,
   # into a directory that stays real, because fcitx5 writes into it itself --
@@ -465,6 +467,14 @@ else
     cp "$ERGON/systemd/ergon-crash-notify.service" "$HOME/.config/systemd/user/" 2>/dev/null || true
     ln -sfn ../ergon-crash-notify.service "$HOME/.config/systemd/user/default.target.wants/ergon-crash-notify.service"
     enable_user_unit ergon-crash-notify.service restart ergon-crash-notify.service
+  fi
+
+  # ERGON-96: Taildrop receiver. The unit's ConditionPathExists keeps it inert
+  # where tailscale is not installed.
+  if [ "$CHECK" != 1 ]; then
+    cp "$ERGON/systemd/ergon-taildrop.service" "$HOME/.config/systemd/user/" 2>/dev/null || true
+    ln -sfn ../ergon-taildrop.service "$HOME/.config/systemd/user/default.target.wants/ergon-taildrop.service"
+    enable_user_unit ergon-taildrop.service restart ergon-taildrop.service
   fi
 fi
 

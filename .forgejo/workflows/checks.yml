@@ -87,6 +87,9 @@ jobs:
       - name: Hardware
         run: cd "$CI_DIR" && ./bin/test-hardware.sh
 
+      - name: Report scrubber
+        run: cd "$CI_DIR" && ./bin/test-report.sh
+
       - name: CLI --help never runs a command, and ergon new writes JSON
         run: cd "$CI_DIR" && ./bin/test-cli.sh
 
@@ -176,10 +179,19 @@ jobs:
       - name: The bar shows the modes the session is in
         run: cd "$CI_DIR" && ./bin/test-status.sh
 
+      # ERGON-94: which external drives ergon drive may wipe. lsblk JSON fixtures,
+      # a stubbed sudo; no mkfs ever runs.
+      - name: Only an idle external drive can be formatted
+        run: cd "$CI_DIR" && ./bin/test-drive.sh
+
       # ERGON-84: the audio-output key. Stubs pactl and swayosd-client; asserts the
       # sink chosen, the streams moved and the device named on screen.
       - name: The audio-output key cycles sinks
         run: cd "$CI_DIR" && ./bin/test-audio-output.sh
+
+      # ERGON-95: the Wi-Fi picker. nmcli -t fixtures (escaped colons), QR payload.
+      - name: The Wi-Fi picker parses nmcli and builds the share QR
+        run: cd "$CI_DIR" && ./bin/test-wifi.sh
 
       # ERGON-85: the layout key with one layout and with several, stub hyprctl.
       - name: The layout key cycles the keyboard layouts a host lists
@@ -193,6 +205,10 @@ jobs:
       - name: The tiling key cycles a workspace's layout
         run: cd "$CI_DIR" && ./bin/test-tiling.sh
 
+      # ERGON-103: links go to the default browser and raise its window, stubs.
+      - name: Links open in the default browser and raise it
+        run: cd "$CI_DIR" && ./bin/test-browser.sh
+
       # ERGON-87: the emoji list parsed from Unicode's own file; the pick copied and typed.
       - name: The emoji picker copies and types the pick
         run: cd "$CI_DIR" && ./bin/test-emoji.sh
@@ -200,6 +216,14 @@ jobs:
       # ERGON-82: detection, the offline picker and the Santiago default, no network.
       - name: The timezone is detected, or picked, never assumed
         run: cd "$CI_DIR" && ./bin/test-timezone.sh
+
+      # ERGON-102: locale enabled, generated and set; LC_NUMERIC stays "." unless asked.
+      - name: The language changes without a reinstall, and numbers keep their point
+        run: cd "$CI_DIR" && ./bin/test-language.sh
+
+      # ERGON-97: the PAM edit behind `ergon fido2` -- sufficient, validated, reversible.
+      - name: The security-key PAM edit adds idempotently and removes byte-identically
+        run: cd "$CI_DIR" && ./bin/test-fido2.sh
 
       # lib/ -- the science tooling, which until now was the only part of this
       # repo with no gate at all. Every step above this line tests the desktop,

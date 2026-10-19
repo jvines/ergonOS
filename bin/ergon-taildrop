@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# ergon:summary=Send files to your other devices with Taildrop, and save what they send
+# ergon:group=network
+# ergon:args=send [file...] | receive | peers
+#
+# ERGON-96. Needs Tailscale installed, running (TAILSCALE=1 in host.env) and
+# logged in; with tailscale absent every subcommand exits 0 and does nothing.
+#
+#   send [file...]  pick a device in fuzzel (online, able to take files) and send
+#                   the files. With none, ask for them in a file chooser if
+#                   zenity/kdialog is there. yazi: <C-t> sends the selection.
+#   receive         run by systemd/ergon-taildrop.service: files other devices
+#                   send arrive in ~/Downloads, one notification each.
+#   peers           the pickable devices as "name<TAB>address", from
+#                   `tailscale status --json` (or JSON on stdin, for tests).
+#
+# Non-root `tailscale file` needs this user to be the tailscale operator;
+# provisioning sets it once tailscale is logged in (`sudo tailscale set
+# --operator=$USER`, or `tailscale up --operator=$USER` when joining).
+set -euo pipefail
+
+APP=ergon-taildrop
+
+# Devices that can be sent to: online, and either ours (same login) or granted
+# the file-sharing-target capability. Tailscale itself refuses anything else.
+peers() {
+  jq -r '
+    .Self.UserID as $me
+    | .Peer // {} | to_entries[] | .value
+    | select(.Online == true)
+    | select(.UserID == $me
+             or ((.Capabilities // []) | index("file-sharing-target"))
+             or ((.CapMap // {}) | has("file-sharing-target")))
+    | [(.HostName // .DNSName), (.DNSName // .HostName | rtrimstr("."))] | @tsv
+  ' | sort
+}
+
+have() { command -v tailscale >/dev/null 2>&1; }
+
+send() {
+  local files=("$@") picked addr name err st
+  if [ ${#files[@]} -eq 0 ]; then
+    if   command -v zenity  >/dev/null 2>&1; then mapfile -t files < <(zenity --file-selection --multiple --separator=$'\n' --title="Send with Taildrop")
+    elif command -v kdialog >/dev/null 2>&1; then mapfile -t files < <(kdialog --getopenfilename ~ --multiple --separate-output)
+    else echo "ergon-taildrop: name the files to send" >&2; exit 1; fi
+    [ ${#files[@]} -gt 0 ] || exit 0
+  fi
+  st=$(tailscale status --json 2>&1) || { notify-send -a "$APP" -u critical "Taildrop" "Tailscale is not running or not logged in"; exit 1; }
+  picked=$(peers <<<"$st")
+  if [ -z "$picked" ]; then
+    notify-send -a "$APP" "Taildrop" "No online device can take files right now"; exit 1
+  fi
+  picked=$(cut -f1 <<<"$picked" | fuzzel --dmenu --prompt "Send to  ") || exit 0
+  [ -n "$picked" ] || exit 0
+  name=$picked
+  addr=$(peers <<<"$st" | awk -F'\t' -v n="$name" '$1 == n { print $2; exit }')
+  if err=$(tailscale file cp --update-interval=0 -- "${files[@]}" "$addr:" 2>&1); then
+    notify-send -a "$APP" "Sent to $name" "${#files[@]} file(s)"
+  else
+    notify-send -a "$APP" -u critical "Taildrop to $name failed" "${err:-unknown error}"; exit 1
+  fi
+}
+
+receive() {
+  local dir=${XDG_DOWNLOAD_DIR:-$HOME/Downloads} stage f dest n base ext
+  stage="$dir/.taildrop"
+  mkdir -p "$stage"
+  while true; do
+    # Stage first: `get --wait` returns once files are in, and what else sits in
+    # the downloads directory is not ours to announce. The loop is here, not
+    # `--loop`, because that mode cannot say which files arrived.
+    for f in "$stage"/*; do
+      [ -e "$f" ] || continue
+      base=${f##*/}; dest="$dir/$base"; n=0
+      while ! ln -- "$f" "$dest" 2>/dev/null; do
+        n=$((n + 1)); [ "$n" -lt 1000 ] || continue 2
+        ext=""; case $base in *.*) ext=.${base##*.} ;; esac
+        dest="$dir/${base%"$ext"}-$n$ext"
+      done
+      rm -f -- "$f"
+      notify-send -a "$APP" -u critical "Received ${dest##*/}" "Saved to ${dir/#$HOME/\~}" || true
+    done
+    tailscale file get --wait --conflict=rename "$stage" 2>/dev/null || sleep 30
+  done
+}
+
+case ${1:-} in
+  peers)   peers ;;
+  send)    shift; have || exit 0; send "$@" ;;
+  receive) have || exit 0; receive ;;
+  *)       echo "usage: ergon-taildrop send [file...] | receive | peers" >&2; exit 2 ;;
+esac

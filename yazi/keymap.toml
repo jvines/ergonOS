@@ -1,0 +1,6 @@
+# ERGON-96: <C-t> sends the selected (or hovered) files to another device with
+# Taildrop. Exits quietly when tailscale is not installed.
+[mgr]
+prepend_keymap = [
+	{ on = "<C-t>", run = 'shell -- ergon-taildrop send "$@"', desc = "Send with Taildrop" },
+]
