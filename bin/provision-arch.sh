@@ -1095,6 +1095,11 @@ sudo install -Dm644 /dev/stdin /etc/polkit-1/rules.d/49-ergon-desktop.rules <<'E
 // and shutdown are different: they end every job on the machine, they happen
 // once a day at most, and a prompt is a reasonable last check. They stay
 // behind it, and test/arch-vm/guest-desktop.sh asserts that they do.
+//
+// Holding off sleep and the lid switch (ERGON-83, `ergon-awake full`; also
+// `ergon watch`'s sleep inhibitor): the session-less caller is asked to
+// authenticate with no agent able to answer, so the inhibitor just fails. What
+// it blocks is a suspend this same rule already lets wheel trigger.
 polkit.addRule(function(action, subject) {
     if (!subject.isInGroup("wheel")) {
         return null;
@@ -1103,12 +1108,14 @@ polkit.addRule(function(action, subject) {
         case "org.freedesktop.UPower.PowerProfiles.switch-profile":
         case "org.freedesktop.login1.suspend":
         case "org.freedesktop.login1.hibernate":
+        case "org.freedesktop.login1.inhibit-block-sleep":
+        case "org.freedesktop.login1.inhibit-handle-lid-switch":
             return polkit.Result.YES;
     }
 });
 EOF
 if sudo systemctl reload polkit 2>/dev/null || sudo systemctl restart polkit 2>/dev/null; then
-  ok "polkit: wheel may switch power profiles, suspend and hibernate"
+  ok "polkit: wheel may switch power profiles, suspend, hibernate and hold either off"
 else
   warn "polkit rule written but the daemon was not reloaded; it applies after a reboot"
 fi

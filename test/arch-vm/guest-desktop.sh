@@ -3199,9 +3199,15 @@ CRASH
     usr "makoctl dismiss --all" >/dev/null 2>&1
     _t0=$SECONDS
     kill -SEGV "$_cp"
-    crashed() { { usr "makoctl list; makoctl history" 2>/dev/null; } | grep -qE ': sleep crashed'; }
-    if o_until 20 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification (within $((SECONDS - _t0))s)"
-    else bad "a SIGSEGV'd program raised no notification within 20s"; fi
+    # Two usr calls, not `usr "makoctl list; makoctl history"`: usr's environment
+    # prefixes only its first command, so in runs 1-8 history was asked with no
+    # bus and answered nothing, and a toast that had expired from the list by the
+    # time a slow coredump was logged could never be seen.
+    crashed() { { usr "makoctl list"; usr "makoctl history"; } 2>/dev/null | grep -qE ': sleep crashed'; }
+    _k=$(date +%s.%N)
+    if o_until 30 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification (within $((SECONDS - _t0))s)"
+    else bad "a SIGSEGV'd program raised no notification within 30s"; fi
+    note "killed at $_k; logged at $(journalctl -b --no-pager -o json -n 1 MESSAGE_ID=$CID COREDUMP_COMM=sleep 2>/dev/null | jq -r '(.__REALTIME_TIMESTAMP | tonumber) / 1e6')"
     note "the journal entry: $(journalctl -b --no-pager -o short-precise -n 1 MESSAGE_ID=$CID COREDUMP_COMM=sleep 2>&1 | tail -1 | cut -c1-200)"
     note "the service's own lines: $(journalctl --no-pager -o cat -n 5 _SYSTEMD_USER_UNIT=ergon-crash-notify.service 2>&1 | tr '\n' ';' | head -c 300)"
     echo "     --- makoctl list, in full ---";    usr "makoctl list" 2>&1 | sed 's/^/     /'
