@@ -37,7 +37,9 @@ if [ -z "$result" ]; then
   exit 1
 fi
 
-printf '%s' "$result" | wl-copy --sensitive
+# wl-copy stays behind to serve the selection; with our stdout it would hold
+# a caller's pipe (a $(ergon-qr) or a launcher) open until the next copy.
+printf '%s' "$result" | wl-copy --sensitive >/dev/null 2>&1
 
 case "$result" in
   http://*|https://*)

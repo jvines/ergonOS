@@ -3412,7 +3412,7 @@ for _c in zbarimg ffmpeg qrencode grim; do
 done
 rm -rf /tmp/qr104bin; mkdir -p /tmp/qr104bin
 qrencode -s 12 -m 4 -o /tmp/qr104.png 'https://ergon.example/qr104' && chmod a+r /tmp/qr104.png
-usr "setsid -f imv /tmp/qr104.png >/dev/null 2>&1"
+usr "setsid -f imv /tmp/qr104.png </dev/null >/dev/null 2>&1" </dev/null >/dev/null 2>&1
 _qrwin=""
 for _i in $(seq 1 20); do
   _qrwin=$(usr "hyprctl clients -j" 2>/dev/null | jq -r '[.[] | select(.class=="imv")][0] | select(.) | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' 2>/dev/null)
@@ -3422,18 +3422,19 @@ if [ -n "$_qrwin" ]; then
   sleep 1   # first frame drawn
   # slurp is interactive; the stand-in returns the imv window, as a drag over it would.
   printf '#!/bin/sh\necho "%s"\n' "$_qrwin" > /tmp/qr104bin/slurp; chmod a+rx /tmp/qr104bin /tmp/qr104bin/slurp
-  usr "printf x | wl-copy" 2>/dev/null
-  _qr=$(usr "PATH=/tmp/qr104bin:$SESSION_PATH timeout 30 ergon-qr" 2>&1); _qr_rc=$?
-  _clip=$(usr 'timeout 3 wl-paste -n' 2>/dev/null)
+  usr "printf x | wl-copy >/dev/null 2>&1" </dev/null >/dev/null 2>&1
+  # To a file, not $(): anything ergon-qr leaves running must not hold this pipe.
+  timeout -k 3 40 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD PATH=/tmp/qr104bin:$SESSION_PATH timeout 30 ergon-qr" >/tmp/qr104.out 2>&1 </dev/null; _qr_rc=$?; _qr=$(cat /tmp/qr104.out)
+  _clip=$(usr 'timeout 3 wl-paste -n' 2>/dev/null </dev/null)
   if [ "$_qr_rc" = 0 ] && [ "$_clip" = 'https://ergon.example/qr104' ]; then
     ok "ergon-qr decoded the QR shown on screen ($_qrwin) to the clipboard"
   else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"; fi
 else bad "harness: imv showed no window for the QR image"; fi
-pkill -u "$U" -x imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png
+pkill -u "$U" -x imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png /tmp/qr104.out
 if ls /sys/class/video4linux/video* >/dev/null 2>&1; then
   note "ERGON-104: the guest has a V4L2 node, so the no-camera refusal is not exercised"
 else
-  _wc=$(usr "timeout 10 ergon-webcam" 2>&1 </dev/null); _wc_rc=$?
+  usr "timeout -k 2 10 ergon-webcam" >/tmp/wc104.out 2>&1 </dev/null; _wc_rc=$?; _wc=$(cat /tmp/wc104.out); rm -f /tmp/wc104.out
   if [ "$_wc_rc" = 1 ] && grep -qi camera <<<"$_wc" && ! pgrep -u "$U" -x ffmpeg >/dev/null; then
     ok "ergon-webcam refuses with no camera: $(head -c 100 <<<"$_wc" | tr '\n' '|')"
   else bad "ergon-webcam with no camera: rc $_wc_rc, ffmpeg $(pgrep -u "$U" -x ffmpeg || echo absent), output: $_wc"; pkill -u "$U" -x ffmpeg; fi
