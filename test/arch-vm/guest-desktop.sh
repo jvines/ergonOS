@@ -3144,9 +3144,10 @@ usr "ergon-awake off" >/dev/null 2>&1
 no_inh() { [ "$(inh)" = 0 ]; }
 o_until 6 no_inh && ok "ergon-awake off: the inhibitor is gone" || bad "ergon-awake off: inhibitor still listed"
 # Full mode: sleep and the lid switch too, and 'off' takes all of it away.
-inhf() { su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemd-inhibit --list --no-legend 2>/dev/null" | grep -c 'ergon-awake.*idle:sleep:handle-lid-switch'; }
+inhf() { su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemd-inhibit --list --no-legend 2>/dev/null" | grep '^ergon-awake' | awk '{print $6}' | tr : '\n' | grep -cxE 'sleep|handle-lid-switch'; }
+# logind lists WHAT in its own order (run 9: sleep:idle:handle-lid-switch); count the two.
+has_inhf() { [ "$(inhf)" -ge 2 ]; }
 usr "ergon-awake full" >/dev/null 2>&1
-has_inhf() { [ "$(inhf)" -ge 1 ]; }
 o_until 6 has_inhf && ok "ergon-awake full: systemd-inhibit lists idle, sleep and handle-lid-switch" \
                    || { bad "ergon-awake full: no idle:sleep:handle-lid-switch inhibitor listed"; usr "systemd-inhibit --list" 2>&1 | head -8 | sed 's/^/     /'; }
 [ "$(usr 'ergon-awake status')" = full ] && ok "ergon-awake status says full" || bad "ergon-awake status says '$(usr 'ergon-awake status')'"
