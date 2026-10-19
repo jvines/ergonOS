@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ERGON-106: ergon ssh-key. Real ssh, ssh-keygen and ssh-agent in a temp HOME
-# (skipped if openssh is not on the host): setup puts one Include at the top of
-# an existing config without otherwise touching it, ssh -G then shows
-# addkeystoagent yes (even past a Host block), and new/add/list/copy work
+# (skipped if openssh is not on the host): setup appends one Match all + Include block to
+# the end of an existing config without otherwise touching it, ssh -F "$HOME/.ssh/config" -G then shows
+# addkeystoagent true for other hosts while a per-host no wins, and new/add/list/copy work
 # against a private agent.
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -18,22 +18,28 @@ AGENT_PID=$SSH_AGENT_PID
 # fresh machine: no ~/.ssh at all
 "$K" setup
 check "fresh: ~/.ssh is 0700 and config 0600" [ "$(stat -c %a "$HOME/.ssh")/$(stat -c %a "$HOME/.ssh/config")" = 700/600 ]
-check "fresh: ssh -G has addkeystoagent yes" bash -c 'ssh -G somehost </dev/null 2>/dev/null | grep -qx "addkeystoagent true"'
+check "fresh: ssh -F "$HOME/.ssh/config" -G has addkeystoagent true" bash -c 'ssh -F "$HOME/.ssh/config" -G somehost </dev/null 2>/dev/null | grep -qx "addkeystoagent true"'
 rm -rf "$HOME/.ssh"
 
-# existing config with a Host block: Include goes first, the rest is byte-identical
+# existing config with a Host block: block appended last, the rest byte-identical
 mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
 printf 'Host work\n    User bob\n    AddKeysToAgent no\n' > "$HOME/.ssh/config"; chmod 600 "$HOME/.ssh/config"
 cp "$HOME/.ssh/config" "$T/orig"
 "$K" setup; "$K" setup
-check "the Include is exactly once" [ "$(grep -c '^Include ' "$HOME/.ssh/config")" = 1 ]
-check "...on the first line" bash -c 'head -1 "$HOME/.ssh/config" | grep -q "^Include ~/.ssh/config.d/ergon.conf"'
-check "the user's lines survive unchanged" bash -c 'tail -n +3 "$HOME/.ssh/config" | cmp -s - "$1"' _ "$T/orig"
+check "the block is there exactly once" [ "$(grep -c "^Include " "$HOME/.ssh/config")" = 1 ]
+check "...at the very end" bash -c 'tail -2 "$HOME/.ssh/config" | tr "\n" "|" | grep -qx "Match all|Include ~/.ssh/config.d/ergon.conf|"'
+check "the user's lines survive byte-identical at the start" bash -c 'head -c "$(stat -c %s "$1")" "$HOME/.ssh/config" | cmp -s - "$1"' _ "$T/orig"
 check "the first-time backup equals the original" cmp -s "$HOME/.ssh/config.ergon-backup" "$T/orig"
 check "config mode is kept" [ "$(stat -c %a "$HOME/.ssh/config")" = 600 ]
-check "ssh -G: an unrelated host gets addkeystoagent true" bash -c 'ssh -G somehost </dev/null 2>/dev/null | grep -qx "addkeystoagent true"'
-check "...a later per-host AddKeysToAgent no is shadowed (first match; documented)" bash -c 'ssh -G work </dev/null 2>/dev/null | grep -qx "addkeystoagent true"'
+check "ssh -G: an unrelated host gets addkeystoagent true" bash -c 'ssh -F "$HOME/.ssh/config" -G somehost </dev/null 2>/dev/null | grep -qx "addkeystoagent true"'
+check "...and the user's own per-host AddKeysToAgent no wins for its host" bash -c 'ssh -F "$HOME/.ssh/config" -G work </dev/null 2>/dev/null | grep -qx "addkeystoagent false"'
 check "the snippet holds only Host * and AddKeysToAgent yes" bash -c '[ "$(grep -vE "^#|^$" "$HOME/.ssh/config.d/ergon.conf" | tr -s " " | tr "\n" "|")" = "Host *|  AddKeysToAgent yes|" ] || [ "$(grep -vE "^#|^$" "$HOME/.ssh/config.d/ergon.conf" | sed "s/^ *//" | tr "\n" "|")" = "Host *|AddKeysToAgent yes|" ]'
+
+# migration from the first version, which prepended its Include
+printf "Include ~/.ssh/config.d/ergon.conf # ergon: managed include, keep it the first line\n\n" > "$T/mig"; cat "$T/orig" >> "$T/mig"
+cp "$T/mig" "$HOME/.ssh/config"; "$K" setup
+check "migration: the prepended line is gone" bash -c '! grep -q "keep it the first line" "$HOME/.ssh/config"'
+check "migration: user lines intact, block last, once" bash -c 'head -c "$(stat -c %s "$1")" "$HOME/.ssh/config" | cmp -s - "$1" && [ "$(grep -c "^Include " "$HOME/.ssh/config")" = 1 ]' _ "$T/orig"
 
 # keys
 check "list on an empty ~/.ssh says so" bash -c '"$1" list | grep -q "no keys"' _ "$K"

@@ -216,12 +216,12 @@ user manager. `ergon doctor` row `ssh-agent` says which half is missing.
 - **No SSH_AUTH_SOCK**: not a uwsm login, or the drop-in is unlinked (`install.sh`
   links it); log in again after `ergon update`.
 - **Reachable but still asked**: the agent starts empty. `install.sh` writes
-  `~/.ssh/config.d/ergon.conf` (`Host *` / `AddKeysToAgent yes`) and one marked
-  `Include` as the FIRST line of `~/.ssh/config` (ssh is first-match; an Include
-  under a `Host` block applies to that block only). Check with
-  `ssh -G somehost | grep addkeystoagent` (must say `true`). Your own file is
-  otherwise never edited, and a copy is in `config.ergon-backup`. Because the
-  Include is first, it also shadows a later per-host `AddKeysToAgent no`.
+  `~/.ssh/config.d/ergon.conf` (`Host *` / `AddKeysToAgent yes`) and appends a
+  marked `Match all` + `Include` block at the END of `~/.ssh/config` (`Match all`
+  resets scope so the Include is global; being last it only supplies a default,
+  so your own earlier per-host `AddKeysToAgent no` wins). Check with
+  `ssh -G somehost | grep addkeystoagent` (must say `true`). Your file is
+  otherwise never edited; a copy is in `config.ergon-backup`.
 - **Making or loading a key**: `ergon ssh-key new [NAME]` (ed25519, passphrase,
   loaded, public key printed and copied), `add PATH`, `list`, `copy [NAME]`.
 - **Another agent**: an `ssh` login that forwards one, or `gcr-ssh-agent` /

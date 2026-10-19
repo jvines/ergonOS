@@ -16,15 +16,19 @@
 #
 # ERGON-106. `setup` writes ~/.ssh/config.d/ergon.conf (Host * / AddKeysToAgent
 # yes: the first use of a key loads it, so the passphrase is asked once per
-# login) and puts ONE marked Include line at the very top of ~/.ssh/config: ssh
-# is first-match, and an Include below a Host block would only apply to that
-# block. An existing config is otherwise never touched; the first time it is
-# copied to config.ergon-backup. Idempotent.
+# login) and APPENDS a marked block to the END of ~/.ssh/config: `Match all` (resets
+# scope so the Include is global) plus the Include. Last, it only supplies a
+# default: ssh is first-match, so a user's earlier per-host setting wins. An
+# existing config is otherwise never touched (an earlier prepended Include is
+# migrated away); the first time it is copied to config.ergon-backup. Idempotent.
 set -uo pipefail
 
 SSH_DIR="$HOME/.ssh"
-MARK='# ergon: managed include, keep it the first line'
-INCLUDE="Include ~/.ssh/config.d/ergon.conf $MARK"
+OLDMARK='# ergon: managed include, keep it the first line'
+MARK='# ergon: managed default, keep this block last'
+BLOCK="$MARK
+Match all
+Include ~/.ssh/config.d/ergon.conf"
 
 die() { echo "ergon-ssh-key: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required (sudo pacman -S openssh)"; }
@@ -36,15 +40,26 @@ setup() {
     'Host *' '    AddKeysToAgent yes' > "$SSH_DIR/config.d/ergon.conf"
   local cfg="$SSH_DIR/config"
   if [ ! -e "$cfg" ]; then
-    ( umask 077; printf '%s\n' "$INCLUDE" > "$cfg" )
-  elif ! grep -qF "$MARK" "$cfg"; then
-    [ -e "$cfg.ergon-backup" ] || cp -p "$cfg" "$cfg.ergon-backup"
-    local tmp; tmp=$(mktemp "$SSH_DIR/.config.XXXXXX") || die "mktemp failed"
-    { printf '%s\n\n' "$INCLUDE"; cat "$cfg"; } > "$tmp"
-    chmod --reference="$cfg" "$tmp"; mv "$tmp" "$cfg"
-  elif [ "$(grep -vE '^[[:space:]]*(#|$)' "$cfg" | head -1)" != "$INCLUDE" ]; then
-    echo "ergon-ssh-key: the ergon Include in $cfg is not the first directive; AddKeysToAgent only applies to hosts matched before it (move it to the top)" >&2
+    ( umask 077; printf '%s\n' "$BLOCK" > "$cfg" )
+    return
   fi
+  grep -qF "$MARK" "$cfg" && { _check_last "$cfg"; return; }
+  [ -e "$cfg.ergon-backup" ] || cp -p "$cfg" "$cfg.ergon-backup"
+  local tmp; tmp=$(mktemp "$SSH_DIR/.config.XXXXXX") || die "mktemp failed"
+  # Migration: an earlier version prepended its Include (and one blank line).
+  if grep -qF "$OLDMARK" "$cfg"; then
+    awk -v m="$OLDMARK" 'skip { skip=0; if ($0 == "") next } index($0, m) { skip=1; next } { print }' "$cfg" > "$tmp"
+  else
+    cat "$cfg" > "$tmp"
+  fi
+  [ -z "$(tail -c1 "$tmp")" ] || echo >> "$tmp"
+  printf '\n%s\n' "$BLOCK" >> "$tmp"
+  chmod --reference="$cfg" "$tmp"; mv "$tmp" "$cfg"
+}
+
+_check_last() {
+  [ "$(grep -vE '^[[:space:]]*(#|$)' "$1" | tail -2 | tr '\n' '|')" = "Match all|Include ~/.ssh/config.d/ergon.conf|" ] ||
+    echo "ergon-ssh-key: the ergon block in $1 is no longer last; keys it supplies as defaults may now be shadowed or scoped (move it to the end)" >&2
 }
 
 copy_pub() {  # $1: .pub path
