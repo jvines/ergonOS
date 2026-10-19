@@ -29,7 +29,8 @@ FILEF="$STATE/webcam.file"
 notify() { notify-send "$@" 2>/dev/null || true; }
 
 pid=$(cat "$PIDF" 2>/dev/null || true)
-if [ -n "$pid" ] && tr "\0" " " < "/proc/$pid/cmdline" 2>/dev/null | grep -q "ffmpeg -nostdin"; then
+cmd=$(tr "\0" " " < "/proc/${pid:-0}/cmdline" 2>/dev/null || true)
+if [ -n "$pid" ] && [[ "$cmd" == *"ffmpeg -nostdin"* ]]; then
   kill -INT "$pid"
   for _ in $(seq 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
   file=$(cat "$FILEF" 2>/dev/null || true)
