@@ -162,6 +162,9 @@ else
   bad "host.env did not record the bundle — a reprovision would forget it"
   grep -n BUNDLES "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null | sed 's/^/     /'
 fi
+if grep -q 'BUNDLES="[^"]*dictation' "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null; then
+  ok "the dictation bundle is recorded in host.env too"
+else bad "host.env did not record the dictation bundle"; fi
 if su - "$U" -c "\$HOME/.local/share/pyfleet/bin/python -c 'import jupyterlab'" >/dev/null 2>&1; then
   ok "the bundle's python packages are importable in pyfleet"
 else
@@ -3443,9 +3446,6 @@ note "ERGON-104: a real webcam recording and the Open button on mako are unprove
 
 # --- ERGON-100: dictation. Bundle, bind, model download, a real record/stop cycle, typing
 echo "--- ERGON-100 ---"
-if grep -q 'BUNDLES="[^"]*dictation' "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null; then
-  ok "the dictation bundle is recorded in host.env"
-else bad "host.env did not record the dictation bundle"; fi
 if grep -qx 'dictation pacman whisper-cpp' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null; then
   ok "the ledger records whisper-cpp as installed by the dictation bundle"
 else bad "the ledger has no 'dictation pacman whisper-cpp'"; sed 's/^/     /' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null | head -10; fi
@@ -3469,6 +3469,10 @@ grep -q 'tiny.en is the active' /tmp/d100.out && ok "model use tiny.en" || bad "
 usr "ergon-dictate model verify tiny.en" >/tmp/d100.out 2>&1 </dev/null
 grep -q '^ok *tiny.en' /tmp/d100.out && ok "model verify re-checks the installed model" || bad "model verify: $(head -c 100 /tmp/d100.out)"
 
+# pipewire is socket-activated on a real login, but the guest's user manager predates the
+# package, so its sockets were never started.
+usr "timeout 30 systemctl --user start pipewire.socket pipewire-pulse.socket wireplumber.service" >/tmp/d100.out 2>&1 </dev/null || note "ERGON-100: starting pipewire: $(head -c 150 /tmp/d100.out)"
+sleep 3
 # A source to record from: the guest may have no audio device, so a null sink's monitor.
 usr "pactl load-module module-null-sink sink_name=d100 && pactl set-default-source d100.monitor" >/tmp/d100.out 2>&1 </dev/null \
   || note "ERGON-100: no null source ($(head -c 100 /tmp/d100.out)); recording uses whatever pipewire offers"
@@ -3494,7 +3498,7 @@ if [ "$_d_rc" = 0 ] && o_until 5 d100_rec; then
   [ -z "$(usr "pgrep -u $U -x whisper-cli" 2>/dev/null </dev/null)" ] && ok "whisper-cli is gone afterwards" || bad "whisper-cli is still running"
   d100_bar && bad "ergon-status still shows dictating after the cycle" || ok "ergon-status is back to idle"
   [ ! -e /run/user/1000/ergon-dictate-1000/rec.wav ] && ok "the recording was deleted" || bad "rec.wav is left behind"
-else bad "start: rc $_d_rc, $(head -c 150 /tmp/d100.out), state '$(d100_phase)'"; usr "ergon-dictate stop" >/dev/null 2>&1 </dev/null; fi
+else bad "start: rc $_d_rc, $(head -c 150 /tmp/d100.out), state '$(d100_phase)', pipewire $(usr "systemctl --user is-active pipewire" 2>&1 </dev/null | head -1), pw-record: $(usr "timeout -k 1 3 pw-record --rate 16000 /tmp/d100-probe.wav" 2>&1 </dev/null | head -c 150)"; usr "ergon-dictate stop" >/dev/null 2>&1 </dev/null; fi
 
 # 2. End to end into a window, SUPER+CTRL+X pressed for real, with ONLY whisper-cli stubbed.
 rm -rf /tmp/d100bin /tmp/d100-keys.out /tmp/d100-args; mkdir -p /tmp/d100bin
