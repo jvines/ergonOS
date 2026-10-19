@@ -142,6 +142,8 @@ bluez-utils
 blueman
 
 # --- secrets, storage, power ----------------------------------------------
+fio                 # ergon speedtest disk (ERGON-115)
+speedtest-cli       # ergon speedtest net (ERGON-115); Ookla's own binary is AUR-only
 gnome-keyring       # Secret Service for Chromium/Electron apps (Discord, VS Code): ERGON-64.
                     # Not Firefox, which keeps logins in its own key4.db.
 libsecret
