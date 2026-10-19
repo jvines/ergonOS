@@ -224,6 +224,10 @@ jobs:
       - name: The emoji picker copies and types the pick
         run: cd "$CI_DIR" && ./bin/test-emoji.sh
 
+      # ERGON-107: reminder times parsed, listed, cleared and rejected, against stub systemd.
+      - name: Reminders parse, list, clear and reject bad times
+        run: cd "$CI_DIR" && ./bin/test-remind.sh
+
       # ERGON-82: detection, the offline picker and the Santiago default, no network.
       - name: The timezone is detected, or picked, never assumed
         run: cd "$CI_DIR" && ./bin/test-timezone.sh
