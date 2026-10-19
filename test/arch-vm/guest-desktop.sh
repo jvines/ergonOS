@@ -3089,7 +3089,11 @@ if o_win ergon-t1 && o_win ergon-t2; then
   printf '#!/bin/sh\nexec cat -v > /tmp/o-keys.out\n' > /tmp/o-keys.sh; chmod 755 /tmp/o-keys.sh
   o_win ergon-t3 /tmp/o-keys.sh; sleep 1
   o_focus ergon-t3 || note "could not focus ergon-t3"
-  usr "printf ergonpasteprobe | wl-copy" >/dev/null 2>&1
+  # setsid -f: a wl-copy forked inside su's session did not outlive it (run 6
+  # pasted the previous clipboard). Proven set before SUPER+V is pressed.
+  usr "setsid -f wl-copy ergonpasteprobe" >/dev/null 2>&1
+  setclip() { [ "$(usr 'timeout 3 wl-paste -n' 2>/dev/null)" = ergonpasteprobe ]; }
+  o_until 4 setclip || note "harness: wl-copy did not set the clipboard (wl-paste: '$(usr 'timeout 3 wl-paste -n' 2>&1 | head -c 40)')"
   o_key 125:1 47:1 47:0 125:0
   o_key 28:1 28:0
   pasted() { grep -q ergonpasteprobe /tmp/o-keys.out 2>/dev/null; }
@@ -3180,9 +3184,21 @@ journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID _UID=1000 > 
 journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID _UID=1000 2>/tmp/o-fB.err | jq --unbuffered -r '[.COREDUMP_PID, .COREDUMP_EXE, .COREDUMP_COMM, .COREDUMP_SIGNAL_NAME] | @tsv' > /tmp/o-fB.out 2>&1 & echo \$! >> /tmp/o-follow.pids
 journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID > /tmp/o-fC.out 2>&1 & echo \$! >> /tmp/o-follow.pids
 journalctl --quiet --follow --lines=1 --output=cat MESSAGE_ID=$CID _UID=1000 > /tmp/o-fD.out 2>&1 & echo \$! >> /tmp/o-follow.pids
+# E: the notifier itself, traced, with the unit's environment.
+env -i HOME=$H USER=$U PATH=/tmp/o-shim:/usr/local/bin:/usr/bin XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus bash -x $H/ergonOS/bin/ergon-crash-notify > /tmp/o-fE.out 2> /tmp/o-fE.err &
 FOLLOW
+  # E's notify-send says "traced ..." so the service's own toast stays the one asserted.
+  mkdir -p /tmp/o-shim; cat > /tmp/o-shim/notify-send <<'SHIM'
+#!/bin/bash
+a=("$@"); for i in "${!a[@]}"; do case "${a[$i]}" in *crashed*) a[$i]="traced ${a[$i]}" ;; esac; done
+/usr/bin/notify-send "${a[@]}"; rc=$?; echo "shim: notify-send rc=$rc" >&2; exit $rc
+SHIM
+  chmod 755 /tmp/o-shim /tmp/o-shim/notify-send
   chmod 755 /tmp/o-follow.sh; rm -f /tmp/o-f?.out /tmp/o-follow.pids /tmp/o-follow.sid
   usr "setsid /tmp/o-follow.sh" >/dev/null 2>&1; sleep 3
+  _ns=$(usr "notify-send -u normal 'ergonprobe died (SIGSEGV)' 'A core dump was recorded. \\\`coredumpctl info 1\\\` has the details.'; echo rc=\$?" 2>&1 | tr '\n' ' ')
+  sleep 0.5
+  note "a hand notify-send like the notifier's: $_ns; mako mode '$(usr 'makoctl mode' 2>&1 | tr '\n' ' ')'; listed: $(usr 'makoctl list' 2>&1 | grep -c ergonprobe)"
   cat > /tmp/o-crash.sh <<'CRASH'
 #!/bin/bash
 ulimit -c unlimited
@@ -3197,7 +3213,7 @@ CRASH
   _io0=$(cgio)
   if [ -n "$_cp" ]; then
     kill -SEGV "$_cp"
-    crashed() { { usr "makoctl list; makoctl history" 2>/dev/null; } | grep -qi 'crashed'; }
+    crashed() { { usr "makoctl list; makoctl history" 2>/dev/null; } | grep -qE ': sleep crashed'; }
     if o_until 20 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification"
     else bad "a SIGSEGV'd program raised no notification within 20s"; fi
     note "the service's processes, read/written bytes before the crash: $_io0"
@@ -3206,6 +3222,7 @@ CRASH
       note "by hand, stage $_s: $(wc -l </tmp/o-f$_s.out 2>/dev/null) line(s): $(head -c 160 /tmp/o-f$_s.out 2>/dev/null | tr '\n' ' ')"
     done
     [ -s /tmp/o-fB.err ] && note "stage B stderr: $(head -c 200 /tmp/o-fB.err)"
+    note "the notifier traced by hand, its last steps: $(grep -v '^+ *journalctl\|^+ *jq' /tmp/o-fE.err 2>/dev/null | tail -12 | tr '\n' ';' | cut -c1-900)"
     _jp=$(pgrep -u "$U" -f "journalctl.*$CID" | head -1)
     _sp=$(su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user show -p MainPID --value ergon-crash-notify.service" 2>/dev/null)
     _sj=$(pgrep -P "${_sp:-0}" -x journalctl | head -1)
