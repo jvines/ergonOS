@@ -146,6 +146,9 @@ gnome-keyring       # Secret Service for Chromium/Electron apps (Discord, VS Cod
                     # Not Firefox, which keeps logins in its own key4.db.
 libsecret
 udiskie             # automount removable media
+udisks2             # unmount and power-off of removable media; ergon drive (ERGON-94)
+exfatprogs          # mkfs.exfat for ergon drive
+cryptsetup          # LUKS for ergon drive
 gvfs
 brightnessctl
 ddcutil             # brightness on EXTERNAL monitors over DDC/CI. brightnessctl

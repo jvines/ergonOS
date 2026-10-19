@@ -176,6 +176,11 @@ jobs:
       - name: The bar shows the modes the session is in
         run: cd "$CI_DIR" && ./bin/test-status.sh
 
+      # ERGON-94: which external drives ergon drive may wipe. lsblk JSON fixtures,
+      # a stubbed sudo; no mkfs ever runs.
+      - name: Only an idle external drive can be formatted
+        run: cd "$CI_DIR" && ./bin/test-drive.sh
+
       # ERGON-84: the audio-output key. Stubs pactl and swayosd-client; asserts the
       # sink chosen, the streams moved and the device named on screen.
       - name: The audio-output key cycles sinks

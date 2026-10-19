@@ -1,0 +1,17 @@
+{"blockdevices":[
+ {"name":"nvme0n1","path":"/dev/nvme0n1","tran":"nvme","rm":false,"hotplug":false,"size":"953.9G","model":"SYSTEM SSD   ","fstype":null,"mountpoints":[null],"type":"disk","children":[
+  {"name":"nvme0n1p1","path":"/dev/nvme0n1p1","tran":null,"rm":false,"hotplug":false,"size":"1G","model":null,"fstype":"vfat","mountpoints":["/boot"],"type":"part"},
+  {"name":"nvme0n1p2","path":"/dev/nvme0n1p2","tran":null,"rm":false,"hotplug":false,"size":"952G","model":null,"fstype":"btrfs","mountpoints":["/","/home"],"type":"part"}]},
+ {"name":"sda","path":"/dev/sda","tran":"usb","rm":true,"hotplug":true,"size":"58.6G","model":"Cruzer Blade","fstype":null,"mountpoints":[null],"type":"disk","children":[
+  {"name":"sda1","path":"/dev/sda1","tran":null,"rm":true,"hotplug":true,"size":"58.6G","model":null,"fstype":"exfat","mountpoints":["/run/media/u/STICK"],"type":"part"}]},
+ {"name":"sdb","path":"/dev/sdb","tran":"usb","rm":true,"hotplug":true,"size":"1.8T","model":"Elements 25A2","fstype":null,"mountpoints":[null],"type":"disk","children":[
+  {"name":"sdb1","path":"/dev/sdb1","tran":null,"rm":true,"hotplug":true,"size":"1.8T","model":null,"fstype":"crypto_LUKS","mountpoints":[null],"type":"part","children":[
+   {"name":"vault","path":"/dev/mapper/vault","tran":null,"rm":false,"hotplug":false,"size":"1.8T","model":null,"fstype":"ext4","mountpoints":[null],"type":"crypt"}]}]},
+ {"name":"sdc","path":"/dev/sdc","tran":"usb","rm":true,"hotplug":true,"size":"14.9G","model":"Ultra Fit","fstype":null,"mountpoints":[null],"type":"disk","children":[
+  {"name":"sdc1","path":"/dev/sdc1","tran":null,"rm":true,"hotplug":true,"size":"14.9G","model":null,"fstype":"vfat","mountpoints":[null],"type":"part"}]},
+ {"name":"sdd","path":"/dev/sdd","tran":"usb","rm":true,"hotplug":true,"size":"7.5G","model":"Locked Key","fstype":null,"mountpoints":[null],"type":"disk","children":[
+  {"name":"sdd1","path":"/dev/sdd1","tran":null,"rm":true,"hotplug":true,"size":"7.5G","model":null,"fstype":"crypto_LUKS","mountpoints":[null],"type":"part"}]},
+ {"name":"sde","path":"/dev/sde","tran":"sata","rm":false,"hotplug":false,"size":"4T","model":"Internal HDD","fstype":null,"mountpoints":[null],"type":"disk"},
+ {"name":"sdf","path":"/dev/sdf","tran":"usb","rm":true,"hotplug":true,"size":"29.8G","model":"UsbSystem","fstype":null,"mountpoints":[null],"type":"disk","children":[
+  {"name":"sdf1","path":"/dev/sdf1","tran":null,"rm":true,"hotplug":true,"size":"2G","model":null,"fstype":"swap","mountpoints":["[SWAP]"],"type":"part"}]}
+]}
