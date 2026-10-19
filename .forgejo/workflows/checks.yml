@@ -99,6 +99,11 @@ jobs:
       - name: Record's --audio argument handling
         run: cd "$CI_DIR" && ./bin/test-record.sh
 
+      # ERGON-104: ergon-qr decodes a generated QR code (zbar, in a container if
+      # not installed), ergon-webcam toggles and refuses without a camera.
+      - name: QR scan and webcam toggle
+        run: cd "$CI_DIR" && ./bin/test-qr-webcam.sh
+
       # ERGON-15: the first-login welcome is the real commands' output, opens
       # once, never burns its one shot on a window that did not appear, and
       # cannot hold up the login. Stubs the terminal, glow and hyprctl.

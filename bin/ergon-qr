@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# ergon:summary=Scan a QR code from a screen region to the clipboard
+# ergon:group=capture
+# ergon:args=
+#
+# Select a region, decode the QR code in it, put the text on the clipboard.
+# A web link also gets a toast with an Open button, which goes through
+# ergon-browser (xdg-open where that is not installed yet).
+#
+# Only the qrcode symbology is enabled. With the others on, dense screen
+# content (a table, a barcode-looking font) false-positives as an EAN or Code 39
+# symbol and takes over the clipboard.
+#
+# QR codes routinely carry secrets (the otpauth:// URI behind a 2FA setup
+# code, a wifi password), so the clipboard copy is marked --sensitive, which
+# keeps it out of clipboard history, and the toast only shows the text when it
+# is a web link. Anything else is reported by length.
+#
+# Deliberately NOT written into ~/screenshots-outgoing: that directory is
+# mirrored across the fleet, and a scratch capture is not for shipping.
+set -euo pipefail
+
+notify() { notify-send "$@" 2>/dev/null || true; }
+
+for c in zbarimg grim slurp wl-copy; do
+  command -v "$c" >/dev/null || { notify -u critical "ergon-qr" "$c is not installed"; echo "ergon-qr: $c is not installed" >&2; exit 1; }
+done
+
+geom=$(slurp) || exit 0          # Esc or empty selection: not an error
+[ -n "$geom" ] || exit 0
+
+# zbarimg exits 1 when it finds nothing, which -e must not turn into a crash.
+result=$(grim -g "$geom" - | zbarimg -q --raw -Sdisable -Sqrcode.enable - 2>/dev/null || true)
+
+if [ -z "$result" ]; then
+  notify -u critical "ergon-qr" "no QR code found in the selection"
+  exit 1
+fi
+
+# wl-copy stays behind to serve the selection; with our stdout it would hold
+# a caller's pipe (a $(ergon-qr) or a launcher) open until the next copy.
+printf '%s' "$result" | wl-copy --sensitive >/dev/null 2>&1
+
+case "$result" in
+  http://*|https://*)
+    # One line only: a decoded multi-line payload is not a link.
+    if [ "$(printf '%s\n' "$result" | wc -l)" -eq 1 ]; then
+      # -A implies --wait, so backgrounded: the caller gets control back at
+      # once. "default" is the only action key a mako click can reach (see
+      # ergon-record). The URL reaches the opener as its own argv element.
+      ( action=$(notify-send -t 15000 -A "default=Open" "ergon-qr" "copied — $result") || true
+        if [ "$action" = default ]; then
+          if command -v ergon-browser >/dev/null 2>&1; then exec ergon-browser "$result"
+          else exec xdg-open "$result"; fi
+        fi ) </dev/null >/dev/null 2>&1 &
+      disown
+      exit 0
+    fi ;;
+esac
+
+notify "ergon-qr" "copied — $(printf '%s' "$result" | wc -c) characters"

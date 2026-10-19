@@ -195,6 +195,9 @@ imagemagick         # bin/ergon-wallpaper generates the background from the
 wf-recorder
 tesseract           # OCR; see bin/ergon-ocr
 tesseract-data-eng
+zbar                # QR decoding (zbarimg); see bin/ergon-qr
+ffmpeg              # webcam recording; see bin/ergon-webcam. mpv pulls the libs, but
+                    # the binary is ours to depend on
 
 time                # GNU time, for peak RSS. ergon-watch records it per run;
                     # without this the journal's peak_mb column is always zero

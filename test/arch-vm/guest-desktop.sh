@@ -3384,7 +3384,8 @@ if command -v yazi >/dev/null 2>&1; then
     [ -s "$H/.config/yazi/$_f" ] && ok "yazi $_f is installed" || note "yazi $_f is absent from $H/.config/yazi"
   done
   # Yazi parses all its config before it draws; a parse error prints and exits.
-  _yz=$(su - "$U" -s /bin/bash -c "TERM=xterm-256color XDG_RUNTIME_DIR=/run/user/1000 timeout 6 script -qec \"stty cols 120 rows 40; yazi\" /dev/null </dev/null" 2>&1 | tr -d '\000' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')
+  # A yazi that outlives script once held this for 30 min of silence (2026-10-19): both waits are bounded and killed.
+  _yz=$(timeout -k 3 20 su - "$U" -s /bin/bash -c "TERM=xterm-256color XDG_RUNTIME_DIR=/run/user/1000 timeout -k 2 6 script -qec \"stty cols 120 rows 40; yazi\" /dev/null </dev/null" 2>&1 | tr -d '\000' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')
   if grep -qE "Failed to parse|TOML parse error|panicked" <<<"$_yz"; then
     bad "yazi complained about its config: $(grep -A4 -E "Failed to parse|TOML parse error|panicked" <<<"$_yz" | head -8 | tr '\n' ' ')"
   else ok "yazi started with keymap.toml ([mgr]) and theme.toml and printed no config error"; fi
@@ -3403,6 +3404,43 @@ if [ "$_df_rc" != 0 ] && grep -qiE 'not on the list|not a removable|mounted' <<<
   ok "ergon drive format $_sysdisk is refused with a reason: $(head -c 130 <<<"$_df" | tr '\n' '|')"
 else bad "ergon drive format $_sysdisk was not cleanly refused (rc $_df_rc): $_df"; fi
 note "ERGON-94: the harness hot-adds no second disk, so a removable disk being listed, and the format itself, are unproven here"
+
+# --- ERGON-104: ergon-qr reads a real QR off the screen; ergon-webcam refuses with no camera
+echo "--- ERGON-104 ---"
+for _c in zbarimg ffmpeg qrencode grim; do
+  command -v "$_c" >/dev/null && ok "$_c is installed" || bad "$_c is missing"
+done
+rm -rf /tmp/qr104bin; mkdir -p /tmp/qr104bin
+qrencode -s 12 -m 4 -o /tmp/qr104.png 'https://ergon.example/qr104' && chmod a+r /tmp/qr104.png
+usr "setsid -f imv /tmp/qr104.png </dev/null >/dev/null 2>&1" </dev/null >/dev/null 2>&1
+_qrwin=""
+for _i in $(seq 1 20); do
+  _qrwin=$(usr "hyprctl clients -j" 2>/dev/null | jq -r '[.[] | select(.class=="imv")][0] | select(.) | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' 2>/dev/null)
+  [ -n "$_qrwin" ] && break; sleep 0.5
+done
+if [ -n "$_qrwin" ]; then
+  sleep 1   # first frame drawn
+  # slurp is interactive; the stand-in returns the imv window, as a drag over it would.
+  printf '#!/bin/sh\necho "%s"\n' "$_qrwin" > /tmp/qr104bin/slurp; chmod a+rx /tmp/qr104bin /tmp/qr104bin/slurp
+  usr "printf x | wl-copy >/dev/null 2>&1" </dev/null >/dev/null 2>&1
+  # To a file, not $(): anything ergon-qr leaves running must not hold this pipe.
+  timeout -k 3 40 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD PATH=/tmp/qr104bin:$SESSION_PATH timeout 30 ergon-qr" >/tmp/qr104.out 2>&1 </dev/null; _qr_rc=$?; _qr=$(cat /tmp/qr104.out)
+  _clip=$(usr 'timeout 3 wl-paste -n' 2>/dev/null </dev/null)
+  if [ "$_qr_rc" = 0 ] && [ "$_clip" = 'https://ergon.example/qr104' ]; then
+    ok "ergon-qr decoded the QR shown on screen ($_qrwin) to the clipboard"
+  else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"; fi
+else bad "harness: imv showed no window for the QR image"; fi
+pkill -u "$U" -x imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png /tmp/qr104.out
+if ls /sys/class/video4linux/video* >/dev/null 2>&1; then
+  note "ERGON-104: the guest has a V4L2 node, so the no-camera refusal is not exercised"
+else
+  usr "timeout -k 2 10 ergon-webcam" >/tmp/wc104.out 2>&1 </dev/null; _wc_rc=$?; _wc=$(cat /tmp/wc104.out); rm -f /tmp/wc104.out
+  if [ "$_wc_rc" = 1 ] && grep -qi camera <<<"$_wc" && ! pgrep -u "$U" -x ffmpeg >/dev/null; then
+    ok "ergon-webcam refuses with no camera: $(head -c 100 <<<"$_wc" | tr '\n' '|')"
+  else bad "ergon-webcam with no camera: rc $_wc_rc, ffmpeg $(pgrep -u "$U" -x ffmpeg || echo absent), output: $_wc"; pkill -u "$U" -x ffmpeg; fi
+fi
+note "ERGON-104: a real webcam recording and the Open button on mako are unproven here"
+
 
 rm -f /etc/sudoers.d/99-harness
 

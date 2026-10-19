@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# ergon:summary=Start or stop a webcam recording
+# ergon:group=capture
+# ergon:args=
+#
+# Toggle. Records the first V4L2 camera to ~/Videos (ERGON_WEBCAM_DIR
+# overrides) with ffmpeg; running it again stops that recording. With no camera
+# it says so and does nothing.
+#
+# The camera is the first capture node: /sys/class/video4linux/videoN/index is
+# 0 on the node that streams video and non-zero on the metadata node a UVC
+# camera adds beside it, so a plain /dev/video0 guess would sometimes pick the
+# one that cannot record. ERGON_WEBCAM_DEVICE=/dev/videoN picks one by hand.
+#
+# The recording's pid is kept in a state file and checked against
+# /proc/<pid>/cmdline, not found with pgrep: ffmpeg is also what other tools run,
+# and stopping one of those is not this command's business.
+#
+# SIGINT, not SIGTERM: ffmpeg finalises the container on INT and leaves an
+# unplayable file on TERM.
+set -euo pipefail
+
+OUT="${ERGON_WEBCAM_DIR:-$HOME/Videos}"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"
+SYS="${ERGON_V4L_SYSFS:-/sys/class/video4linux}"
+PIDF="$STATE/webcam.pid"
+FILEF="$STATE/webcam.file"
+
+notify() { notify-send "$@" 2>/dev/null || true; }
+
+pid=$(cat "$PIDF" 2>/dev/null || true)
+cmd=""
+[ -n "$pid" ] && cmd=$(tr "\0" " " 2>/dev/null </proc/"$pid"/cmdline || true)
+if [ -n "$pid" ] && [[ "$cmd" == *"ffmpeg -nostdin"* ]]; then
+  kill -INT "$pid"
+  for _ in $(seq 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+  file=$(cat "$FILEF" 2>/dev/null || true)
+  rm -f "$PIDF" "$FILEF"
+  notify "ergon-webcam" "stopped — $(basename "${file:-$OUT}")"
+  exit 0
+fi
+rm -f "$PIDF" "$FILEF"
+
+command -v ffmpeg >/dev/null || { notify -u critical "ergon-webcam" "ffmpeg is not installed"; echo "ergon-webcam: ffmpeg is not installed" >&2; exit 1; }
+
+dev="${ERGON_WEBCAM_DEVICE:-}"
+if [ -z "$dev" ]; then
+  for n in "$SYS"/video*; do
+    [ -e "$n" ] || continue
+    [ "$(cat "$n/index" 2>/dev/null || echo 0)" = 0 ] || continue
+    dev="/dev/$(basename "$n")"; break
+  done
+fi
+if [ -z "$dev" ] || [ ! -e "${ERGON_V4L_DEVROOT:-}$dev" ]; then
+  notify -u normal "ergon-webcam" "no camera found"
+  echo "ergon-webcam: no camera found (no V4L2 capture device)" >&2
+  exit 1
+fi
+
+mkdir -p "$OUT" "$STATE"
+file="$OUT/webcam-$(date +%Y%m%d-%H%M%S).mp4"
+printf '%s' "$file" > "$FILEF"
+
+notify "ergon-webcam" "recording → $(basename "$file")"
+# Backgrounded so this invocation can write the pid and return; the second
+# invocation is what ends it. -nostdin: a keybind has no terminal to read.
+# set -m: a non-interactive shell starts background jobs with SIGINT ignored,
+# and an ignored SIGINT is exactly what the stop half relies on delivering.
+set -m
+ffmpeg -nostdin -loglevel error -f v4l2 -i "$dev" \
+  -c:v libx264 -preset veryfast -pix_fmt yuv420p -y "$file" \
+  </dev/null >/dev/null 2>&1 &
+printf '%s' "$!" > "$PIDF"
+disown
