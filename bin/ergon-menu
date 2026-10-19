@@ -26,7 +26,7 @@
 # message the command itself prints, then type the real one into the terminal
 # that is now sitting open, focused, and yours.
 #
-# System (Timezone excepted: it asks questions) and Style are the two exceptions: `ergon-session` and the
+# System (Timezone and Language excepted: it asks questions) and Style are the two exceptions: `ergon-session` and the
 # `ergon-theme`/`ergon-wallpaper` setters are quick, self-contained and
 # already either fuzzel-driven or silent-on-success, so they run detached,
 # the same way SUPER+T and SUPER+SHIFT+B already do.
@@ -94,10 +94,11 @@ show_topic() {  # $1: an `ergon explain` topic name
 
 system_menu() {
   local sel
-  sel=$(printf 'Session\nTimezone\n' | pick system) || exit 0
+  sel=$(printf 'Session\nTimezone\nLanguage\n' | pick system) || exit 0
   case "$sel" in
     Session)  exec "$BINDIR/ergon-session" ;;
     Timezone) run_in_terminal timezone ;;   # asks questions, so a real terminal
+    Language) run_in_terminal language ;;   # asks questions too
   esac
 }
 
@@ -186,7 +187,7 @@ help_menu() {
 # `ergon --list` (not --groups/--group, which this function itself calls --
 # see that test for why comparing it to itself would be circular).
 dump() {
-  printf 'System\n  session menu (ergon session)\n  Timezone (ergon timezone)\n'
+  printf 'System\n  session menu (ergon session)\n  Timezone (ergon timezone)\n  Language (ergon language)\n'
   printf 'Style\n  Palette\n'
   "$BINDIR/ergon-theme" --list | unmarked | sed 's/^/    /'
   printf '  Background\n'
