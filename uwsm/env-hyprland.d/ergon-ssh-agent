@@ -1,0 +1,12 @@
+# ERGON-106. git over SSH asked for the key passphrase on every push: nothing
+# ran an agent and nothing exported SSH_AUTH_SOCK. openssh ships a user socket
+# unit, ssh-agent.socket, listening at $XDG_RUNTIME_DIR/ssh-agent.socket; the
+# unit's own comment says the variable is the one thing it leaves to us.
+# install.sh enables the socket (systemd-activated: the agent starts on first
+# use). uwsm exports this to the compositor and the systemd user manager, so
+# terminals, apps and services all see it.
+#
+# openssh's agent, not gcr-ssh-agent: it adds no package, nothing but the one
+# agent answers on the socket, and gnome-keyring here is secrets-only. Two
+# agents would fight over SSH_AUTH_SOCK.
+export SSH_AUTH_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/ssh-agent.socket"
