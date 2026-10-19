@@ -3537,6 +3537,81 @@ usr "pactl unload-module module-null-sink" >/dev/null 2>&1 </dev/null
 rm -rf /tmp/d100bin /tmp/d100-keys.* /tmp/d100-args /tmp/d100.out /tmp/d100.pid
 note "ERGON-100: speech recognition accuracy on real speech and a real microphone are unproven here; the typed phrase comes from a stub whisper-cli"
 
+# --- ERGON-99: the release channel, against the real pacman and live mirrors --
+# LAST in the session part and it changes pacman state: rolling really upgrades
+# the guest from live mirrors (hyprland and friends may be replaced under the
+# running session), so nothing after this may depend on the pin or on packages.
+# It ends on the tested channel, as it began, with host.env as it found it.
+echo "--- ERGON-99 ---"
+_e99() {  # _e99 <seconds> <command> -> the user's shell, bounded, output to /tmp/e99.out
+  timeout -k 10 "$1" su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus HYPRLAND_INSTANCE_SIGNATURE=$SIG \
+    WAYLAND_DISPLAY=$WLD XDG_CURRENT_DESKTOP=Hyprland PATH='$SESSION_PATH' ERGON_SKIP_AUR=1 \
+    timeout -k 5 $(( $1 - 20 )) $2" >/tmp/e99.out 2>&1 </dev/null
+}
+_e99_hostenv="$G/hosts/$(hostname -s)/host.env"
+_e99_bak=/tmp/e99-host.env.bak; rm -f "$_e99_bak"
+[ -f "$_e99_hostenv" ] && cp -p "$_e99_hostenv" "$_e99_bak"
+_e99_today=$(date -u +%F)
+_e99_tested=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$G/packages/tested-date" | head -1 | tr -d '[:space:]')
+_e99_pm() { pacman -Q | sha256sum | cut -c1-16; }
+_e99_list() { cat /etc/pacman.d/ergon-mirrorlist 2>/dev/null; }
+# The gate on unread Arch news is real; read it the way a person would, bounded.
+_e99 120 "informant read --all" || true
+
+# (1) nothing set: tested, and the day
+_e99 60 "ergon channel"; _o=$(cat /tmp/e99.out)
+if grep -q '^tested' <<<"$_o" && grep -qF "$_e99_tested" <<<"$_o"; then ok "ergon channel with nothing set: tested, $_e99_tested"
+else bad "ergon channel with nothing set (tested-date $_e99_tested): $_o"; fi
+
+# (2) rolling: the real upgrade from live mirrors
+_e99 60 "ergon channel rolling"; _o=$(cat /tmp/e99.out)
+grep -q '^rolling' <<<"$_o" && grep -qx 'CHANNEL=rolling' "$_e99_hostenv" \
+  && ok "ergon channel rolling recorded CHANNEL=rolling in host.env" || bad "ergon channel rolling: $_o"
+_e99 2400 "ergon update --yes"; _rc=$?
+_e99_l=$(_e99_list)
+if [ "$_rc" = 0 ] && grep -q '^Include = /etc/pacman.d/mirrorlist' <<<"$_e99_l" && [ "$(cat /var/lib/ergon/live-synced 2>/dev/null)" = "$_e99_today" ]; then
+  ok "rolling: ergon update --yes upgraded from live mirrors; live-synced is $_e99_today"
+else bad "rolling update rc $_rc, live-synced '$(cat /var/lib/ergon/live-synced 2>/dev/null)', list: $(tr '\n' '|' <<<"$_e99_l")"; tail -25 /tmp/e99.out | sed 's/^/     /'; fi
+
+# (3) back to tested: HOLD. No transaction, same packages, list still live.
+_e99 60 "ergon channel tested"; _o=$(cat /tmp/e99.out)
+grep -q 'holds it there' <<<"$_o" && ok "ergon channel tested after rolling explains the hold" || bad "ergon channel tested after rolling: $_o"
+_h_pm=$(_e99_pm); _h_log=$(stat -c %s /var/log/pacman.log)
+_e99 600 "ergon update --yes"; _rc=$?; _o=$(cat /tmp/e99.out)
+if [ "$_rc" = 0 ] && [ "$(_e99_pm)" = "$_h_pm" ] && [ "$(stat -c %s /var/log/pacman.log)" = "$_h_log" ] \
+   && grep -q '^Include = /etc/pacman.d/mirrorlist' <<<"$(_e99_list)" && grep -q 'Held where it is' <<<"$_o"; then
+  ok "tested after rolling holds: no sync or transaction (pacman -Q and pacman.log unchanged), list still live, the hold is explained"
+else bad "hold: rc $_rc, -Q $_h_pm -> $(_e99_pm), log $_h_log -> $(stat -c %s /var/log/pacman.log), list $(tr '\n' '|' <<<"$(_e99_list)")"; tail -15 /tmp/e99.out | sed 's/^/     /'; fi
+
+# (4) a live sync older than the tested day -- the record and the databases'
+# mtimes (what ergon_live_day also reads) back-dated -- no longer holds it.
+printf '2026-10-01\n' > /var/lib/ergon/live-synced
+touch -d 2026-10-01 /var/lib/pacman/sync/*.db
+_e99 2400 "ergon update --yes"; _rc=$?
+if [ "$_rc" = 0 ] && grep -q "/${_e99_tested//-//}/" <<<"$(_e99_list)" && [ ! -e /var/lib/ergon/live-synced ]; then
+  ok "a tested day after the live sync moves the list to $_e99_tested and deletes the live-synced record"
+else bad "release from hold: rc $_rc, list $(tr '\n' '|' <<<"$(_e99_list)"), live-synced '$(cat /var/lib/ergon/live-synced 2>/dev/null)'"; tail -25 /tmp/e99.out | sed 's/^/     /'; fi
+_e99 120 "ergon-doctor --json"
+_ch=$(grep -o '{"name":"channel"[^}]*}' /tmp/e99.out); _ad=$(grep -o '{"name":"arch-date"[^}]*}' /tmp/e99.out)
+case "$_ch" in *'"state":"ok"'*) ok "ergon-doctor: channel ok" ;; *) bad "ergon-doctor channel row: $_ch" ;; esac
+case "$_ad" in
+  *'"state":"ok"'*"Arch $_e99_tested"*) ok "ergon-doctor: arch-date ok at $_e99_tested" ;;
+  # The live upgrade of (2) is newer than the tested day and nothing downgrades:
+  # this is the designed warning, and it names the tested day.
+  *"Arch $_e99_tested, the tested day, but"*"newer than that day's"*) ok "ergon-doctor: arch-date at $_e99_tested, warning only that the live-upgraded packages are newer (nothing downgrades): $_ad" ;;
+  *) bad "ergon-doctor arch-date row: $_ad" ;;
+esac
+
+# (5) the menu offers it
+usr "ergon-menu --dump" >/tmp/e99.out 2>&1 </dev/null
+grep -q 'Channel' /tmp/e99.out && ok "ergon-menu --dump lists Channel" || bad "ergon-menu --dump has no Channel entry"
+
+# restore: the tested channel, host.env as found
+if [ -f "$_e99_bak" ]; then cp -p "$_e99_bak" "$_e99_hostenv"; else rm -f "$_e99_hostenv"; rmdir "$(dirname "$_e99_hostenv")" 2>/dev/null; fi
+rm -f "$_e99_bak" /tmp/e99.out
+note "ERGON-99: the guest ends mixed (live upgrade of step 2, then the tested day's list with nothing downgraded); that is the designed state, and nothing runs after it that depends on it"
+
 
 rm -f /etc/sudoers.d/99-harness
 

@@ -315,14 +315,38 @@ if [ -f "${ERGON_SYSROOT:-}/etc/pacman.conf" ] && [ -f "$ERGON/lib/archive-pin.s
   # shellcheck source=../lib/archive-pin.sh
   . "$ERGON/lib/archive-pin.sh"
   days() { echo $(( ($(date -u -d "$2" +%s) - $(date -u -d "$1" +%s)) / 86400 )); }
-  tested=$(ergon_tested_date) || tested=""
+  # ERGON-99: which channel host.env chose, and whether pacman is where that
+  # channel puts it. ergon_pin_decide is the call ergon update makes, so this
+  # cannot disagree with what the next update would do.
+  ergon_pin_decide
+  tested=$ERGON_TESTED
   held=$(ergon_pin_held) || held=""
-  if [ -z "$tested" ]; then
+  if [ "$ERGON_CHANNEL_BAD" = 1 ]; then
+    rec warn "channel" "CHANNEL in $HOSTENV is neither tested nor rolling, so it is tested — ergon channel tested|rolling"
+  elif [ "$ERGON_CHANNEL" = rolling ]; then
+    rec ok "channel" "rolling: live Arch mirrors, updates the day they land, none of them tested by the VM suite"
+  else
+    rec ok "channel" "tested: Arch held at the day the VM suite last passed${tested:+, $tested}"
+  fi
+  if [ "$ERGON_CHANNEL" = rolling ]; then
+    if [ -z "$held" ]; then
+      rec warn "arch-date" "channel rolling, but pacman.conf does not read $ERGON_PIN_LIST — ergon update points it there, at live mirrors"
+    elif [ "$held" != live ]; then
+      rec warn "arch-date" "channel rolling, but pacman is held at Arch $held — ergon update moves it to live mirrors"
+    elif ergon_pin_owed; then
+      rec warn "arch-date" "channel rolling, but no sync against live mirrors has gone through since the list moved, so the databases may be a tested day's — ergon update forces one"
+    else
+      live=$(ergon_live_day) || live=""
+      rec ok "arch-date" "pacman follows live mirrors (channel rolling)${live:+, last synced $live}"
+    fi
+  elif [ -z "$tested" ]; then
     rec warn "arch-date" "no usable packages/tested-date: ergon update follows live mirrors, which no VM run has tested"
+  elif [ "$ERGON_PIN_WHY" = ahead ]; then
+    rec warn "arch-date" "channel tested, but this machine took live Arch on $ERGON_LIVE, and the tested $tested is not after it: ergon update holds it there, upgrading nothing, until a tested day passes it — nothing is downgraded"
   elif [ -z "$held" ]; then
     rec warn "arch-date" "pacman.conf does not read $ERGON_PIN_LIST, so pacman follows live mirrors; ergon update holds it at $tested"
   elif [ "$held" = live ]; then
-    rec warn "arch-date" "pacman follows live mirrors (ergon update --latest); a plain ergon update returns it to $tested"
+    rec warn "arch-date" "pacman follows live mirrors (ergon update --latest), and the tested $tested is after the day it last synced: a plain ergon update returns it there"
   elif [ "$held" != "$tested" ]; then
     gap=$(days "$held" "$tested")
     if [ "$gap" -gt 0 ]; then gap="$gap day(s) behind"; else gap="$(( -gap )) day(s) ahead of"; fi

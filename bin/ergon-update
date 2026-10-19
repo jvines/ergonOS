@@ -43,10 +43,12 @@
 # The upgrade is to the Arch the VM suite last passed, not to today's
 # (ERGON-35, lib/archive-pin.sh): packages/tested-date, the whole system. The
 # cost is up to about a week of security fixes, and every run says so. --latest
-# takes live mirrors instead, untested, and pacman stays on them until the next
-# plain `ergon update`, or provisioning that installs a package: holding the
-# date for bundles after an upgrade past it would mean installing that day's
-# builds against newer libraries.
+# takes live mirrors instead, untested, and pacman stays on them -- a plain
+# `ergon update` holds the machine there, upgrading nothing, until a tested day
+# after that one arrives: going back sooner would install that day's builds
+# against newer libraries, or downgrade. On the rolling channel (`ergon
+# channel`, ERGON-99) every run is --latest. The rule, and why it waits, is in
+# lib/archive-pin.sh.
 #
 # The transaction runs under `systemd-run --scope` while a
 # sleep:shutdown:handle-lid-switch inhibitor is held. There are three ways a
@@ -155,10 +157,23 @@ say "arch date"
 # same day, and only past the gates: a run they stop writes nothing. A missing
 # or unreadable tested date is a warning and live mirrors, never a refusal --
 # an update that cannot run at all is the worse way to hold a machine back.
-PIN=""; PIN_OWED=0
+# Which day, or live mirrors, or a hold, is lib/archive-pin.sh's
+# ergon_pin_decide, the same call provisioning makes (ERGON-99).
+ergon_pin_decide
+PIN=$ERGON_PIN; PIN_OWED=0; HOLD=0
+[ "$ERGON_CHANNEL_BAD" = 0 ] || warn "CHANNEL in hosts/$(hostname -s)/host.env is neither tested nor rolling — treated as tested"
 if [ "$LATEST" = 1 ]; then
-  warn "--latest: live mirrors, which no VM run has tested; pacman stays on them until the next plain 'ergon update', or provisioning that installs a package"
-elif PIN=$(ergon_tested_date); then
+  PIN=""
+  warn "--latest: live mirrors, which no VM run has tested; pacman stays on them until a tested day after today, or 'ergon update --latest' again"
+elif [ "$ERGON_PIN_WHY" = rolling ]; then
+  ok "channel rolling: live Arch mirrors, today's packages, which no VM run has tested ('ergon channel tested' returns to the tested day)"
+elif [ "$ERGON_PIN_WHY" = ahead ]; then
+  HOLD=1
+  warn "this machine took live Arch on $ERGON_LIVE, and the tested day, $ERGON_TESTED, is not after it"
+  printf '   %s\n' "Held where it is, nothing synced or upgraded, until a tested day after $ERGON_LIVE arrives ('ergon sync')." \
+    "Going back now would mix that day's builds into newer ones, or downgrade (lib/archive-pin.sh)." \
+    "'ergon update --latest' upgrades from live mirrors now, untested; 'ergon rollback' returns to a snapshot."
+elif [ "$ERGON_PIN_WHY" = tested ]; then
   ok "Arch as of $PIN, the day the VM suite last passed, $(( ($(date -u +%s) - $(date -u -d "$PIN" +%s)) / 86400 )) day(s) ago"
   printf '   %s\n' "Security fixes released since then wait for the next passing run, normally a week" \
     "at most, and for 'ergon sync' to bring its day here. 'ergon update --latest' takes" \
@@ -166,7 +181,9 @@ elif PIN=$(ergon_tested_date); then
 else
   warn "packages/tested-date is missing or unreadable — this update follows live mirrors, which no VM run has tested"
 fi
-if [ "$CHECK_ONLY" = 1 ]; then
+if [ "$HOLD" = 1 ]; then
+  :
+elif [ "$CHECK_ONLY" = 1 ]; then
   held=$(ergon_pin_held) || held="live mirrors"
   [ "$held" = "${PIN:-live}" ] \
     || printf '   pacman is at %s: a real run moves it first, and pending below is against %s\n' "$held" "$held"
@@ -189,7 +206,9 @@ say "pending"
 # a day something happened to be out of date -- so the machine that needed a
 # reboot after yesterday's kernel was the one that never got told.
 PENDING=1
-if command -v checkupdates >/dev/null; then
+if [ "$HOLD" = 1 ]; then
+  PENDING=0; ok "held at live Arch of $ERGON_LIVE: nothing to apply until a tested day passes it"
+elif command -v checkupdates >/dev/null; then
   pending=$(checkupdates 2>/dev/null || true)
   if [ -z "$pending" ]; then
     PENDING=0; ok "already up to date"
@@ -413,7 +432,9 @@ upgrade() {
   local sync=-Sy
   [ "$PIN_OWED" = 0 ] || sync=-Syy
   local txn="pacman $sync $confirm || exit 10"
-  [ "$PIN_OWED" = 0 ] || txn="$txn; $(ergon_pin_synced_cmd)"
+  # Every live sync is recorded as well (ERGON-99): its day is what holds a
+  # machine that goes back to the tested channel.
+  [ "$PIN_OWED" = 0 ] && [ -n "$PIN" ] || txn="$txn; $(ergon_pin_synced_cmd)"
   txn="$txn; pacman -S --needed $confirm archlinux-keyring || true"
   txn="$txn; pacman -Su $confirm"
   sudo "${ERGON_TXN[@]}" bash -c "$txn" || rc=$?
