@@ -12,7 +12,7 @@
 #
 #   ergon-status             one line per active mode, for a terminal
 #   ergon-status --waybar    the same as waybar JSON: empty text hides the module
-#   ergon-status --click     stop the loudest one: a recording, do-not-disturb, stay-awake
+#   ergon-status --click     stop the loudest one: a recording, dictation, do-not-disturb, stay-awake
 #   ergon-status --refresh   recount updates and news now (normally hourly)
 #   ergon-status --poke      tell the bar to ask again, now
 #
@@ -45,6 +45,9 @@ poke() { pkill -RTMIN+"$SIGNAL" -x waybar 2>/dev/null || true; }
 [ "${1:-}" = --poke ] && { poke; exit 0; }
 
 recording() { pgrep -x wf-recorder >/dev/null 2>&1; }
+# Dictation (ERGON-100) asks its own lock, so a crashed session reads as idle. Absent
+# command, or idle, is "no".
+dictating() { command -v ergon-dictate >/dev/null 2>&1 && ergon-dictate status >/dev/null 2>&1; }
 dnd()       { grep -qx do-not-disturb <<<"$(makoctl mode 2>/dev/null)"; }
 # `hyprctl hyprsunset temperature` answers with the current temperature; an
 # identity transform (SUPER+CTRL+N) or no hyprsunset at all reads as neutral.
@@ -85,6 +88,7 @@ case "${1:-}" in
     # A recording is stopped by ergon-record, which pokes once wf-recorder has
     # actually exited; it is still finishing the file when this would.
     if recording; then exec ergon-record
+    elif dictating; then ergon-dictate stop >/dev/null 2>&1; exit 0
     elif dnd; then makoctl mode -r do-not-disturb >/dev/null; poke
     elif awake; then ergon-awake off  # pokes the bar itself
     fi
@@ -94,6 +98,7 @@ esac
 
 text=() tip=() class=()
 if recording; then text+=("󰑋"); tip+=("recording -- click to stop"); class+=(recording); fi
+if dictating; then text+=("󰍬"); tip+=("dictating -- SUPER+CTRL+X to finish"); class+=(dictating); fi
 if dnd; then text+=("󰂛"); tip+=("do not disturb -- SUPER+CTRL+D to end it"); class+=(dnd); fi
 if t=$(tint); then text+=("󰖔"); tip+=("night light at ${t}K"); class+=(tint); fi
 if full; then text+=("󰅶"); tip+=("staying fully awake, lid included: no suspend -- SUPER+CTRL+SHIFT+I to end it"); class+=(awake-full)

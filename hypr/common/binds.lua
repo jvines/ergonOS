@@ -281,6 +281,9 @@ bind("SUPER + SHIFT + V", "Clipboard history",
   "cliphist list | fuzzel --dmenu --prompt 'clip  ' | cliphist decode | wl-copy")
 bind("SUPER + SHIFT + X", "Clear clipboard history", "cliphist wipe")
 bind("SUPER + CTRL + E",   "Emoji picker (copy and type)", "ergon-emoji")
+-- Dictation (ERGON-100): a toggle, not hold-to-talk. bind() takes locked, repeating,
+-- mouse and description only; there is no key-release option to end a recording on.
+bind("SUPER + CTRL + X",   "Dictate (toggle, types the text)", "ergon-dictate toggle")
 
 -- ---------------------------------------------------------------------------
 -- Capture. Screenshots live in screenshot.lua — they have their own sync

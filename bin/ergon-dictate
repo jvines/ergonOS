@@ -1,0 +1,364 @@
+#!/usr/bin/env bash
+# ergon:summary=Dictate into the focused window with whisper.cpp, offline
+# ergon:group=input
+# ergon:args=[toggle | start | stop | status | pick | model list|get|use|rm|verify [NAME] | lang [auto|en|es|...]]
+#
+# SUPER+CTRL+X toggles. Speak, press it again, and the text is typed into the
+# window that has focus (wtype). If typing fails, or wtype is not installed,
+# the text goes on the clipboard and a toast says so. Nothing leaves the
+# machine and nothing stays resident: whisper-cli (Arch `whisper-cpp`) runs only
+# between the second press and the typed text, and the recording is deleted
+# as soon as it has been read.
+#
+#   toggle | start | stop    the recorder. start refuses to guess a model: with
+#                            none installed it says so and opens the picker
+#   status                   idle, recording or transcribing (exit 0 unless idle)
+#   pick                     fuzzel: choose a model to download, use or remove,
+#                            or the language
+#   model list               every model, its size, English-only or multilingual,
+#                            and whether it is installed or active
+#   model get NAME           download it (resumable, sha256-checked), and make
+#                            it the active one if there is none yet
+#   model use NAME           make an installed model the active one
+#   model rm NAME            delete it
+#   model verify [NAME]      re-check an installed model against its pinned hash
+#   lang [CODE]              show or set the language: auto (the default) or a
+#                            code such as en, es, de. An English-only model
+#                            always uses en.
+#
+# Models are chosen and downloaded by the person, never picked for them. They
+# come from huggingface.co/ggerganov/whisper.cpp, the repository whisper.cpp
+# itself documents, into ~/.local/share/ergon/whisper/. The sha256 of each is
+# pinned below, taken from the repository's own listing (the LFS oid), so a
+# truncated, swapped or corrupted download is refused and removed. The download
+# goes to NAME.part and is renamed only once it verifies, so a model file
+# that exists is a whole one.
+#
+# A recording is capped (ERGON_DICTATE_MAX seconds, default 120) so a forgotten
+# toggle does not fill the runtime tmpfs; at the cap it stops and transcribes
+# what it has. Threads: half the cores, 2 to 8 (ERGON_DICTATE_THREADS).
+#
+# How the pieces stay out of each other's way. The recorder is a detached
+# session that owns an flock for its whole life (record, then transcribe), so
+# "is it busy" is asked of the lock and a crashed session cannot leave a stale
+# flag. Anything it launches that may linger (wl-copy serves the selection until
+# it is replaced) gets /dev/null for its output and has the lock's descriptor
+# closed, or it would hold both the caller's pipe and the lock after we exit.
+#
+# Testing hooks (used by bin/test-dictate.sh, not settings): ERGON_WHISPER_DIR,
+# ERGON_WHISPER_BASE (URL prefix, file:// works), ERGON_WHISPER_CATALOG (a file
+# in the table's format, replacing it).
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+DIR="${ERGON_WHISPER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ergon/whisper}"
+BASE="${ERGON_WHISPER_BASE:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main}"
+RT="${XDG_RUNTIME_DIR:-/tmp}/ergon-dictate-$(id -u)"
+MAXSEC="${ERGON_DICTATE_MAX:-120}"
+
+# name  bytes  sha256 (the LFS oid of ggml-NAME.bin in the repository, read from
+# its tree API 2026-10-19). English-only models carry .en in the name.
+catalog() {
+  if [ -n "${ERGON_WHISPER_CATALOG:-}" ]; then cat "$ERGON_WHISPER_CATALOG"; return; fi
+  cat <<'EOF'
+tiny.en 77704715 921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f
+tiny 77691713 be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21
+base.en 147964211 a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002
+base 147951465 60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+small.en 487614201 c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d
+small 487601967 1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b
+medium.en 1533774781 cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356
+medium 1533763059 6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208
+large-v3-turbo 1624555275 1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69
+EOF
+}
+
+notify() { notify-send -u low -h string:x-canonical-private-synchronous:ergon-dictate "$@" 2>/dev/null || true; }
+warn()   { notify-send -u normal -h string:x-canonical-private-synchronous:ergon-dictate "$@" 2>/dev/null || true; }
+poke()   { ergon-status --poke >/dev/null 2>&1 || true; }
+die()    { printf 'ergon-dictate: %s\n' "$*" >&2; exit 2; }
+
+entry()   { catalog | awk -v n="$1" '$1 == n { print; found = 1 } END { exit !found }'; }
+valid()   { entry "$1" >/dev/null || die "no model '$1' (see: ergon dictate model list)"; }
+file_of() { printf '%s/ggml-%s.bin' "$DIR" "$1"; }
+installed() { [ -s "$(file_of "$1")" ]; }
+active()  { [ -s "$DIR/active" ] && cat "$DIR/active" || true; }
+human()   { awk -v b="$1" 'BEGIN { if (b >= 1e9) printf "%.1f GB", b / 1e9; else printf "%d MB", b / 1e6 }'; }
+kind()    { case "$1" in *.en) echo "English only" ;; *) echo "multilingual" ;; esac; }
+language() { local l=auto; [ -s "$DIR/language" ] && l=$(cat "$DIR/language"); echo "$l"; }
+
+# ---- models ----------------------------------------------------------------
+
+model_list() {
+  local n bytes sha mark act
+  act=$(active)
+  printf '%-16s %-8s %-13s %s\n' model size language state
+  while read -r n bytes sha; do
+    mark=""
+    installed "$n" && mark=installed
+    [ "$n" = "$act" ] && mark="installed, active"
+    printf '%-16s %-8s %-13s %s\n' "$n" "$(human "$bytes")" "$(kind "$n")" "$mark"
+  done < <(catalog)
+}
+
+sha_ok() { # file expected
+  local got
+  got=$(sha256sum "$1" | awk '{print $1}')
+  [ "$got" = "$2" ]
+}
+
+model_get() {
+  local n=$1 bytes sha part dst
+  valid "$n"
+  read -r _ bytes sha < <(entry "$n")
+  dst=$(file_of "$n"); part="$dst.part"
+  mkdir -p "$DIR"
+  if installed "$n"; then
+    echo "$n is already installed"; return 0
+  fi
+  command -v curl >/dev/null || die "curl is not installed"
+  # One download of a model at a time: two curls resuming one .part corrupt it.
+  exec 8>"$DIR/.get-$n.lock"
+  flock -n 8 || die "$n is already being downloaded"
+  # -C - resumes from the .part; a server that cannot resume answers 416 for a
+  # complete part, which the hash check below then accepts or rejects.
+  local bar=(--progress-bar); [ -z "${ERGON_DICTATE_QUIET:-}" ] || bar=(-sS)
+  curl -fL --retry 3 -C - "${bar[@]}" \
+    -o "$part" "$BASE/ggml-$n.bin" || {
+      # A 416 on a part that is already whole is not a failure; anything else is.
+      [ -s "$part" ] && [ "$(stat -c %s "$part")" = "$bytes" ] || die "download of $n failed (kept $part to resume)"
+    }
+  if ! sha_ok "$part" "$sha"; then
+    rm -f "$part"
+    die "$n failed its sha256 check against the pinned hash; removed, nothing installed"
+  fi
+  mv -f "$part" "$dst"
+  echo "$n installed"
+  [ -n "$(active)" ] || { printf '%s\n' "$n" > "$DIR/active"; echo "$n is now the active model"; }
+}
+
+model_use() {
+  valid "$1"
+  installed "$1" || die "$1 is not installed (ergon dictate model get $1)"
+  mkdir -p "$DIR"
+  printf '%s\n' "$1" > "$DIR/active.new" && mv -f "$DIR/active.new" "$DIR/active"
+  echo "$1 is the active model"
+}
+
+model_rm() {
+  valid "$1"
+  installed "$1" || [ -e "$(file_of "$1").part" ] || die "$1 is not installed"
+  rm -f "$(file_of "$1")" "$(file_of "$1").part"
+  [ "$(active)" = "$1" ] && rm -f "$DIR/active"
+  echo "$1 removed"
+}
+
+model_verify() {
+  local n bytes sha rc=0 any=0
+  while read -r n bytes sha; do
+    [ -z "${1:-}" ] || [ "$1" = "$n" ] || continue
+    installed "$n" || continue
+    any=1
+    if sha_ok "$(file_of "$n")" "$sha"; then echo "ok    $n"; else echo "BAD   $n (does not match its pinned sha256; ergon dictate model rm $n)"; rc=1; fi
+  done < <(catalog)
+  [ -z "${1:-}" ] || valid "$1"
+  [ "$any" = 1 ] || echo "no installed model to check"
+  return "$rc"
+}
+
+set_lang() {
+  local l=${1,,}
+  [[ "$l" =~ ^(auto|[a-z]{2,3})$ ]] || die "language is auto or a code such as en, es, de"
+  mkdir -p "$DIR"
+  printf '%s\n' "$l" > "$DIR/language"
+  echo "language: $l"
+}
+
+# ---- picker ----------------------------------------------------------------
+
+pick() {
+  command -v fuzzel >/dev/null 2>&1 || die "fuzzel is not installed (use: ergon dictate model list)"
+  local act lines n bytes sha sel name mark choice
+  act=$(active)
+  lines=$(
+    while read -r n bytes sha; do
+      mark="  "; installed "$n" && mark="* "; [ "$n" = "$act" ] && mark=">>"
+      printf '%s %-16s %8s  %s\n' "$mark" "$n" "$(human "$bytes")" "$(kind "$n")"
+    done < <(catalog)
+    printf '   language: %s\n' "$(language)"
+  )
+  sel=$(printf '%s\n' "$lines" | fuzzel --dmenu --width 60 --prompt 'dictation  ') || return 0
+  case "$sel" in
+    *"language: "*)
+      choice=$(printf '%s\n' auto en es fr de it pt nl ca gl ru zh ja | fuzzel --dmenu --prompt 'language  ') || return 0
+      set_lang "$choice" >/dev/null && notify "ergon-dictate" "language: $choice" ;;
+    *)
+      name=$(awk '{ print ($1 == ">>" || $1 == "*") ? $2 : $1 }' <<<"$sel")
+      entry "$name" >/dev/null || return 0
+      if installed "$name"; then
+        choice=$(printf 'use %s\nremove %s\n' "$name" "$name" | fuzzel --dmenu --prompt "$name  ") || return 0
+        case "$choice" in
+          use*)    model_use "$name" >/dev/null && notify "ergon-dictate" "using $name" ;;
+          remove*) model_rm "$name" >/dev/null && notify "ergon-dictate" "removed $name" ;;
+        esac
+      else
+        notify "ergon-dictate" "downloading $name ($(human "$(entry "$name" | awk '{print $2}')"))"
+        if ERGON_DICTATE_QUIET=1 model_get "$name" >/dev/null 2>"$RT/get.err"; then
+          notify "ergon-dictate" "$name is ready"
+        else
+          warn -u critical "ergon-dictate" "$name: $(tail -n1 "$RT/get.err" 2>/dev/null || echo failed)"
+        fi
+      fi ;;
+  esac
+}
+
+# Detached: the picker is a window, the caller (a keybind, a toast) must not wait.
+pick_detached() { setsid -f "$SELF" pick </dev/null >/dev/null 2>&1; }
+
+# ---- recorder --------------------------------------------------------------
+
+# idle | recording | transcribing. Busy is the lock being held, so a crashed
+# session reads as idle whatever its phase file says.
+phase() {
+  mkdir -p "$RT"
+  if ( flock -n 9 ) 9>"$RT/lock" 2>/dev/null; then echo idle
+  else cat "$RT/phase" 2>/dev/null || echo recording; fi
+}
+
+# Is this pid really a pw-record of ours? The pid file outlives processes.
+is_recorder() {
+  local pid=$1 cmd
+  [ -n "$pid" ] || return 1
+  cmd=$(tr '\0' ' ' </proc/"$pid"/cmdline 2>/dev/null) || return 1
+  [[ "$cmd" == *pw-record* ]]
+}
+
+threads() {
+  local t=${ERGON_DICTATE_THREADS:-}
+  if [ -z "$t" ]; then t=$(( $(nproc 2>/dev/null || echo 4) / 2 )); [ "$t" -ge 2 ] || t=2; [ "$t" -le 8 ] || t=8; fi
+  echo "$t"
+}
+
+# whisper-cli -nt prints bare text lines, one per segment, with non-speech as
+# [BLANK_AUDIO], [MUSIC] and the like (and (noises) in brackets). Join, drop
+# those, trim.
+clean() {
+  tr '\n' ' ' | sed -E 's/\[[A-Za-z_ ]+\]//g; s/\((music|noise|noises|silence|applause|laughter)\)//Ig; s/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+deliver() { # text
+  local text=$1
+  if command -v wtype >/dev/null 2>&1 && wtype -- "$text" >/dev/null 2>&1; then return 0; fi
+  if command -v wl-copy >/dev/null 2>&1; then
+    # Detached from our output and from the lock (fd 9): wl-copy stays behind
+    # to serve the selection.
+    printf '%s' "$text" | wl-copy >/dev/null 2>&1 9>&-
+    warn "ergon-dictate" "could not type it, so it is on the clipboard"
+  else
+    warn -u critical "ergon-dictate" "could not type it and wl-copy is missing: $text"
+  fi
+}
+
+session() {
+  mkdir -p "$RT"; chmod 700 "$RT"
+  exec 9>"$RT/lock"
+  flock -n 9 || exit 0
+  local model lang t out rp i
+  wav="$RT/rec.wav"   # global: the EXIT trap runs after this function has returned
+  trap 'rm -f "$wav" "$RT/pid" "$RT/phase"; poke' EXIT
+  model=$(active)
+  set -m   # a background job otherwise starts with SIGINT ignored, and INT is how pw-record finishes the file
+  rm -f "$wav"
+  echo recording > "$RT/phase"
+  pw-record --rate 16000 --channels 1 --format s16 "$wav" </dev/null >/dev/null 2>&1 &
+  rp=$!
+  echo "$rp" > "$RT/pid"
+  poke
+  notify "ergon-dictate" "listening — SUPER+CTRL+X to finish"
+  for ((i = 0; i < MAXSEC * 2; i++)); do
+    kill -0 "$rp" 2>/dev/null || break
+    sleep 0.5
+  done
+  if kill -0 "$rp" 2>/dev/null; then
+    warn "ergon-dictate" "reached the ${MAXSEC} s limit, transcribing what there is"
+    kill -INT "$rp" 2>/dev/null || true
+  fi
+  wait "$rp" 2>/dev/null || true
+  rm -f "$RT/pid"
+  echo transcribing > "$RT/phase"; poke
+
+  # 16 kHz s16 mono is 32000 bytes a second: under ~0.3 s is a mis-press.
+  if [ ! -s "$wav" ] || [ "$(stat -c %s "$wav")" -lt 10000 ]; then
+    notify "ergon-dictate" "nothing recorded"; exit 0
+  fi
+  lang=$(language)
+  case "$model" in *.en) lang=en ;; esac
+  notify "ergon-dictate" "transcribing…"
+  t=$(threads)
+  if ! out=$(whisper-cli -m "$(file_of "$model")" -f "$wav" -nt -np -t "$t" -l "$lang" 2>"$RT/whisper.err" </dev/null); then
+    warn -u critical "ergon-dictate" "whisper-cli failed: $(tail -n1 "$RT/whisper.err" 2>/dev/null)"; exit 1
+  fi
+  out=$(clean <<<"$out")
+  if [ -z "$out" ]; then notify "ergon-dictate" "no speech heard"; exit 0; fi
+  deliver "$out"
+}
+
+need_ready() { # prints nothing; returns 1 after telling the person what to do
+  local m
+  command -v pw-record >/dev/null || { warn -u critical "ergon-dictate" "pw-record is not installed (pipewire)"; echo "ergon-dictate: pw-record is not installed" >&2; return 1; }
+  command -v whisper-cli >/dev/null || { warn -u critical "ergon-dictate" "whisper-cli is not installed (bundle: ergon-bundle add dictation)"; echo "ergon-dictate: whisper-cli is not installed (ergon-bundle add dictation)" >&2; return 1; }
+  m=$(active)
+  if [ -z "$m" ] || ! installed "$m"; then
+    warn "ergon-dictate" "no speech model yet: pick one to download"
+    echo "ergon-dictate: no active model (ergon dictate model list; model get NAME)" >&2
+    pick_detached
+    return 1
+  fi
+}
+
+start() {
+  [ "$(phase)" = idle ] || { echo "ergon-dictate: already $(phase)" >&2; return 0; }
+  need_ready || return 1
+  # setsid -f, not `&`: a job started with & by a non-interactive shell has SIGINT
+  # ignored, and INT is how the session ends pw-record.
+  setsid -f "$SELF" _session </dev/null >/dev/null 2>&1
+  # Wait for the session to own the recorder, so `start; stop` is not a race.
+  local i
+  for ((i = 0; i < 40; i++)); do [ -s "$RT/pid" ] && return 0; sleep 0.05; done
+  echo "ergon-dictate: the recorder did not start" >&2; return 1
+}
+
+stop() {
+  case "$(phase)" in
+    idle)         echo "ergon-dictate: not recording" >&2; return 0 ;;
+    transcribing) notify "ergon-dictate" "still transcribing"; return 0 ;;
+  esac
+  local pid; pid=$(cat "$RT/pid" 2>/dev/null || true)
+  is_recorder "$pid" || { echo "ergon-dictate: recorder not found" >&2; return 1; }
+  # INT, not TERM: pw-record writes the wav header's length on INT.
+  kill -INT "$pid"
+}
+
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); if ($0 !~ /^ergon:/) print; next } NR > 1 { exit }' "$0"; }
+
+case "${1:-}" in
+  toggle)  case "$(phase)" in idle) start ;; recording) stop ;; *) notify "ergon-dictate" "still transcribing" ;; esac ;;
+  start)   start ;;
+  stop)    stop ;;
+  status)  s=$(phase); echo "$s"; [ "$s" != idle ] ;;
+  pick)    mkdir -p "$RT"; pick ;;
+  _session) session ;;
+  model)
+    shift
+    case "${1:-list}" in
+      list)   model_list ;;
+      get)    [ -n "${2:-}" ] || die "which model? (ergon dictate model list)"; model_get "$2" ;;
+      use)    [ -n "${2:-}" ] || die "which model?"; model_use "$2" ;;
+      rm)     [ -n "${2:-}" ] || die "which model?"; model_rm "$2" ;;
+      verify) model_verify "${2:-}" ;;
+      *)      die "model list | get NAME | use NAME | rm NAME | verify [NAME]" ;;
+    esac ;;
+  lang)    if [ -n "${2:-}" ]; then set_lang "$2"; else language; fi ;;
+  ""|-h|--help|help) usage ;;
+  *) die "unknown command '$1' (try --help)" ;;
+esac
