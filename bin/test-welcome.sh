@@ -120,5 +120,60 @@ rm -f "$T/noterm"
   && ok "launcher fails: stamp kept for next login, one notification naming ergon welcome" \
   || bad "launcher fails: stamp=$([ -e "$STAMP" ] && echo burned || echo kept), log: $(tr '\n' ';' < "$LOG")"
 
+cat <<'XEOF' > /dev/null
+XEOF
+echo "== the notebook (ERGON-55 phase 2)"
+NB="$REPO/marimo/welcome.py"
+# No fact typed into it: a modifier+key string, a bundle name, a bind
+# description. Everything must come from running a command.
+leaks=$(grep -n -i -E 'super *\+|alt *\+|ctrl *\+|\bSUPER\b|ergon-bundle add' "$NB"; \
+        for b in "$REPO"/packages/bundles/*/; do grep -n -w -F "$(basename "$b")" "$NB" | grep -v -E -i 'ergon bundle list|^[0-9]+: *#'; done)
+[ -z "$leaks" ] && ok "notebook types no keybind or bundle name" || bad "typed facts in the notebook: $leaks"
+for args in "keys --print" "bundle list" "doctor" "explain welcome"; do
+  grep -q "\"$(sed 's/ /", "/g' <<<"$args")\"" "$NB" && ok "notebook runs ergon $args" || bad "notebook does not run ergon $args"
+done
+
+# A fake marimo that serves a page with busybox httpd on the port it is given,
+# a venv for it, and a firefox that logs: the real ergon-browser and gui() run.
+mkdir -p "$T/venv/bin" "$T/www"; echo ok > "$T/www/index.html"
+cat > "$T/venv/bin/marimo" <<EOF
+#!/usr/bin/env bash
+echo "marimo \$*" >> $LOG
+while [ \$# -gt 0 ]; do [ "\$1" = --port ] && port=\$2; shift; done
+exec busybox httpd -f -p 127.0.0.1:\$port -h $T/www
+EOF
+chmod +x "$T/venv/bin/marimo"
+stub firefox 'exit 0'; stub xdg-mime 'exit 1'
+export PYFLEET_VENV="$T/venv" ERGON_WELCOME_PORT=29731
+rm -rf "$XDG_STATE_HOME"; : > "$LOG"
+t0=$EPOCHREALTIME; "$W" --first-run; rc=$?; took=$(ms "$t0"); settled
+if [ "$rc" = 0 ] && [ "$took" -lt 1000 ] && grep -q '^marimo run .*--port 2973' "$LOG" && grep -q '^firefox .*127.0.0.1:2973' "$LOG" \
+   && [ -e "$STAMP" ] && [ "$(logged ergon-term)" = 0 ]; then
+  ok "marimo present: app-mode notebook served, browser given its URL, stamp written, no terminal window"
+else bad "notebook path: rc=$rc ${took}ms stamp=$([ -e "$STAMP" ] && echo yes || echo no) log: $(tr '\n' ';' < "$LOG")"; fi
+pkill -f "[b]usybox httpd -f -p 127.0.0.1:2973" 2>/dev/null
+
+# Notebook broken (server never answers): falls back to the terminal page.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$T/venv/bin/marimo"
+rm -rf "$XDG_STATE_HOME"; : > "$LOG"; "$W" --first-run; settled
+[ "$(logged ergon-term)" = 1 ] && [ -e "$STAMP" ] && ok "marimo dies: the terminal page opens instead, stamp written" \
+  || bad "marimo dies: no fallback: $(tr '\n' ';' < "$LOG")"
+rm -rf "$XDG_STATE_HOME"; : > "$LOG"; rm "$T/venv/bin/marimo"; "$W" --first-run; settled
+[ "$(logged ergon-term)" = 1 ] && ok "marimo absent: the terminal page opens" || bad "marimo absent: no terminal page"
+unset PYFLEET_VENV ERGON_WELCOME_PORT
+
+"$W" --edit >/dev/null; cmp -s "$NB" "$HOME/notebooks/welcome.py" && ok "--edit copies the notebook out of the checkout" || bad "--edit did not copy"
+
+# Proof it executes: marimo exports it to HTML in a container, with `ergon`
+# stubbed so the output is a known string. Needs docker and network (pip).
+if command -v docker >/dev/null && [ "${WELCOME_NO_DOCKER:-0}" != 1 ]; then
+  mkdir -p "$T/ct/bin"; printf '#!/bin/sh\necho "STUB-OUT $*"\n' > "$T/ct/bin/ergon"; chmod +x "$T/ct/bin/ergon"
+  if docker run --rm --label cl.jvines.owner=ergon-55 -v "$REPO/marimo:/nb:ro" -v "$T/ct:/ct" -e PATH=/ct/bin:/usr/local/bin:/usr/bin:/bin \
+       python:3.12-slim sh -c 'pip install -q marimo >/dev/null 2>&1 && marimo export html /nb/welcome.py -o /ct/out.html >/ct/log 2>&1'; then
+    n=$(grep -o 'STUB-OUT' "$T/ct/out.html" | wc -l)
+    [ "$n" -ge 5 ] && ok "marimo export html ran the notebook; $n stubbed command outputs in it" || bad "export ran but carries $n stub outputs"
+  else bad "marimo export html failed: $(tail -3 "$T/ct/log" 2>/dev/null)"; fi
+else echo "   skip no docker"; fi
+
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

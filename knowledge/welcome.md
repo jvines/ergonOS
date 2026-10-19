@@ -19,3 +19,7 @@ Where to look first:
 - `ergon explain using-ergon` — the day-to-day picture: rollback, backup,
   bundles, sleep, updates, and where the things you make land.
 - `ergon doctor` — when something is quietly wrong.
+
+`ergon welcome --gui` opens the same page as a notebook in your browser, and
+`ergon welcome --edit` copies it to `~/notebooks/welcome.py` to change. Where
+marimo or a browser is missing, the first login shows the terminal page instead.
