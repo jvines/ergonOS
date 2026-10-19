@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# ergon:summary=Use a FIDO2 security key for sudo and polkit prompts
+# ergon:group=hardware
+# ergon:args=[--remove]
+#
+#   ergon fido2            register the plugged-in key, then let it answer sudo
+#                          and polkit (pkexec, GUI auth dialogs) with a touch
+#   ergon fido2 --remove   take the key out of PAM again and delete the registration
+#
+# The key is `sufficient`, never `required`: touch it and you are in, and with it
+# unplugged, untouched or broken the password prompt below it still works. The
+# edit is built in a temp file, validated, installed atomically, and then proven
+# by a real `sudo -k; sudo -v`. A root watchdog started beforehand puts the PAM
+# files back if that check fails, because by then sudo itself may be what broke.
+#
+# Not touched, on purpose: the lock screen (hyprlock takes fingerprints over D-Bus
+# and its password over PAM; a key there would be a second prompt to learn) and
+# LUKS (systemd-cryptenroll is a separate, riskier step -- a follow-up card).
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+. "$ERGON/lib/fido2-pam.sh"
+
+PAMDIR=/etc/pam.d
+AUTHDIR=/etc/fido2
+AUTHFILE=$AUTHDIR/fido2
+MODDIR=/usr/lib/security
+SERVICES=(sudo polkit-1)
+
+case "${1:-}" in
+  -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  ""|--remove) ;;
+  *) echo "usage: ergon fido2 [--remove]" >&2; exit 2 ;;
+esac
+
+die() { echo "ergon fido2: $*" >&2; exit 1; }
+
+# install_file SRC DEST -- replace DEST with SRC, same mode, via a sibling rename.
+install_file() {
+  sudo sh -c 'tmp="$2.ergon-new"; cat "$1" > "$tmp" && chmod --reference="$2" "$tmp" \
+              && chown --reference="$2" "$tmp" && mv -f "$tmp" "$2"' _ "$1" "$2"
+}
+
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+
+if [ "${1:-}" = --remove ]; then
+  for s in "${SERVICES[@]}"; do
+    f=$PAMDIR/$s
+    [ -f "$f" ] && grep -qxF "$FIDO2_MARK" "$f" || continue
+    fido2_pam_remove "$f" > "$T/$s"
+    install_file "$T/$s" "$f"; echo "removed the key from $f"
+  done
+  sudo rm -f "$AUTHFILE"; sudo rmdir "$AUTHDIR" 2>/dev/null || true
+  echo "done: sudo and polkit ask for the password only"
+  exit 0
+fi
+
+command -v fido2-token >/dev/null && command -v pamu2fcfg >/dev/null \
+  || die "libfido2 and pam-u2f are not installed (they are in packages/pacman)"
+[ -n "$(fido2-token -L 2>/dev/null)" ] \
+  || die "no FIDO2 key detected -- plug it in (and unlock it if it has a PIN) and run again"
+[ -f "$MODDIR/pam_u2f.so" ] || die "$MODDIR/pam_u2f.so is missing; reinstall pam-u2f"
+
+# The registration. A symlink or directory in either place is somebody else's
+# setup (or an attack), not ours to write through.
+if [ -L "$AUTHDIR" ] || { [ -e "$AUTHDIR" ] && [ ! -d "$AUTHDIR" ]; } \
+   || [ -L "$AUTHFILE" ] || { [ -e "$AUTHFILE" ] && [ ! -f "$AUTHFILE" ]; }; then
+  die "$AUTHDIR is not a plain FIDO2 directory; run 'ergon fido2 --remove' first"
+fi
+if [ ! -s "$AUTHFILE" ]; then
+  echo "touch your key when it lights up..."
+  pamu2fcfg > "$T/reg"
+  [ -s "$T/reg" ] || die "registration failed, nothing changed"
+  sudo install -d -m 755 -o root -g root "$AUTHDIR"
+  sudo install -m 644 -o root -g root "$T/reg" "$AUTHFILE"
+else
+  echo "a key is already registered ($AUTHFILE)"
+fi
+
+# Build and validate every edit before installing any of them.
+todo=()
+for s in "${SERVICES[@]}"; do
+  f=$PAMDIR/$s
+  [ -f "$f" ] || { echo "skipping $s: no $f on this machine"; continue; }
+  grep -qxF "$FIDO2_MARK" "$f" && { echo "$s: already set up"; continue; }
+  fido2_pam_add "$f" "$AUTHFILE" > "$T/$s" || die "$f has no auth line; left alone"
+  fido2_pam_validate "$f" "$T/$s" "$AUTHFILE" "$MODDIR" || die "edit of $f failed validation; nothing changed"
+  todo+=("$s")
+done
+[ ${#todo[@]} -gt 0 ] || { echo "nothing to change"; exit 0; }
+
+# Watchdog: root, detached, puts the files back unless we say the check passed.
+OKROOT=/run/ergon-fido2.ok; sudo rm -f "$OKROOT"
+sudo sh -c '
+  . "$1/lib/fido2-pam.sh"; shift; ok=$1; shift
+  ( sleep 90; [ -e "$ok" ] && exit 0
+    for f in "$@"; do
+      fido2_pam_remove "$f" > "$f.ergon-new" && cat "$f.ergon-new" > "$f" ; rm -f "$f.ergon-new"
+    done ) >/dev/null 2>&1 &' _ "$ERGON" "$OKROOT" "${todo[@]/#/$PAMDIR/}"
+
+for s in "${todo[@]}"; do install_file "$T/$s" "$PAMDIR/$s"; echo "added the key to $PAMDIR/$s"; done
+
+echo "checking: touch your key (or type your password) at the sudo prompt..."
+if sudo -k && sudo -v && sudo touch "$OKROOT"; then
+  echo "works. sudo and polkit now accept the key; the password still works too."
+else
+  echo "the check failed; the watchdog restores the PAM files within 90s" >&2
+  sleep 95; exit 1
+fi
