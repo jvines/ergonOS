@@ -46,7 +46,10 @@ E=$T/ergon
 mkdir -p "$E/bin" "$T/stub" "$T/log"
 cp "$REPO/bin/ergon-hardware" "$REPO/bin/ergon-sleep" "$REPO/bin/ergon-battery" "$E/bin/"
 cp -r "$REPO/hardware" "$E/"
-for s in sudo pacman systemctl grub-mkconfig notify-send; do
+cp "$REPO/bin/ergon-gpu" "$E/bin/"
+# ergon-aur is stubbed: it builds from the AUR. It records what it was asked for.
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TEST_ROOT/log/aur"\n[ ! -e "$TEST_ROOT/aur-fails" ]\n' > "$E/bin/ergon-aur"; chmod +x "$E/bin/ergon-aur"
+for s in sudo pacman systemctl grub-mkconfig notify-send mkinitcpio; do
   printf '#!/usr/bin/env bash\n' > "$T/stub/$s"
 done
 cat >> "$T/stub/sudo" <<'EOF'
@@ -65,6 +68,9 @@ printf '%s\n' "$*" >> "$TEST_ROOT/log/systemctl"
 EOF
 cat >> "$T/stub/grub-mkconfig" <<'EOF'
 printf '%s\n' "$*" >> "$TEST_ROOT/log/grub"
+EOF
+cat >> "$T/stub/mkinitcpio" <<'EOF'
+printf '%s\n' "$*" >> "$TEST_ROOT/log/mkinitcpio"
 EOF
 cat >> "$T/stub/notify-send" <<'EOF'
 printf '%s\n' "$*" >> "$TEST_ROOT/log/notify"
@@ -248,6 +254,11 @@ check "  __GLX_VENDOR_LIBRARY_NAME" hasx "$NV" 'hl.env("__GLX_VENDOR_LIBRARY_NAM
 check "  NVD_BACKEND" hasx "$NV" 'hl.env("NVD_BACKEND", "direct")'
 check "  the marker on line 1, the only line Lua skips" has <(head -1 "$NV") "# Written by ergon-hardware"
 check "  at the path hypr/common/env.lua loads" has "$REPO/hypr/common/env.lua" 'pcall(require, "/etc/ergon/hypr/nvidia")'
+check "  open modules: modeset+fbdev in modprobe.d, modules early, no sleep services (kernel notifiers do it)" \
+  test "$(cat "$T/nv/dest/etc/modprobe.d/ergon-nvidia.conf" | tail -1)" = "options nvidia_drm modeset=1 fbdev=1" -a ! -e "$T/log/systemctl"
+check "  Turing: the AUR is not touched" test ! -e "$T/log/aur"
+check "  NVIDIA-only: the kms-dropping initramfs drop-in, and one rebuild" \
+  test -e "$T/nv/dest/etc/mkinitcpio.conf.d/ergon-nvidia.conf" -a "$(wc -l < "$T/log/mkinitcpio")" = 1
 touch "$T/pacman-fails"; reset_logs; apply nv
 check "downloads failing: the dkms package stays" not has "$T/log/pacman" "-Rdd"
 check "  the env goes, with no module for it to point at" test ! -e "$NV"
@@ -271,18 +282,52 @@ put "$NV" "# Written by ergon-hardware from what this machine has; removed when 
 reset_logs; apply nv
 check "card gone: the env file goes too" test ! -e "$NV"
 
-R=$T/pascal/root
+R=$T/pascal/root; PD=$T/pascal/dest
 pci "$R" 0000:01:00.0 0x030000 0x10de 0x1b80 1
-kernel "$R" 7.2.7-arch1-1 linux
+kernel "$R" 7.2.7-arch1-1 linux; kernel "$R" 6.18.54-1-lts linux-lts
+echo "nvidia-open-dkms nvidia-open" > "$T/installed"
 reset_logs; apply pascal
-check "pre-Turing: nothing installed, so nouveau is not blacklisted" not has "$T/log/pacman" "nvidia"
-check "  refused, naming the legacy driver" has "$T/out" "nvidia-580xx-dkms + nvidia-580xx-utils (AUR)"
-check "  no Hyprland env" test ! -e "$T/pascal/dest/etc/ergon/hypr/nvidia.lua"
-check "  and no blacklist claimed where there is none" not has "$T/out" "blacklists nouveau"
-check "an NVIDIA-only machine gets no AMD package" not has "$T/log/pacman" "vulkan-radeon"
-check "  nor an Intel one" not has "$T/log/pacman" "vulkan-intel"
-echo nvidia-utils > "$T/installed"; reset_logs; apply pascal; rm "$T/installed"
-check "  where nvidia-utils is left over, it says the card has no driver" has "$T/out" "blacklists nouveau, so the card has no driver"
+check "Pascal: headers for every kernel, then the pinned 580xx build from the AUR" \
+  test "$(cat "$T/log/pacman" "$T/log/aur" 2>/dev/null | tr '\n' '|')" = "-S --needed --noconfirm -- linux-headers linux-lts-headers|-Rdd --noconfirm -- nvidia-open-dkms|nvidia-580xx-utils|"
+check "  no GSP-only package (nvidia-open), and no AMD or Intel one" not has "$T/log/pacman" "vulkan-"
+check "  Hyprland env: GLX only, no libva-nvidia-driver to point LIBVA at" hasx "$PD/etc/ergon/hypr/nvidia.lua" 'hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")'
+check "  and not LIBVA_DRIVER_NAME" not has "$PD/etc/ergon/hypr/nvidia.lua" LIBVA
+check "  the 580xx sleep services enabled (it preserves video memory through them)" \
+  hasx "$T/log/systemctl" "enable nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service"
+check "  early KMS: modeset and fbdev in modprobe.d" hasx "$PD/etc/modprobe.d/ergon-nvidia.conf" "options nvidia_drm modeset=1 fbdev=1"
+check "  nvidia modules in the initramfs" has "$PD/etc/mkinitcpio.conf.d/ergon-nvidia.conf" "MODULES+=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)"
+check "  and the initramfs rebuilt, once" test "$(wc -l < "$T/log/mkinitcpio")" = 1
+reset_logs; apply pascal
+check "  a second run changes nothing: no rebuild" test ! -e "$T/log/mkinitcpio"
+touch "$T/aur-fails"; reset_logs; rm -rf "$PD/etc"; apply pascal; rm "$T/aur-fails"
+check "  the build failing: warned, no env, no early modules (the card has no driver)" \
+  test ! -e "$PD/etc/ergon/hypr/nvidia.lua" -a ! -e "$PD/etc/mkinitcpio.conf.d/ergon-nvidia.conf"
+check "  and it says so" has "$T/out" "failed to build"
+rm -f "$T/installed"
+# the drop-in is real shell: run it as mkinitcpio would, against fake PCI trees
+reset_logs; apply pascal
+hooks() { ( HOOKS=(base systemd autodetect microcode modconf kms keyboard block filesystems); MODULES=()
+            ERGON_PCI_DEVICES=$1; . "$2"; echo "${HOOKS[*]} // ${MODULES[*]}" ); }
+check "  kms dropped when NVIDIA owns every display controller" \
+  test "$(hooks "$R/sys/bus/pci/devices" "$PD/etc/mkinitcpio.conf.d/ergon-nvidia.conf")" = "base systemd autodetect microcode modconf keyboard block filesystems // nvidia nvidia_modeset nvidia_uvm nvidia_drm"
+pci "$R" 0000:00:02.0 0x030000 0x8086 0x9b41 0
+check "  kept when anything else is a display controller" \
+  has <(hooks "$R/sys/bus/pci/devices" "$PD/etc/mkinitcpio.conf.d/ergon-nvidia.conf") " kms "
+mkdir -p "$T/unreadable/0000:00:02.0"
+check "  kept when a device cannot be read (it could be another GPU)" has <(hooks "$T/unreadable" "$PD/etc/mkinitcpio.conf.d/ergon-nvidia.conf") " kms "
+rm -rf "$R/sys/bus/pci/devices/0000:00:02.0"
+
+# Kepler: no driver exists for it here
+R=$T/kepler/root
+pci "$R" 0000:01:00.0 0x030000 0x10de 0x1180 1
+kernel "$R" 7.2.7-arch1-1 linux
+echo nvidia-utils > "$T/installed"; reset_logs; apply kepler; rm "$T/installed"
+check "Kepler: refused, nothing installed, nothing built" test ! -e "$T/log/pacman" -a ! -e "$T/log/aur"
+check "  naming why" has "$T/out" "older than Maxwell"
+check "  and that nvidia-utils is left over, blacklisting nouveau" has "$T/out" "blacklists nouveau, so the card has no driver"
+check "  no env, no early modules, no rebuild" test ! -e "$T/kepler/dest/etc/ergon/hypr/nvidia.lua" -a ! -e "$T/kepler/dest/etc/modprobe.d/ergon-nvidia.conf" -a ! -e "$T/log/mkinitcpio"
+ERGON_SYSROOT=$R "$EH" detect > "$T/out" 2>&1
+check "  detect says none" hasx "$T/out" "  nvidia driver: none"
 
 # A desktop whose monitors are on the NVIDIA card (boot_vga), with the CPU's
 # iGPU left on and a BMC's VGA beside it: more display controllers, not hybrid.
@@ -307,6 +352,8 @@ put "$T/hyb/dest/etc/ergon/hypr/nvidia.lua" "# Written by ergon-hardware from wh
 reset_logs; apply hyb
 check "hybrid: the module, and prime-run for offload" hasx "$T/log/pacman" "-S --needed --noconfirm -- nvidia-open nvidia-prime"
 check "  no global env, which would put every GL client on the dGPU" test ! -e "$T/hyb/dest/etc/ergon/hypr/nvidia.lua"
+check "  hybrid: the iGPU keeps the kms hook (no NVIDIA initramfs drop-in), modeset still set" \
+  test ! -e "$T/hyb/dest/etc/mkinitcpio.conf.d/ergon-nvidia.conf" -a -e "$T/hyb/dest/etc/modprobe.d/ergon-nvidia.conf"
 check "  the panel's Intel iGPU gets its ICD too (ERGON-71: grep -q's early exit used to SIGPIPE _gpus)" \
   hasx "$T/log/pacman" "-S --needed --noconfirm vulkan-intel intel-media-driver"
 ERGON_SYSROOT=$R "$EH" detect > "$T/out" 2>&1
@@ -314,6 +361,35 @@ check "detect names the card" hasx "$T/out" "  nvidia:       0x2820"
 check "  and the hybrid" hasx "$T/out" "  hybrid gpu:   yes"
 ERGON_SYSROOT=$T/desk/root "$EH" detect > "$T/out" 2>&1
 check "an AMD GPU alone is not hybrid" hasx "$T/out" "  hybrid gpu:   no"
+
+echo "== ergon gpu"
+GPU="$E/bin/ergon-gpu"
+R=$T/hyb/root
+mkdir -p "$R/sys/class/drm/card0-eDP-1" "$R/sys/class/drm/card0" "$R/sys/class/drm/card1-DP-1" "$R/sys/class/drm/card1"
+put "$R/sys/class/drm/card0-eDP-1/status" connected; put "$R/sys/class/drm/card1-DP-1/status" disconnected
+ln -s ../../../bus/pci/devices/0000:00:02.0 "$R/sys/class/drm/card0/device"
+ln -s ../../../bus/pci/devices/0000:01:00.0 "$R/sys/class/drm/card1/device"
+ERGON_SYSROOT=$R "$GPU" > "$T/out" 2>&1
+check "hybrid: the iGPU is primary and owns the panel" has "$T/out" "Intel  0x7d55 0000:00:02.0"
+check "  with its connected output named" has "$T/out" "primary: the compositor renders here; outputs: eDP-1"
+check "  the NVIDIA card secondary, with no outputs" has "$T/out" "secondary"
+check "  prime-run is the offload" has "$T/out" "prime-run <program>"
+ERGON_SYSROOT=$R PATH="$T/stub:/usr/bin:/bin" "$GPU" --doctor > "$T/out" 2>&1
+check "doctor: module not loaded is a warning" hasx "$T/out" "warn|nvidia-driver|NVIDIA 0x2820 is present but the nvidia module is not loaded (open branch): dkms status; sudo ergon hardware apply"
+check "  modeset off is a warning" has "$T/out" "warn|nvidia-modeset|"
+mkdir -p "$R/sys/module/nvidia/"; put "$R/sys/module/nvidia_drm/parameters/modeset" Y
+ERGON_SYSROOT=$R PATH="$T/stub:/usr/bin:/bin" "$GPU" --doctor > "$T/out" 2>&1
+check "  loaded with modeset: ok rows" has "$T/out" "ok|nvidia-modeset|nvidia_drm.modeset=1"
+check "  open modules: sleep needs no services" has "$T/out" "ok|nvidia-sleep|open modules"
+check "  hybrid without prime-run warns" has "$T/out" "warn|gpu-offload|"
+ERGON_SYSROOT=$T/desk/root "$GPU" --doctor > "$T/out" 2>&1
+check "an AMD-only machine gets no NVIDIA rows" test ! -s "$T/out"
+ERGON_SYSROOT=$T/desk/root "$GPU" > "$T/out" 2>&1
+check "  and a status with the amdgpu GPU listed" has "$T/out" "AMD"
+ERGON_SYSROOT=$T/pascal/root "$GPU" --doctor > "$T/out" 2>&1
+check "580xx: sleep services are checked (stubbed systemctl says enabled)" has "$T/out" "ok|nvidia-sleep|nvidia-suspend, -hibernate, -resume enabled"
+ERGON_SYSROOT=$T/kepler/root "$GPU" --doctor > "$T/out" 2>&1
+check "Kepler: one warning, no driver rows" test "$(wc -l < "$T/out")" = 1 -a "$(cut -d'|' -f1 "$T/out")" = warn
 
 echo "== profiles"
 mkdir -p "$E/hardware/bad-model"

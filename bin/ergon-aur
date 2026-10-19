@@ -46,7 +46,7 @@ _is_pkg() { local LC_ALL=C; [[ $1 =~ ^[a-z0-9@_+][a-z0-9@._+-]{0,127}$ ]]; }
 _pin() {  # _pin <pkgname>
   awk -v p="$1" '$1 == p && match($0, /pin=[0-9a-f]{7,40}/) {
                    print substr($0, RSTART + 4, RLENGTH - 4) }' \
-      "$ERGON/packages/aur" 2>/dev/null || true
+      "$ERGON/packages/aur" "$ERGON/packages/aur-hardware" 2>/dev/null || true
 }
 
 # A package the AUR has no repository for at all carries its PKGBUILD in this

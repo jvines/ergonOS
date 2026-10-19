@@ -160,10 +160,87 @@ _nvidia_modules() {
   if [ "$all" = 1 ]; then printf '%s\n' "${pre[@]}"; else printf '%s\n' "${dkms[@]}"; fi
 }
 
+# What the driver for this card is called, from its newest display device id:
+# open (Turing+, GSP firmware), 580xx (Maxwell to Volta), none (Kepler and older).
+# 0x1340 is the first Maxwell id, one past the last Kepler part (Omarchy's span).
+_nvidia_branch() {
+  local nv; nv=$(_nvidia) || { echo none; return 1; }
+  if (( nv >= 0x1e00 )); then echo open; elif (( nv >= 0x1340 )); then echo 580xx; else echo none; fi
+}
+
+# Maxwell to Volta. Headers for every installed kernel (the 580xx modules are
+# dkms-only), then the AUR split package, which ergon-aur builds pinned
+# (packages/aur-hardware) and which replaces nvidia-utils/nvidia-open*.
+_nvidia_legacy() {  # _nvidia_legacy <device id>
+  local k hdr=() q rm=()
+  for k in $(cat "$ROOT"/usr/lib/modules/*/pkgbase 2>/dev/null | sort -u); do hdr+=("$k-headers"); done
+  [ "${#hdr[@]}" -gt 0 ] || { warn "NVIDIA $1, but no kernel with a pkgbase under /usr/lib/modules: nothing installed"; return 1; }
+  _hybrid && hdr+=(nvidia-prime)
+  sudo pacman -S --needed --noconfirm -- "${hdr[@]}" >/dev/null || { warn "NVIDIA $1: kernel headers failed to install: ${hdr[*]}"; return 1; }
+  # nvidia-open* never drove this card, and conflicts with the 580xx modules in
+  # a way --noconfirm answers "N" (see below); ergon-aur handles nvidia-utils.
+  for q in nvidia-open nvidia-open-lts nvidia-open-dkms; do _installed "$q" && rm+=("$q"); done
+  [ "${#rm[@]}" -eq 0 ] || sudo pacman -Rdd --noconfirm -- "${rm[@]}" >/dev/null || warn "could not remove ${rm[*]}"
+  "$ERGON/bin/ergon-aur" nvidia-580xx-utils >/dev/null || { warn "NVIDIA $1: the 580xx driver (AUR nvidia-580xx-utils) failed to build: ergon aur nvidia-580xx-utils"; return 1; }
+  ok "nvidia $1 (no GSP firmware): 580xx driver from the AUR, ${hdr[*]}"
+}
+
+# _put_if <path> <content>: write only when it differs, and remember that the
+# initramfs must be rebuilt, since modconf copies modprobe.d into it.
+_RD=0
+_put_if() {
+  [ "$(cat "$DEST$1" 2>/dev/null)" = "$2" ] && return 0
+  printf '%s\n' "$2" | _put "$1"; _RD=1
+}
+_unput_rd() { [ -f "$DEST$1" ] && grep -qxF -- "$MARK" "$DEST$1" && _RD=1; _unput "$1"; }
+
+# Early KMS and sleep, for a card whose driver went in. nvidia_drm.modeset=1 is
+# what Wayland needs; Arch's nvidia-utils sets neither it nor fbdev on every
+# branch, so it is stated. Where NVIDIA drives the display the modules load from
+# the initramfs, and the generic kms hook is dropped only when NVIDIA owns EVERY
+# display controller (it would otherwise pull nouveau's firmware in for nothing;
+# Omarchy's rule). Hybrid: the iGPU needs kms at the LUKS prompt, the dGPU is
+# not in the initramfs at all. The 580xx branch needs nvidia-suspend/-hibernate/
+# -resume; the open modules (595+) preserve video memory through kernel
+# suspend notifiers and nvidia-utils disables those units on purpose.
+_nvidia_boot() {  # _nvidia_boot <driver installed 0|1> <580xx 0|1>
+  local f=/etc/mkinitcpio.conf.d/ergon-nvidia.conf
+  if (( $1 )); then
+    _put_if /etc/modprobe.d/ergon-nvidia.conf "$MARK
+options nvidia_drm modeset=1 fbdev=1"
+    if _hybrid; then
+      _unput_rd "$f"
+    else
+      _put_if "$f" "$MARK
+MODULES+=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
+_g=\${ERGON_PCI_DEVICES:-/sys/bus/pci/devices}; _nv=0; _other=0
+for _d in \"\$_g\"/*; do
+  [[ -r \$_d/class && -r \$_d/vendor ]] || { _other=1; continue; }
+  [[ \$(<\"\$_d/class\") == 0x03* ]] || continue
+  if [[ \$(<\"\$_d/vendor\") == 0x10de ]]; then _nv=1; else _other=1; fi
+done
+if (( _nv && ! _other )); then
+  _h=(); for _k in \"\${HOOKS[@]}\"; do [[ \$_k == kms ]] || _h+=(\"\$_k\"); done; HOOKS=(\"\${_h[@]}\")
+fi
+unset _g _nv _other _d _h _k"
+    fi
+    if (( $2 )); then
+      sudo systemctl enable nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service >/dev/null 2>&1 \
+        && ok "nvidia-suspend, -hibernate, -resume enabled (580xx keeps video memory through them)" \
+        || warn "could not enable the nvidia sleep services; suspend will lose the GPU's memory"
+    fi
+  else
+    _unput_rd /etc/modprobe.d/ergon-nvidia.conf; _unput_rd "$f"
+  fi
+  if [ "$_RD" = 1 ]; then
+    sudo mkinitcpio -P >/dev/null 2>&1 && ok "initramfs rebuilt for the NVIDIA modules" || warn "mkinitcpio -P failed; run it by hand"
+  fi
+}
+
 # --- what to do about it ---------------------------------------------------------
 
 _capabilities() {
-  local als bl nv q env=0 P=() old=() R=() GFX=""
+  local als bl nv q env=0 drv=0 leg=0 P=() old=() R=() GFX=""
 
   # Power key. logind's own default is poweroff on a bare press, and on the
   # Framework 13 that key IS the fingerprint reader (bin/ergon-fingerprint) --
@@ -308,8 +385,9 @@ EOF
   # omarchy-hw-nvidia-gsp) get the open modules, PREBUILT for each kernel.
   # This used to be nvidia-open-dkms from provisioning, with no headers
   # anywhere, so no module was ever built -- while nvidia-utils blacklisted
-  # nouveau and nova regardless. Older cards get nothing: nvidia-open cannot
+  # nouveau and nova regardless. Older cards: nvidia-open cannot
   # drive them, and nvidia-utils would take nouveau away from them too.
+  # Maxwell to Volta take the 580xx branch from the AUR (_nvidia_legacy).
   #
   # No nvidia-suspend/-hibernate/-resume units and no
   # NVreg_PreserveVideoMemoryAllocations. nvidia-utils 615.71.09 sets
@@ -343,31 +421,39 @@ EOF
     # The env points GLX and VA-API at NVIDIA's libraries, so it follows the
     # install: without a module it would only break every GL client.
     if sudo pacman -S --needed --noconfirm -- "${P[@]}" >/dev/null; then
+      drv=1
       ok "nvidia $nv: ${P[*]}"
     else
       warn "NVIDIA packages failed: ${P[*]}"; env=0
     fi
   elif [ -n "$nv" ] && (( nv >= 0x1e00 )); then
     warn "NVIDIA $nv, but no kernel with a pkgbase under /usr/lib/modules: nothing installed"
+  elif [ -n "$nv" ] && (( nv >= 0x1340 )); then
+    # Maxwell, Pascal, Volta: no GSP firmware, so the open modules cannot drive
+    # them. Only NVIDIA's 580 branch does, and it is in the AUR.
+    _nvidia_legacy "$nv" && { leg=1; drv=1; _hybrid || env=1; }
   elif [ -n "$nv" ]; then
-    warn "NVIDIA $nv is older than Turing: nvidia-open cannot drive it, so nothing was installed for it."
+    warn "NVIDIA $nv is older than Maxwell (Kepler or Fermi): no driver is packaged for it, so nothing was installed and nouveau stays."
+    warn "  The 470xx and 390xx legacy drivers do not support current kernels or Wayland compositors; use the iGPU, or nouveau."
     _installed nvidia-utils \
       && warn "  But nvidia-utils is installed and blacklists nouveau, so the card has no driver: sudo pacman -Rsc nvidia-utils"
-    warn "  NVIDIA's driver for Maxwell to Volta: nvidia-580xx-dkms + nvidia-580xx-utils (AUR), with each kernel's headers."
   fi
   if [ "$env" = 1 ]; then
     # Loaded by hypr/common/env.lua. $MARK has to stay the FIRST line: Lua
     # skips a first line starting with #, and only that one (0.56.2).
+    # libva-nvidia-driver is not installed for the 580 branch (its NVDEC
+    # backend wants a newer driver), so the legacy env does not name it.
     _put /etc/ergon/hypr/nvidia.lua <<EOF
 $MARK
 -- NVIDIA $nv drives the display: VA-API, GLX and the VA-API driver's backend.
-hl.env("LIBVA_DRIVER_NAME", "nvidia")
+$( ((leg)) || echo 'hl.env("LIBVA_DRIVER_NAME", "nvidia")' )
 hl.env("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
-hl.env("NVD_BACKEND", "direct")
+$( ((leg)) || echo 'hl.env("NVD_BACKEND", "direct")' )
 EOF
   else
     _unput /etc/ergon/hypr/nvidia.lua
   fi
+  _nvidia_boot "$drv" "$leg"
 
   # Auto-brightness wherever there is a sensor and a backlight to drive. It moves
   # the backlight only when the room's light crosses a step, so a manual change
@@ -533,6 +619,7 @@ case "${1:-detect}" in
     printf '  light sensor: %s\n' "$(_als || echo no)"
     printf '  backlight:    %s\n' "$(_backlight || echo no)"
     printf '  nvidia:       %s\n' "$(_nvidia || echo no)"
+    printf '  nvidia driver: %s\n' "$(_nvidia_branch)"
     printf '  hybrid gpu:   %s\n' "$(has _hybrid)"
     d=$(_detected)
     [ -n "$d" ] && printf '  profile(s):   %s\n' "$(printf '%s ' $d)" \

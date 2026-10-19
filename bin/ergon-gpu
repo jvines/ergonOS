@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# ergon:summary=Show the GPUs, their drivers, which one drives the screens, and how to offload
+# ergon:group=hardware
+# ergon:args=[--doctor]
+#
+# ERGON-36. What the machine has, read from sysfs (no model names): every PCI
+# display controller, the kernel driver bound to it, the outputs connected to
+# it, and which one is the primary (boot_vga, the GPU the compositor renders
+# on). On a hybrid laptop -- an iGPU on the panel, an NVIDIA card beside it --
+# it also says how to run one program on the NVIDIA card:
+#
+#   prime-run <program>        NVIDIA (nvidia-prime), for one program
+#   DRI_PRIME=1 <program>      another AMD/Intel card, mesa's offload
+#
+# The NVIDIA driver choice itself (open modules for Turing and newer, the
+# 580xx branch for Maxwell to Volta, none for older) is bin/ergon-hardware's;
+# this only reports it. --doctor prints state|name|note lines for ergon-doctor.
+set -uo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+ROOT="${ERGON_SYSROOT:-}"
+shopt -s nullglob
+
+_vendor() { case $1 in 0x10de) echo NVIDIA ;; 0x1002) echo AMD ;; 0x8086) echo Intel ;; *) echo "vendor $1" ;; esac; }
+
+# "slot vendor device boot_vga driver", one per display controller
+_gpus() {
+  local d drv
+  for d in "$ROOT"/sys/bus/pci/devices/*; do
+    case $(cat "$d/class" 2>/dev/null) in 0x03*) ;; *) continue ;; esac
+    drv=$(basename "$(readlink -f "$d/driver" 2>/dev/null)" 2>/dev/null); [ -e "$d/driver" ] || drv=none
+    printf '%s %s %s %s %s\n' "$(basename "$d")" "$(cat "$d/vendor")" "$(cat "$d/device")" "$(cat "$d/boot_vga" 2>/dev/null || echo 0)" "$drv"
+  done
+}
+
+# Connected outputs on the card at <slot>.
+_outputs() {
+  local c b card out=()
+  for c in "$ROOT"/sys/class/drm/card*-*; do
+    [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+    b=${c##*/}; card=${b%%-*}
+    [ "$(basename "$(readlink -f "${c%/*}/$card/device" 2>/dev/null)")" = "$1" ] && out+=("${b#*-}")
+  done
+  echo "${out[*]:-}"
+}
+
+hw=$("$ERGON/bin/ergon-hardware" detect 2>/dev/null)
+branch=$(sed -n 's/^  nvidia driver: //p' <<<"$hw"); nvid=$(sed -n 's/^  nvidia: *//p' <<<"$hw")
+hybrid=$(sed -n 's/^  hybrid gpu: *//p' <<<"$hw")
+modeset=$(cat "$ROOT/sys/module/nvidia_drm/parameters/modeset" 2>/dev/null || echo "")
+
+if [ "${1:-}" = --doctor ]; then
+  [ "$nvid" = no ] || [ -z "$nvid" ] && exit 0
+  case $branch in
+    none) echo "warn|nvidia-driver|NVIDIA $nvid is older than Maxwell: no driver is packaged, nouveau or the iGPU is all there is" ; exit 0 ;;
+  esac
+  if [ -d "$ROOT/sys/module/nvidia" ]; then echo "ok|nvidia-driver|loaded ($branch branch)"
+  else echo "warn|nvidia-driver|NVIDIA $nvid is present but the nvidia module is not loaded ($branch branch): dkms status; sudo ergon hardware apply"; fi
+  case $modeset in
+    Y|1) echo "ok|nvidia-modeset|nvidia_drm.modeset=1" ;;
+    *)   echo "warn|nvidia-modeset|nvidia_drm modeset is off: Wayland on this card needs it (/etc/modprobe.d/ergon-nvidia.conf, then a reboot)" ;;
+  esac
+  if [ "$branch" = 580xx ]; then
+    off=""; for u in nvidia-suspend nvidia-hibernate nvidia-resume; do
+      systemctl is-enabled --quiet "$u.service" 2>/dev/null || off="$off $u"; done
+    [ -z "$off" ] && echo "ok|nvidia-sleep|nvidia-suspend, -hibernate, -resume enabled" \
+                  || echo "warn|nvidia-sleep|not enabled:$off -- suspend loses the GPU's memory (sudo systemctl enable$off)"
+  else
+    echo "ok|nvidia-sleep|open modules: video memory is kept by kernel suspend notifiers, no services needed"
+  fi
+  if [ "$hybrid" = yes ]; then
+    command -v prime-run >/dev/null 2>&1 && echo "ok|gpu-offload|prime-run is available; the iGPU drives the desktop" \
+      || echo "warn|gpu-offload|hybrid graphics but no prime-run (pacman -S nvidia-prime)"
+  fi
+  exit 0
+fi
+
+n=0
+while read -r slot ven dev boot drv; do
+  n=$((n + 1))
+  o=$(_outputs "$slot")
+  printf '%s  %s %s  (%s)\n' "$(_vendor "$ven")" "$dev" "$slot" "driver: $drv"
+  printf '    %s%s\n' "$([ "$boot" = 1 ] && echo 'primary: the compositor renders here' || echo 'secondary')" \
+    "${o:+; outputs: $o}"
+done < <(_gpus)
+[ "$n" -gt 0 ] || { echo "no PCI display controller found (a VM with a paravirtual GPU, or a board with none)"; exit 0; }
+
+if [ -n "$nvid" ] && [ "$nvid" != no ]; then
+  echo
+  case $branch in
+    open)  echo "NVIDIA $nvid: open kernel modules (Turing and newer)" ;;
+    580xx) echo "NVIDIA $nvid: 580xx branch from the AUR (Maxwell to Volta, no GSP firmware)" ;;
+    *)     echo "NVIDIA $nvid: older than Maxwell, no driver is packaged for it" ;;
+  esac
+  echo "modeset: ${modeset:-nvidia_drm not loaded}"
+fi
+if [ "$hybrid" = yes ]; then
+  echo
+  echo "Hybrid: the iGPU drives the desktop and the NVIDIA card sleeps until asked."
+  echo "  prime-run <program>   run one program on the NVIDIA card"
+  echo "  steam: prime-run %command%   (launch options)"
+elif [ "$n" -gt 1 ]; then
+  echo
+  echo "More than one GPU: DRI_PRIME=1 <program> runs it on the other one (mesa); NVIDIA uses prime-run."
+fi
