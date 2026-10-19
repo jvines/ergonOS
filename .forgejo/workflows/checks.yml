@@ -245,6 +245,10 @@ jobs:
       - name: Links open in the default browser and raise it
         run: cd "$CI_DIR" && ./bin/test-browser.sh
 
+      # ERGON-118: web apps (add, rm, list, sync, installer checklist), stubs.
+      - name: Web apps are created, listed and removed, only ours
+        run: cd "$CI_DIR" && ./bin/test-webapp.sh
+
       # ERGON-106: the session SSH agent; static, plus an archlinux container if docker is there.
       - name: Session SSH agent is exported, enabled and reachable
         run: cd "$CI_DIR" && ./bin/test-ssh-agent.sh

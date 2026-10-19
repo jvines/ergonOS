@@ -246,6 +246,7 @@ foot                # NOT the daily terminal -- wezterm is, for its tmux -CC
                     # open a terminal to fix it. 1 MB, official repo, bound
                     # to SUPER+SHIFT+ALT+RETURN and otherwise never used.
 firefox
+chromium           # web apps only (ERGON-118: bin/ergon-webapp, --app mode); Firefox stays the default browser
 zathura             # PDF; vim keys, opens papers in a tenth of a second
 zathura-pdf-mupdf
 imv                 # images; also shows the Wi-Fi share QR (bin/ergon-wifi)
