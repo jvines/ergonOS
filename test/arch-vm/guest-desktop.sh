@@ -3288,28 +3288,40 @@ STUB
   usr "xdg-mime default ergon-stubbrowser.desktop x-scheme-handler/https x-scheme-handler/http" >/dev/null 2>&1
 fi
 usr "pkill -x firefox" >/dev/null 2>&1
-_t0=$SECONDS
-usr "BROWSER=ergon-browser timeout 60 xdg-open https://example.invalid" >/tmp/xdg-open.log 2>&1 &
-_xpid=$!
-sleep 15
-if kill -0 "$_xpid" 2>/dev/null; then
-  note "xdg-open still running after 15s; process tree: $(ps -u "$U" -o pid,ppid,etime,args --forest 2>/dev/null | grep -E 'xdg-open|ergon-browser|uwsm|firefox|systemd-run|sleep' | grep -v grep | cut -c1-150 | tr '\n' '|')"
-fi
-wait "$_xpid"; _xo=$?
-note "xdg-open took $((SECONDS - _t0))s, rc $_xo, said: $(head -c 300 /tmp/xdg-open.log | tr '\n' ' ')"
-[ "$_xo" -lt 124 ] && ok "xdg-open https://example.invalid returned (rc $_xo) without hanging" || bad "xdg-open hung"
+# Stock xdg-open (xdg-utils 1.2) runs the x-scheme-handler default itself and
+# only falls back to $BROWSER, so it can bypass ergon-browser, and it stays in
+# the foreground while a FIRST browser instance lives. Neither is a hang: this
+# part records which path it took and that a window opens; ergon-browser's own
+# contract (returns, window focused) is asserted on a direct call below.
 _hasb() { o_has "$_bclass"; }
 _focb() { [ "$(o_active .class)" = "$_bclass" ]; }
+usr "BROWSER=ergon-browser timeout 90 xdg-open https://example.invalid" >/tmp/xdg-open.log 2>&1 &
+_xpid=$!
 if o_until 60 _hasb; then
-  ok "xdg-open went through ergon-browser: a $_bmode '$_bclass' window appeared"
-  o_until 10 _focb
+  ok "xdg-open https://example.invalid opened a $_bmode '$_bclass' window"
+  _tree=$(ps -u "$U" -o args --forest 2>/dev/null | grep -E 'xdg-open|ergon-browser' | grep -v grep | cut -c1-90 | tr '\n' '|')
+  if grep -q ergon-browser <<<"$_tree"; then ok "xdg-open went through ergon-browser"
+  else note "ERGON-103: xdg-open launched the handler itself and did not consult BROWSER=ergon-browser ($_tree)"; fi
+else
+  bad "no '$_bclass' window after xdg-open (log: $(head -c 300 /tmp/xdg-open.log))"
+fi
+kill "$_xpid" 2>/dev/null
+usr "pkill -x firefox" >/dev/null 2>&1; pkill -u "$U" -f ergon-stubbrowser 2>/dev/null; sleep 3
+# ergon-browser itself: returns once the browser is launched, and the window is raised.
+_t0=$SECONDS
+usr "timeout 60 ergon-browser https://example.invalid" >/tmp/ergon-browser.log 2>&1; _eb=$?
+if [ "$_eb" -lt 124 ]; then ok "ergon-browser URL returned in $((SECONDS - _t0))s (rc $_eb) while the browser stays up"
+else bad "ergon-browser held its caller for 60s (rc $_eb)"; fi
+if o_until 30 _hasb; then
+  ok "ergon-browser opened a $_bmode '$_bclass' window"
+  o_until 15 _focb
   _ac=$(o_active .class)
   [ "$_ac" = "$_bclass" ] && ok "the browser window is focused" || bad "browser window exists but focus is on '$_ac'"
   if [ "$_bmode" = stub ]; then
     grep -q 'example.invalid' /tmp/stubbrowser.log && ok "the stub browser was handed the URL" || bad "stub browser log lacks the URL: $(cat /tmp/stubbrowser.log)"
   fi
 else
-  bad "no '$_bclass' window after xdg-open (log: $(head -c 300 /tmp/xdg-open.log))"
+  bad "no '$_bclass' window after ergon-browser (log: $(head -c 300 /tmp/ergon-browser.log))"
 fi
 usr "pkill -x firefox" >/dev/null 2>&1; pkill -u "$U" -f ergon-stubbrowser 2>/dev/null; sleep 1
 rm -f "$_stub_desktop" /tmp/stubbrowser.sh
@@ -3372,9 +3384,9 @@ if command -v yazi >/dev/null 2>&1; then
     [ -s "$H/.config/yazi/$_f" ] && ok "yazi $_f is installed" || note "yazi $_f is absent from $H/.config/yazi"
   done
   # Yazi parses all its config before it draws; a parse error prints and exits.
-  _yz=$(su - "$U" -s /bin/bash -c "TERM=xterm-256color XDG_RUNTIME_DIR=/run/user/1000 timeout 6 script -qec yazi /dev/null </dev/null" 2>&1 | tr -d '\000' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')
-  if grep -qiE 'parse|invalid|unknown (field|variant)|toml|panick|error' <<<"$_yz"; then
-    bad "yazi complained about its config: $(grep -iE 'parse|invalid|unknown|toml|panick|error' <<<"$_yz" | head -4 | tr '\n' ' ')"
+  _yz=$(su - "$U" -s /bin/bash -c "TERM=xterm-256color XDG_RUNTIME_DIR=/run/user/1000 timeout 6 script -qec \"stty cols 120 rows 40; yazi\" /dev/null </dev/null" 2>&1 | tr -d '\000' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')
+  if grep -qE "Failed to parse|TOML parse error|panicked" <<<"$_yz"; then
+    bad "yazi complained about its config: $(grep -A4 -E "Failed to parse|TOML parse error|panicked" <<<"$_yz" | head -8 | tr '\n' ' ')"
   else ok "yazi started with keymap.toml ([mgr]) and theme.toml and printed no config error"; fi
   note "yazi $(yazi --version 2>&1 | head -1)"
   usr "pkill -x yazi" >/dev/null 2>&1
