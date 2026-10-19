@@ -30,9 +30,18 @@ esac
 
 # "<layouts comma-list>|<active index or empty>|<active keymap name>" for the
 # main keyboard, else the first. Empty when Hyprland does not answer.
+#
+# A keyboard carrying more than one layout comes first, main or not. "main" is
+# the keyboard that last sent a key, and that is often a VIRTUAL one: fcitx5
+# (always running, for the accents) hands keys back through a virtual keyboard
+# with a keymap of its own, which kb_layout never reaches. Measured in the VM:
+# after typing into foot, main was a keyboard reporting "us" while both real
+# ones carried "us,es", and this said one layout was configured.
 state() {
   hyprctl -j devices 2>/dev/null | jq -r '
-    (.keyboards | (map(select(.main)) + .)[0] // empty)
+    (.keyboards | (map(select(.main and (.layout | contains(","))))
+                   + map(select(.layout | contains(",")))
+                   + map(select(.main)) + .)[0] // empty)
     | "\(.layout)|\(.active_layout_index // "")|\(.active_keymap)"' 2>/dev/null || true
 }
 

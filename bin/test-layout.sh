@@ -9,10 +9,12 @@ PASS=0; FAIL=0
 check() { local w="$1"; shift; if "$@"; then PASS=$((PASS+1)); echo "   ok   $w"; else FAIL=$((FAIL+1)); echo "   FAIL $w"; fi; }
 mkdir -p "$T/stub"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$T/stub/$1"; chmod +x "$T/stub/$1"; }
-# State: $T/layouts and $T/idx. Two keyboards, the second one main.
+# State: $T/layouts and $T/idx. Two keyboards, the second one main -- unless
+# $T/virt exists: then main is a third, virtual one on "us" alone (fcitx5's).
 stub hyprctl 'case "$1" in
   -j) l=$(cat "$T/layouts"); i=$(cat "$T/idx"); IFS=, read -ra c <<<"$l"
-      printf "{\"keyboards\":[{\"main\":false,\"layout\":\"%s\",\"active_layout_index\":%s,\"active_keymap\":\"x\"},{\"main\":true,\"layout\":\"%s\",\"active_layout_index\":%s,\"active_keymap\":\"Keymap %s\"}]}" "$l" "$i" "$l" "$i" "${c[$i]}" ;;
+      m=true v=""; [ -e "$T/virt" ] && m=false v=",{\"main\":true,\"layout\":\"us\",\"active_layout_index\":0,\"active_keymap\":\"English (US)\"}"
+      printf "{\"keyboards\":[{\"main\":false,\"layout\":\"%s\",\"active_layout_index\":%s,\"active_keymap\":\"x\"},{\"main\":%s,\"layout\":\"%s\",\"active_layout_index\":%s,\"active_keymap\":\"Keymap %s\"}%s]}" "$l" "$i" "$m" "$l" "$i" "${c[$i]}" "$v" ;;
   switchxkblayout) echo "$*" >> "$T/log"; n=$(tr , "\n" < "$T/layouts" | wc -l); echo $(( ($(cat "$T/idx") + 1) % n )) > "$T/idx" ;;
 esac'
 stub notify-send 'echo "toast $*" >> "$T/log"'
@@ -35,6 +37,9 @@ check "cycle tells the bar"                  grep -qx 'pkill -RTMIN+9 -x waybar'
 check "bar follows to es"                    test "$("$L" --waybar | jq -r .text)" = "󰌌 es"
 "$L" cycle >/dev/null
 check "cycle wraps to us"                    test "$("$L" --waybar | jq -r .text)" = "󰌌 us"
+touch "$T/virt"; "$L" cycle >/dev/null
+check "a virtual main keyboard on us alone is passed over" test "$("$L" --waybar | jq -r .text)" = "󰌌 es"
+rm -f "$T/virt"
 
 _mod=$(sed -E 's|^[[:space:]]*//.*||' "$REPO/waybar/config.jsonc" | jq -c '."custom/layout"' 2>/dev/null)
 check "waybar's custom/layout listens on the signal sent" test "$(jq -r .signal <<<"$_mod")" = "$(sed -n 's/^SIGNAL=\([0-9]*\)$/\1/p' "$L")"
