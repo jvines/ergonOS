@@ -3481,6 +3481,7 @@ d100_idle() { [ "$(d100_phase)" = idle ]; }
 d100_rec() { [ "$(d100_phase)" = recording ]; }
 d100_bar() { usr "ergon-status" 2>/dev/null </dev/null | grep -q dictating; }
 pkill -u "$U" -x foot 2>/dev/null; sleep 1
+pkill -u "$U" -f imv 2>/dev/null   # ERGON-104's viewer is imv-wayland, which -x imv misses, and it keeps focus
 o_dsp 'hl.dsp.focus({workspace = 7})'; sleep 1
 
 # 1. A real cycle, real whisper-cli too, on whatever the source gives (silence).
