@@ -3506,10 +3506,15 @@ rm -rf /tmp/d100bin /tmp/d100-keys.out /tmp/d100-args; mkdir -p /tmp/d100bin
 printf '#!/bin/sh\necho "$@" > /tmp/d100-args\necho " Hello ergon dictation, test."\n' > /tmp/d100bin/whisper-cli
 chmod a+rx /tmp/d100bin /tmp/d100bin/whisper-cli
 printf '#!/bin/sh\nexec cat -v > /tmp/d100-keys.out\n' > /tmp/d100-keys.sh; chmod 755 /tmp/d100-keys.sh
+# Leftovers from earlier sections (a browser, a picker, a viewer) can hold focus.
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null; pkill -u "$U" -x firefox 2>/dev/null; sleep 1
 if o_win ergon-d100 /tmp/d100-keys.sh; then
   sleep 2; o_dsp "hl.dsp.focus({workspace = 7})"; sleep 1
   for _i in 1 2 3 4 5; do o_focus ergon-d100 && break; note "ergon-d100 focus try $_i: workspace $(o_field ergon-d100 .workspace.id) at $(o_field ergon-d100 .at) active $(o_active .class)"; sleep 2; done
-  [ "$(o_active .class)" = ergon-d100 ] || note "could not focus ergon-d100"
+  if [ "$(o_active .class)" != ergon-d100 ]; then
+    note "could not focus ergon-d100; activeworkspace $(hq activeworkspace -j | jq -c "{id,windows}" 2>/dev/null); clients $(hq clients -j | jq -c "[.[] | {class,ws:.workspace.id,hidden,mapped}]" 2>/dev/null | head -c 600)"
+    note "layers with keyboard: $(hq layers -j | jq -c "[.. | objects | select(has(\"namespace\")) | .namespace]" 2>/dev/null | head -c 300)"
+  fi
   # The keybind spawns ergon-dictate with the compositor's environment, which has
   # no stub, so the first press is a start made here with the stub on PATH; the
   # second is the real key.
