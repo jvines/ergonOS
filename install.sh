@@ -493,6 +493,10 @@ else
     ln -sfn /usr/lib/systemd/user/ssh-agent.socket "$HOME/.config/systemd/user/sockets.target.wants/ssh-agent.socket"
     enable_user_unit ssh-agent.socket start "ssh-agent.socket"
   fi
+
+  # ERGON-106: AddKeysToAgent yes via a managed ~/.ssh/config.d/ergon.conf and one
+  # Include line at the top of ~/.ssh/config (idempotent; backs the file up once).
+  if [ "$CHECK" != 1 ]; then "$ERGON/bin/ergon-ssh-key" setup || warn "ssh config include failed"; fi
 fi
 
 # The shell. link() refuses to replace a real file, which is the behaviour

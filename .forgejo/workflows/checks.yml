@@ -253,6 +253,10 @@ jobs:
       - name: Session SSH agent is exported, enabled and reachable
         run: cd "$CI_DIR" && ./bin/test-ssh-agent.sh
 
+      # ERGON-106: ergon ssh-key and the AddKeysToAgent include; real openssh in a temp HOME.
+      - name: ergon ssh-key makes, loads, lists and copies keys; AddKeysToAgent include
+        run: cd "$CI_DIR" && ./bin/test-ssh-key.sh
+
       # ERGON-87: the emoji list parsed from Unicode's own file; the pick copied and typed.
       - name: The emoji picker copies and types the pick
         run: cd "$CI_DIR" && ./bin/test-emoji.sh
