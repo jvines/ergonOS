@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# ergon:summary=Make text bigger or smaller everywhere, without touching monitor scale
+# ergon:group=hardware
+# ergon:args=[small|normal|large|larger|FACTOR]
+#
+# One factor, applied to every surface's own base size (ERGON-116). No argument
+# opens a fuzzel picker with the current size marked.
+#
+#   ergon text-size              pick from a menu
+#   ergon text-size large        small .8x  normal 1x  large 1.25x  larger 1.6x
+#   ergon text-size 1.4          any factor from 0.75 to 2.9
+#
+# This is a front end for the size ergon-theme already renders from
+# (theme/type.env, kept per user in ~/.local/state/ergon/type.env; ERGON-37).
+# Nothing generated is edited, so a theme switch keeps it. The factor is
+# relative to the default of 11 pt: foot, wezterm, mako, fuzzel and the bar
+# each get round(base * factor), and GTK's text-scaling-factor is set to the
+# same factor, which Qt (gtk3 platform theme) and Chromium/Electron follow.
+#
+# Live: GTK apps, mako (reloaded), the bar and the launcher (restarted/re-read).
+# New terminal windows pick it up; an open foot or wezterm keeps its size until
+# it is reopened. Already-running Qt and Electron apps need to be restarted.
+# Nothing needs a relogin. `ergon display text N` sets the size in points.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+BASE=11
+die() { printf 'ergon text-size: %s\n' "$*" >&2; exit 2; }
+
+current() { "$ERGON/bin/ergon-theme" --text; }
+# FACTOR -> whole points, via integer hundredths (no bc, no locale decimal comma).
+to_points() {
+  local f=$1 w fr
+  [[ $f =~ ^[0-9]+(\.[0-9]+)?$ ]] || return 1
+  w=${f%%.*}; fr=${f#"$w"}; fr=${fr#.}; fr=$(printf '%s00' "$fr"); fr=${fr:0:2}
+  local h=$(( 10#$w * 100 + 10#$fr ))
+  [ "$h" -ge 75 ] && [ "$h" -le 290 ] || return 1
+  echo $(( (BASE * h + 50) / 100 ))
+}
+name_points() {
+  case "$1" in small) echo 9 ;; normal) echo 11 ;; large) echo 14 ;; larger) echo 18 ;; *) return 1 ;; esac
+}
+
+arg=${1:-}
+if [ -z "$arg" ]; then
+  command -v fuzzel >/dev/null 2>&1 || die "fuzzel is not installed; give a size: small normal large larger or a factor"
+  cur=$(current)
+  menu=""
+  for n in small normal large larger; do
+    p=$(name_points "$n"); m=""; [ "$p" = "$cur" ] && m="  (current)"
+    menu+=$(printf '%s  %s pt%s' "$n" "$p" "$m")$'\n'
+  done
+  sel=$(printf '%s' "$menu" | fuzzel --dmenu --prompt 'text size  ') || exit 0
+  arg=${sel%% *}
+  [ -n "$arg" ] || exit 0
+fi
+
+pts=$(name_points "$arg" 2>/dev/null || to_points "$arg") \
+  || die "'$arg' is not small, normal, large, larger or a factor from 0.75 to 2.9"
+"$ERGON/bin/ergon-theme" --text "$pts"
+printf 'text size %s pt (%s x). New terminals and the bar follow now; restart open Qt/Electron apps.\n' \
+  "$pts" "$(awk -v p="$pts" -v b="$BASE" 'BEGIN{printf "%.2f", p/b}')"

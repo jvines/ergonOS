@@ -139,7 +139,8 @@ the `.in`. Editing the output changes your desktop until the next install.
 Text size is the one input that is not the palette. `ergon display text N`
 (8 to 32; the default is in `theme/type.env`) turns every `@TYPE:<n>@` -- a
 size as the template was designed at 11 -- into `n * N / 11`, and sets GTK's
-`text-scaling-factor` to `N / 11`.
+`text-scaling-factor` to `N / 11`. `ergon text-size small|normal|large|larger|FACTOR`
+(or a fuzzel picker) is the same input as a factor of 11.
 
 ### What checks them, and what does not
 
