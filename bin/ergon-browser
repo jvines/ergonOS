@@ -48,17 +48,20 @@ if [ "${#cmd[@]}" -eq 0 ] || ! command -v "${cmd[0]}" >/dev/null 2>&1; then
 fi
 [ -n "$class" ] || class=$(basename "${cmd[0]}")
 
+# In the background: uwsm-app stays in the foreground for as long as the browser
+# lives, so the first launch would never return to xdg-open or to the focus step.
 if command -v uwsm-app >/dev/null 2>&1; then
-  uwsm-app -- "${cmd[@]}" "$@" || true   # own scope, as every other launch
+  { uwsm-app -- "${cmd[@]}" "$@" </dev/null >/dev/null 2>&1 || true; } &   # own scope, as every other launch
 else
-  "${cmd[@]}" "$@" || true
+  { "${cmd[@]}" "$@" </dev/null >/dev/null 2>&1 || true; } &
 fi
+disown 2>/dev/null || true
 
 # A bare SUPER+B opens a window, which Hyprland focuses by itself.
 [ "$#" -gt 0 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] || exit 0
 addr=""
 # The browser may need a moment to take the tab before its window is the one to raise.
-for _ in 1 2 3 4 5; do
+for _ in {1..25}; do
   addr=$(hyprctl clients -j 2>/dev/null | jq -r --arg c "$class" \
     'sort_by(.focusHistoryID) | map(select((.class // "" | ascii_downcase) == ($c | ascii_downcase))) | first.address // empty' || true)
   [ -n "$addr" ] && break
