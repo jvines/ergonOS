@@ -1,0 +1,2 @@
+whisper-cpp          # whisper-cli, the recognizer; ggml comes with it. See bin/ergon-dictate.
+pipewire-audio       # pw-record, the 16 kHz capture. pipewire-pulse already pulls it; named because this needs the binary.

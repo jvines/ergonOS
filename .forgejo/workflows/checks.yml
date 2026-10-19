@@ -104,6 +104,12 @@ jobs:
       - name: QR scan and webcam toggle
         run: cd "$CI_DIR" && ./bin/test-qr-webcam.sh
 
+      # ERGON-100: model list/get/use/rm/verify with a corrupted-hash rejection and a
+      # resumed download, and the dictation toggle with stub recorder, whisper-cli
+      # and wtype.
+      - name: Dictation models and toggle
+        run: cd "$CI_DIR" && ./bin/test-dictate.sh
+
       # ERGON-15: the first-login welcome is the real commands' output, opens
       # once, never burns its one shot on a window that did not appear, and
       # cannot hold up the login. Stubs the terminal, glow and hyprctl.

@@ -121,6 +121,7 @@ window#waybar.empty #window { background: transparent; }
  * and only need reminding of. */
 #custom-status            { color: @COOL_WARN@; }
 #custom-status.recording  { color: @COOL_URGENT@; }
+#custom-status.dictating  { color: @COOL_URGENT@; }
 
 /* The load trio reads as one unit, tinted along the ramp so you can tell them
  * apart at a glance without labels. */
