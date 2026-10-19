@@ -3474,7 +3474,7 @@ grep -q '^ok *tiny.en' /tmp/d100.out && ok "model verify re-checks the installed
 usr "timeout 30 systemctl --user start pipewire.socket pipewire-pulse.socket wireplumber.service" >/tmp/d100.out 2>&1 </dev/null || note "ERGON-100: starting pipewire: $(head -c 150 /tmp/d100.out)"
 sleep 3
 # A source to record from: the guest may have no audio device, so a null sink's monitor.
-usr "pactl load-module module-null-sink sink_name=d100 && pactl set-default-source d100.monitor" >/tmp/d100.out 2>&1 </dev/null \
+usr "pactl load-module module-null-sink sink_name=d100" >/tmp/d100.out 2>&1 </dev/null; sleep 2; usr "pactl set-default-source d100.monitor" >>/tmp/d100.out 2>&1 </dev/null \
   || note "ERGON-100: no null source ($(head -c 100 /tmp/d100.out)); recording uses whatever pipewire offers"
 d100_phase() { usr "ergon-dictate status" 2>/dev/null </dev/null | head -1; }
 d100_idle() { [ "$(d100_phase)" = idle ]; }
