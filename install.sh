@@ -292,6 +292,8 @@ else
   link uwsm/env-hyprland.d/ergon-keyring .config/uwsm/env-hyprland.d/ergon-keyring
   # ERGON-103: $BROWSER, so xdg-open and CLI tools use the default browser and raise it.
   link uwsm/env-hyprland.d/ergon-browser .config/uwsm/env-hyprland.d/ergon-browser
+  # ERGON-106: SSH_AUTH_SOCK, pointing at the ssh-agent.socket enabled further down.
+  link uwsm/env-hyprland.d/ergon-ssh-agent .config/uwsm/env-hyprland.d/ergon-ssh-agent
 
   # ERGON-79: fcitx5, which press-and-hold accents run inside. File by file,
   # into a directory that stays real, because fcitx5 writes into it itself --
@@ -475,6 +477,16 @@ else
     cp "$ERGON/systemd/ergon-taildrop.service" "$HOME/.config/systemd/user/" 2>/dev/null || true
     ln -sfn ../ergon-taildrop.service "$HOME/.config/systemd/user/default.target.wants/ergon-taildrop.service"
     enable_user_unit ergon-taildrop.service restart ergon-taildrop.service
+  fi
+
+  # ERGON-106: openssh's own agent socket (uwsm/env-hyprland.d/ergon-ssh-agent
+  # exports the path). Enabled by the wants symlink systemctl enable would make,
+  # so a machine with no running manager gets it at the next login; only where
+  # openssh ships the unit. start, not restart: a running agent holds keys.
+  if [ "$CHECK" != 1 ] && [ -e /usr/lib/systemd/user/ssh-agent.socket ]; then
+    mkdir -p "$HOME/.config/systemd/user/sockets.target.wants"
+    ln -sfn /usr/lib/systemd/user/ssh-agent.socket "$HOME/.config/systemd/user/sockets.target.wants/ssh-agent.socket"
+    enable_user_unit ssh-agent.socket start "ssh-agent.socket"
   fi
 fi
 

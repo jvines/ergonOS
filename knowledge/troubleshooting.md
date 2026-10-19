@@ -202,6 +202,25 @@ Find the key by `application`, not by label: every one of them is labelled
 Side effect, by design: with the variable set, Chromium takes its proxy from
 gsettings `org.gnome.system.proxy` and ignores `http_proxy` and `https_proxy`.
 
+## git over SSH asks for the key passphrase every time
+
+The session runs openssh's own agent (`ssh-agent.socket`, a user unit, started
+on first use) and `uwsm/env-hyprland.d/ergon-ssh-agent` exports
+`SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/ssh-agent.socket` to the compositor and the
+user manager. `ergon doctor` row `ssh-agent` says which half is missing.
+
+    systemctl --user show-environment | grep SSH_AUTH_SOCK   # must print the path
+    systemctl --user status ssh-agent.socket                  # listening
+    ssh-add -l                                                # 1 = reachable, no keys yet
+
+- **No SSH_AUTH_SOCK**: not a uwsm login, or the drop-in is unlinked (`install.sh`
+  links it); log in again after `ergon update`.
+- **Reachable but still asked**: the agent starts empty. `ssh-add` once per
+  login, or put `AddKeysToAgent yes` in your own `~/.ssh/config` (Ergon never
+  edits that file).
+- **Another agent**: an `ssh` login that forwards one, or `gcr-ssh-agent` /
+  `gpg-agent --enable-ssh-support`, answers instead; run one agent only.
+
 ## Holding a letter repeats it, and no accent popup appears
 
 Press-and-hold accents are fcitx5 plus the omacento addon (ERGON-79). Find

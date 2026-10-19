@@ -223,6 +223,10 @@ jobs:
       - name: Links open in the default browser and raise it
         run: cd "$CI_DIR" && ./bin/test-browser.sh
 
+      # ERGON-106: the session SSH agent; static, plus an archlinux container if docker is there.
+      - name: Session SSH agent is exported, enabled and reachable
+        run: cd "$CI_DIR" && ./bin/test-ssh-agent.sh
+
       # ERGON-87: the emoji list parsed from Unicode's own file; the pick copied and typed.
       - name: The emoji picker copies and types the pick
         run: cd "$CI_DIR" && ./bin/test-emoji.sh
