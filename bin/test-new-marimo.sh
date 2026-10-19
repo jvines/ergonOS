@@ -10,6 +10,6 @@ docker run --rm --label cl.jvines.owner=ergon-67 -v "$REPO":/repo:ro \
     cd /tmp && /repo/bin/ergon-new demo-proj >/dev/null && cd demo-proj
     grep -q "\"marimo\"" uv.lock
     uv run python -c "import marimo, demo_proj"
-    uv run marimo export script notebooks/starter.py | grep -q "import demo_proj"
+    grep -q "import demo_proj" <<<"$(uv run marimo export script notebooks/starter.py)"
   ' && echo "   ok   ergon new project: locked marimo imports, starter notebook exports" \
     || { echo "   FAIL ergon new + marimo" >&2; exit 1; }
