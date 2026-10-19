@@ -15,14 +15,18 @@ local M = {}
 local function read_keymap()
   local f = io.open("/etc/vconsole.conf")
   if not f then return nil end
-  local keymap
+  local keymap, chosen
   for line in f:lines() do
     -- Last KEYMAP= wins, matching how systemd reads the file.
     local v = line:match('^%s*KEYMAP%s*=%s*"?([^"%s]+)"?')
     if v then keymap = v end
+    -- ERGON_KEYMAP is the owner's choice when KEYMAP was swapped for a Latin
+    -- one so the LUKS prompt is typeable (lib/bootkeymap.sh, ERGON-112).
+    local e = line:match('^%s*ERGON_KEYMAP%s*=%s*"?([^"%s]+)"?')
+    if e then chosen = e end
   end
   f:close()
-  return keymap
+  return chosen or keymap
 end
 
 -- hypr/keymap-to-xkb, the same table bin/provision-arch.sh reads. Resolved
