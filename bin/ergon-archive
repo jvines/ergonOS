@@ -46,14 +46,14 @@ find "$ROOT" -mindepth 1 -maxdepth 3 -type d \
 while IFS= read -r -d '' d; do
   # Newest file inside decides staleness. A directory's own mtime only tracks
   # its immediate entries, so a tree written to last week can look years old.
-  newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+  newest=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | LC_ALL=C sort -rn | head -1)
   [ -n "$newest" ] || continue
   age=$(( ( $(date +%s) - ${newest%.*} ) / 86400 ))
   [ "$age" -ge "$DAYS" ] || continue
   mb=$(du -sm "$d" 2>/dev/null | cut -f1)
   [ "${mb:-0}" -ge "$MIN_MB" ] || continue
   printf '%s\t%s\t%s\n' "$mb" "$age" "$d"
-done | sort -rn > "$CAND.all" || true
+done | LC_ALL=C sort -rn > "$CAND.all" || true
 
 # Drop any candidate that lives inside another candidate.
 #
@@ -61,12 +61,12 @@ done | sort -rn > "$CAND.all" || true
 # stale ancestor, and the total counts the same bytes several times -- 951 MB
 # of spectra showed up as "1902 MB in 2 directories". Walk shallowest-first and
 # keep only paths that are not under something already kept.
-sort -t"$(printf '\t')" -k3,3 "$CAND.all" | awk -F'\t' '
+LC_ALL=C sort -t"$(printf '\t')" -k3,3 "$CAND.all" | awk -F'\t' '
   { keep = 1
     for (i = 1; i <= n; i++)
       if (index($3 "/", kept[i] "/") == 1) { keep = 0; break }
     if (keep) { kept[++n] = $3; print } }
-' | sort -rn > "$CAND"
+' | LC_ALL=C sort -rn > "$CAND"
 rm -f "$CAND.all"
 
 if [ ! -s "$CAND" ]; then

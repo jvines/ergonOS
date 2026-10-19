@@ -208,6 +208,23 @@ while IFS= read -r f; do
 done < <(find -L "$ERGON/bin" -maxdepth 1 -type f -name 'ergon-*' | sort)
 
 # ---------------------------------------------------------------------------
+# ERGON-105: parsing pacman's translated output needs LC_ALL=C.
+#
+# ERGON-102 lets a user set LANG. pacman then prints "[instalado]" for
+# "[installed]" in -Sl, and -Si/-Qi field names ("Version" -> "Versión"), so a
+# grep or awk on them silently matches nothing. Only the three modes whose
+# labels are prose are flagged, and only when the same line pipes or captures
+# them; the pin may be on the line or an `export LC_ALL=C` / `local LC_ALL=C`
+# anywhere in the file. Machine-readable modes (-Q, -Qq, -Qm) are not translated.
+while IFS= read -r f; do
+  grep -qE '(export|local) LC_ALL=C' "$f" && continue
+  while IFS=: read -r ln line; do
+    case "$line" in LC_ALL=C*|*[[:space:]\(]LC_ALL=C[[:space:]]*) continue ;; esac
+    report "${f#"$ERGON"/}" "$ln" "parses translated pacman output without LC_ALL=C (it prints [instalado] under es_*)"
+  done < <(grep -nP '^[^#]*(\$\(\s*|[^|]\|[^|].*)(\w+=\S+\s+)*pacman +-(Sl|Si|Qi)\b|^[^#]*pacman +-(Sl|Si|Qi)\b[^|]*[^|]\|[^|]' "$f" || true)
+done < <(find -L "$ERGON/bin" "$ERGON/lib" -maxdepth 1 -type f \( -name 'ergon-*' -o -name '*.sh' \) ! -name 'test-*' | sort)
+
+# ---------------------------------------------------------------------------
 # ERGON-30: every command declares how it takes --help.
 #
 # bin/ergon only lets -h/--help reach a command when its header carries
