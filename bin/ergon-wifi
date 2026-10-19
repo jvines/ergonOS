@@ -88,10 +88,11 @@ share() {
 }
 
 connect() {  # $1 line chosen from the list
-  local line=$1 ssid sec pw
+  local line=$1 ssid sec pw known
   ssid=$(cut -c"$SSID_COL"- <<<"$line")
   sec=$(cut -c9-19 <<<"$line" | sed 's/ *$//')
-  if nmcli -t -f NAME connection show | sed 's/\\\(.\)/\1/g' | grep -qxF -- "$ssid"; then
+  known=$(nmcli -t -f NAME connection show | sed 's/\\\(.\)/\1/g' || true)
+  if grep -qxF -- "$ssid" <<<"$known"; then
     nmcli connection up id "$ssid" >/dev/null 2>&1 && say "Connected to $ssid" || say "Could not connect to $ssid"
   elif [ "$sec" = -- ]; then
     nmcli dev wifi connect "$ssid" >/dev/null 2>&1 && say "Connected to $ssid" || say "Could not connect to $ssid"

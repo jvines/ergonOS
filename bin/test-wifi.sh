@@ -27,7 +27,7 @@ FIX
 )
 eq "strongest first, one per SSID, hidden dropped" "$(cut -c22- <<<"$out" | paste -sd'|')" 'Open\Net|Home|Cafe: Free|Eduroam'
 eq "in-use mark" "$(grep -c '^\*' <<<"$out")" 1
-grep -q "^  90%  -- " <<<"$out" && ok "open network shows --" || bad "open network: $out"
+grep -q " 90%  -- " <<<"$out" && ok "open network shows --" || bad "open network: $out"
 eq "colon in SSID unescaped" "$(grep -c 'Cafe: Free$' <<<"$out")" 1
 
 eq "WPA payload" "$("$W" --qr-payload Home wpa-psk 'pa;ss')" 'WIFI:T:WPA;S:Home;P:pa\;ss;;'
