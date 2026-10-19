@@ -687,7 +687,7 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
       SSH_AUTH_SOCK=$sock ssh-add -l >/dev/null 2>&1; arc=$?
       case $arc in
         0) rec ok "ssh-agent" "reachable at $sock, keys loaded" ;;
-        1) rec ok "ssh-agent" "reachable at $sock, no keys yet — ssh-add once, or AddKeysToAgent yes in ~/.ssh/config" ;;
+        1) rec ok "ssh-agent" "reachable at $sock, no keys yet — ergon ssh-key new (or add PATH); other keys load on first use" ;;
         *) rec warn "ssh-agent" "SSH_AUTH_SOCK=$sock does not answer — systemctl --user status ssh-agent.socket (ergon explain troubleshooting)" ;;
       esac
     fi
