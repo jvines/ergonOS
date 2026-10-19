@@ -200,6 +200,11 @@ jobs:
       - name: The audio-output key cycles sinks
         run: cd "$CI_DIR" && ./bin/test-audio-output.sh
 
+      # ERGON-115: ergon speedtest. Stubs fio and speedtest-cli; asserts parsing,
+      # O_DIRECT, and that the scratch dir is removed on success, failure and SIGTERM.
+      - name: ergon speedtest parses results and cleans up
+        run: cd "$CI_DIR" && ./bin/test-speedtest.sh
+
       # ERGON-95: the Wi-Fi picker. nmcli -t fixtures (escaped colons), QR payload.
       - name: The Wi-Fi picker parses nmcli and builds the share QR
         run: cd "$CI_DIR" && ./bin/test-wifi.sh
