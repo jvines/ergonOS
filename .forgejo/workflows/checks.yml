@@ -198,6 +198,11 @@ jobs:
       - name: Only an idle external drive can be formatted
         run: cd "$CI_DIR" && ./bin/test-drive.sh
 
+      # ERGON-114: ergon db against a stub docker: loopback-only ports, label-scoped
+      # list/rm, typed confirmations for rm and --purge.
+      - name: Databases bind loopback and rm asks first
+        run: cd "$CI_DIR" && ./bin/test-db.sh
+
       # ERGON-84: the audio-output key. Stubs pactl and swayosd-client; asserts the
       # sink chosen, the streams moved and the device named on screen.
       - name: The audio-output key cycles sinks
