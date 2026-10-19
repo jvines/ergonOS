@@ -92,12 +92,23 @@ show_topic() {  # $1: an `ergon explain` topic name
     fi' "$BINDIR/ergon" "$1"
 }
 
+web_app_menu() {
+  local sel
+  sel=$(printf 'Add\nRemove\nList\n' | pick "web app") || exit 0
+  case "$sel" in
+    Add)    exec "$BINDIR/ergon-webapp" add ;;   # asks name and URL in fuzzel
+    Remove) exec "$BINDIR/ergon-webapp" rm ;;    # fuzzel pick
+    List)   run_in_terminal webapp ;;
+  esac
+}
+
 system_menu() {
   local sel
-  sel=$(printf 'Session\nWi-Fi\nTimezone\nLanguage\nChannel\n' | pick system) || exit 0
+  sel=$(printf 'Session\nWi-Fi\nWeb app\nTimezone\nLanguage\nChannel\n' | pick system) || exit 0
   case "$sel" in
     Session)  exec "$BINDIR/ergon-session" ;;
     Wi-Fi)    exec "$BINDIR/ergon-wifi" ;;
+    "Web app") web_app_menu ;;
     Timezone) run_in_terminal timezone ;;   # asks questions, so a real terminal
     Language) run_in_terminal language ;;   # asks questions too
     Channel)  run_in_terminal channel ;;    # prints it; the terminal stays open to change it

@@ -67,3 +67,6 @@ fcitx5-omacento   # pin=265f1ecc4326def8d64961d76ba4bdc8fa0eef2a
                   # build)": the VM builds it, and runs its test suite, every run.
                   # fcitx5 itself is in packages/pacman; fcitx5/ in this repo
                   # is its configuration.
+localsend-bin     # LocalSend, AirDrop-style transfer on the LAN (ERGON-118). A binary
+                  # release, so not pinned (see above). Needs TCP+UDP 53317 inbound,
+                  # opened for private networks in provision-arch.sh's nftables.

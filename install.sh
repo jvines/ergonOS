@@ -388,6 +388,11 @@ else
   # until it is, so adding the bundle later needs no second sync.
   link applications/discord.desktop .local/share/applications/discord.desktop
 
+  # ERGON-118: the web app launchers WEBAPPS in host.env names (unset: WhatsApp,
+  # Discord, YouTube). Creates those and removes only entries it made, so this
+  # is as safe to rerun as the links around it.
+  if [ "$CHECK" = 1 ]; then "$ERGON/bin/ergon-webapp" sync --check; else "$ERGON/bin/ergon-webapp" sync || warn "web apps: sync failed"; fi
+
   if [ "$CHECK" != 1 ]; then
     # ERGON-72: `su -`/`sudo -u` (provisioning, the VM harness) open no
     # logind session, so a bare `systemctl --user` below reached no manager

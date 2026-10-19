@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+# ergon:summary=Web apps: a site as its own window and launcher entry (add, rm, list)
+# ergon:group=launch
+# ergon:args=add [NAME URL [ICON]] | rm [NAME] | list | launch URL | class URL | sync | choose
+# ergon:help=native
+#
+# ERGON-118. A web app is a Chromium-family browser in app mode (--app=URL): no
+# tabs or address bar, and a window class of its own that Hyprland rules can
+# match (`ergon webapp class URL` prints it). Each one is a launcher entry,
+# ~/.local/share/applications/<name>.desktop, marked X-Ergon-Webapp=true. rm,
+# list and sync touch ONLY entries carrying that marker, so a launcher the user
+# made by hand is never deleted by a command that was meant for ours.
+#
+#   add NAME URL [ICON]   ICON is a file, an image URL or a theme icon name. With
+#                         none the site's own is fetched (apple-touch-icon,
+#                         <link rel=icon>, /apple-touch-icon.png), kept only if
+#                         `file` calls it an image, else the generic globe.
+#                         Bare `add` asks for name and URL in fuzzel.
+#   rm [NAME]             no NAME: pick from fuzzel
+#   launch URL            focus the window if that web app is already open
+#   sync                  make the entries match WEBAPPS in hosts/<host>/host.env
+#                         (install.sh runs it; idempotent). Unset means the
+#                         catalog defaults: WhatsApp, Discord, YouTube.
+#   choose                the installer's checklist; prints the WEBAPPS value
+#
+# Browser: the default browser if it is Chromium-family (Brave, Chrome, Vivaldi,
+# Edge, Opera, Chromium), else Chromium, which the base installs. Firefox stays
+# the default browser and is never used here: it has no app mode.
+# The built-in set is applications/webapps/catalog. Discord is skipped while the
+# native discord bundle is installed, so there are never two launchers of that name.
+set -euo pipefail
+
+case "${1:-}" in -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+ERGON="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd -P)"
+CATALOG="$ERGON/applications/webapps/catalog"
+DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/ergon-webapp"
+HOSTENV="${ERGON_HOSTENV:-$ERGON/hosts/$(hostname -s 2>/dev/null || cat /etc/hostname)/host.env}"
+
+die() { echo "ergon webapp: $*" >&2; exit 1; }
+say() { printf '   ok  %s\n' "$*"; }
+notify() { command -v notify-send >/dev/null 2>&1 && notify-send -a ergon "$@" || true; }
+
+catalog() { grep -v '^[[:space:]]*#' "$CATALOG" | grep -v '^[[:space:]]*$'; }
+cat_field() {  # cat_field <id> <1-based field>
+  catalog | awk -F'|' -v id="$1" -v n="$2" '$1 == id { print $n; exit }'
+}
+default_ids() { catalog | awk -F'|' '$4 == 1 { printf "%s ", $1 }' | sed 's/ $//'; }
+
+# The window class Chromium gives --app=URL: chrome-<host>_<path>-Default with
+# every / in the path turned into _ (the same derivation Omarchy uses).
+webapp_class() {
+  local url=$1 address host path
+  address=${url#*://}; address=${address%%[?#]*}
+  host=${address%%/*}; path=${address:${#host}}
+  host=${host##*@}; host=${host%%:*}
+  printf 'chrome-%s_%s-Default\n' "${host,,}" "${path:-/}" | sed 's|/|_|g'
+}
+
+normalize_url() {
+  local u=$1
+  [[ $u =~ ^[a-zA-Z][a-zA-Z0-9+.-]*: ]] || u="https://$u"
+  # --app= runs javascript:, file: and data: as a document; and these characters
+  # would break out of the quoted Exec= argument below.
+  [[ ${u,,} =~ ^https?://[^[:space:]\"\`\$\\]+$ ]] || die "not a usable http(s) URL: $1"
+  printf '%s' "$u"
+}
+
+slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^[:alnum:]]\+/-/g; s/^-//; s/-$//'; }
+
+is_image() {  # a real raster or svg image; ICO is not one fuzzel and waybar draw
+  [ -s "$1" ] && case "$(file -b --mime-type "$1")" in
+    image/png|image/jpeg|image/svg+xml|image/webp) return 0 ;; esac
+  return 1
+}
+download_icon() { curl -fsSL --max-time 10 -o "$2" "$1" 2>/dev/null && is_image "$2"; }
+
+fetch_site_icon() {  # fetch_site_icon <site url> <dest>
+  local site=$1 dest=$2 origin page href
+  origin=$(sed -E 's|^(https?://[^/]+).*|\1|' <<<"$site")
+  page=$(curl -fsSL --max-time 6 "$site" 2>/dev/null | head -c 150000 | tr '\n' ' ' || true)
+  for rel in apple-touch-icon 'rel=["'"'"']\?\(shortcut \)\?icon'; do
+    href=$(grep -oiE "<link[^>]*(rel=[\"'][^\"']*${rel}[^\"']*[\"']|${rel})[^>]*>" <<<"$page" 2>/dev/null \
+           | grep -oiE "href=[\"'][^\"']+" | head -1 | sed -E "s/^href=[\"']//" || true)
+    case $href in
+      http://*|https://*) ;; //*) href="https:$href" ;; /*) href="$origin$href" ;;
+      ?*) href="$origin/$href" ;;
+    esac
+    [ -n "$href" ] && download_icon "$href" "$dest" && return 0
+  done
+  download_icon "$origin/apple-touch-icon.png" "$dest"
+}
+
+# Echoes the Icon= value, always something that draws.
+resolve_icon() {  # resolve_icon <slug> <url> <icon arg or empty>
+  local s=$1 url=$2 ref=${3:-} dest tmp
+  mkdir -p "$ICON_DIR"; dest="$ICON_DIR/$s.png"
+  if [ -z "$ref" ]; then
+    tmp=$(mktemp); if fetch_site_icon "$url" "$tmp"; then install -m644 "$tmp" "$dest"; rm -f "$tmp"; echo "$dest"; return; fi
+    rm -f "$tmp"
+  elif [[ $ref =~ ^https?:// ]]; then
+    tmp=$(mktemp); if download_icon "$ref" "$tmp"; then install -m644 "$tmp" "$dest"; rm -f "$tmp"; echo "$dest"; return; fi
+    rm -f "$tmp"
+  elif [ -f "$ref" ]; then
+    if is_image "$ref"; then install -m644 "$ref" "$dest"; echo "$dest"; return; fi
+  elif [[ $ref != */* ]]; then
+    echo "$ref"; return                                   # a theme icon name
+  fi
+  echo "ergon webapp: no usable icon for $s, using the generic one" >&2
+  install -m644 "$ERGON/applications/webapps/generic.svg" "$ICON_DIR/$s.svg"; echo "$ICON_DIR/$s.svg"
+}
+
+write_entry() {  # write_entry <name> <url> <icon value> [builtin id]
+  local name=$1 url=$2 icon=$3 bid=${4:-} f exec_url
+  f="$DESKTOP_DIR/$name.desktop"
+  mkdir -p "$DESKTOP_DIR"
+  exec_url=${url//%/%%}
+  {
+    printf '[Desktop Entry]\nVersion=1.0\nType=Application\n'
+    printf 'Name=%s\nComment=%s (web app)\n' "$name" "$name"
+    printf 'Exec=ergon-webapp launch "%s"\n' "$exec_url"
+    printf 'Icon=%s\nTerminal=false\nStartupNotify=true\n' "$icon"
+    printf 'StartupWMClass=%s\nCategories=Network;\n' "$(webapp_class "$url")"
+    printf 'X-Ergon-Webapp=true\n'
+    [ -n "$bid" ] && printf 'X-Ergon-Webapp-Builtin=%s\n' "$bid"
+  } > "$f.tmp"
+  mv "$f.tmp" "$f"
+  update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
+}
+
+marked() {  # paths of the entries this tool made
+  local f
+  for f in "$DESKTOP_DIR"/*.desktop; do
+    [ -f "$f" ] && grep -qx 'X-Ergon-Webapp=true' "$f" && printf '%s\n' "$f"
+  done
+}
+
+ask() {  # ask <prompt>: fuzzel when there is a display, else the terminal
+  local v
+  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v fuzzel >/dev/null 2>&1; then
+    v=$(fuzzel --dmenu --lines 0 --prompt "$1  " </dev/null) || exit 0
+  else
+    printf '%s: ' "$1" >&2; read -r v
+  fi
+  printf '%s' "$v"
+}
+
+cmd_add() {
+  local name=${1:-} url=${2:-} icon=${3:-} interactive=0
+  if [ -z "$name" ] && [ -z "$url" ]; then
+    interactive=1
+    name=$(ask "web app name"); [ -n "$name" ] || exit 0
+    url=$(ask "web app URL");   [ -n "$url" ]  || exit 0
+  fi
+  [ -n "$name" ] && [ -n "$url" ] || die "usage: ergon webapp add NAME URL [ICON]"
+  [[ $name != */* && $name != .* ]] || die "the name becomes a file name; no '/' and no leading '.'"
+  url=$(normalize_url "$url")
+  local f="$DESKTOP_DIR/$name.desktop"
+  if [ -e "$f" ] && ! grep -qx 'X-Ergon-Webapp=true' "$f"; then
+    die "$f exists and was not made by ergon webapp; not touching it"
+  fi
+  write_entry "$name" "$url" "$(resolve_icon "$(slug "$name")" "$url" "$icon")"
+  say "$name -> $url"
+  [ "$interactive" = 1 ] && notify "Web app added" "$name"
+  return 0
+}
+
+cmd_rm() {
+  local name=${1:-} f
+  if [ -z "$name" ]; then
+    local names; names=$(marked | while read -r p; do basename "${p%.desktop}"; done | sort)
+    [ -n "$names" ] || { echo "no web apps made by ergon webapp"; exit 0; }
+    if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v fuzzel >/dev/null 2>&1; then
+      name=$(fuzzel --dmenu --prompt "remove web app  " <<<"$names") || exit 0
+    else
+      echo "$names" >&2; printf 'remove which: ' >&2; read -r name
+    fi
+  fi
+  [ -n "$name" ] || exit 0
+  f="$DESKTOP_DIR/$name.desktop"
+  [ -f "$f" ] || die "no web app called $name"
+  grep -qx 'X-Ergon-Webapp=true' "$f" || die "$f was not made by ergon webapp; not removing it"
+  rm -f "$f" "$ICON_DIR/$(slug "$name")".{png,svg}
+  update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
+  say "removed $name"
+}
+
+cmd_list() {
+  local f
+  while read -r f; do
+    [ -n "$f" ] || continue
+    printf '%-20s %s\n' "$(basename "${f%.desktop}")" "$(sed -n 's/^Exec=ergon-webapp launch "\(.*\)"$/\1/p' "$f" | sed 's/%%/%/g')"
+  done < <(marked | sort)
+}
+
+# --- launching --------------------------------------------------------------
+chromium_exec() {  # the Chromium-family browser to use, one word
+  local d desk exe
+  desk=$(xdg-mime query default x-scheme-handler/https 2>/dev/null || true)
+  case $desk in
+    google-chrome*|brave*|vivaldi*|microsoft-edge*|opera*|chromium*)
+      IFS=: read -ra dirs <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+      for d in "${dirs[@]}"; do
+        [ -r "$d/applications/$desk" ] || continue
+        exe=$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$d/applications/$desk" | head -1)
+        [ -n "$exe" ] && command -v "$exe" >/dev/null 2>&1 && { echo "$exe"; return; }
+      done ;;
+  esac
+  echo chromium
+}
+
+cmd_launch() {
+  local url=${1:-}; [ -n "$url" ] || die "usage: ergon webapp launch URL"
+  local class rest addr browser
+  class=$(webapp_class "$url"); rest=${class#chrome-}
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
+    # Other Chromium-family browsers prefix the class with their own name.
+    addr=$(hyprctl clients -j 2>/dev/null | jq -r --arg r "${rest,,}" \
+      'map(select((.class // "" | ascii_downcase) | endswith("-" + $r))) | sort_by(.focusHistoryID) | first.address // empty' 2>/dev/null || true)
+    if [ -n "$addr" ]; then
+      hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1 && exit 0
+    fi
+  fi
+  browser=$(chromium_exec)
+  if command -v uwsm-app >/dev/null 2>&1; then
+    exec uwsm-app -- "$browser" --app="$url"
+  fi
+  exec "$browser" --app="$url"
+}
+
+# --- host.env, the installer, provisioning ----------------------------------
+wanted_ids() {  # WEBAPPS from host.env, else the catalog defaults
+  local WEBAPPS_SET=0 WEBAPPS=""
+  if [ -f "$HOSTENV" ] && grep -q '^WEBAPPS=' "$HOSTENV"; then
+    # shellcheck disable=SC1090
+    WEBAPPS=$(. "$HOSTENV" >/dev/null 2>&1; printf '%s' "${WEBAPPS-}"); WEBAPPS_SET=1
+  fi
+  if [ "$WEBAPPS_SET" = 1 ]; then printf '%s\n' "$WEBAPPS"; else default_ids; fi
+}
+
+cmd_sync() {
+  local check=0 id want f title url bid
+  [ "${1:-}" = --check ] && check=1
+  want=" $(wanted_ids) "
+  for id in $want; do
+    [ -n "$(cat_field "$id" 1)" ] || echo "   !!  WEBAPPS names '$id', which is not in the catalog" >&2
+  done
+  # Native Discord already has a launcher of that name (ERGON-39 bundle).
+  if command -v discord >/dev/null 2>&1; then want=${want// discord / }; fi
+  while IFS='|' read -r id title url _; do
+    f="$DESKTOP_DIR/$title.desktop"
+    if [[ $want == *" $id "* ]]; then
+      if [ -e "$f" ] && ! grep -qx 'X-Ergon-Webapp=true' "$f"; then
+        echo "   !!  $f is not ours; leaving it" >&2; continue
+      fi
+      if [ -e "$f" ] && grep -qx "X-Ergon-Webapp-Builtin=$id" "$f" \
+         && [ -f "$ICON_DIR/$id.png" ] && grep -qx "Exec=ergon-webapp launch \"${url//%/%%}\"" "$f"; then
+        continue
+      fi
+      [ "$check" = 1 ] && { echo "   would create  $title.desktop"; continue; }
+      mkdir -p "$ICON_DIR"; install -m644 "$ERGON/applications/webapps/$id.png" "$ICON_DIR/$id.png"
+      write_entry "$title" "$url" "$ICON_DIR/$id.png" "$id"
+      say "web app $title"
+    elif [ -e "$f" ] && grep -qx "X-Ergon-Webapp-Builtin=$id" "$f"; then
+      [ "$check" = 1 ] && { echo "   would remove  $title.desktop"; continue; }
+      rm -f "$f" "$ICON_DIR/$id.png"; say "removed web app $title"
+    fi
+  done < <(catalog)
+  update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
+}
+
+# The checklist. UI on stderr, the WEBAPPS value alone on stdout.
+cmd_choose() {
+  local ids=() titles=() on=() id title d i line n
+  if [ -n "${ERGON_WEBAPPS+x}" ]; then
+    [ "$ERGON_WEBAPPS" = none ] && ERGON_WEBAPPS=""
+    for id in $ERGON_WEBAPPS; do [ -n "$(cat_field "$id" 1)" ] || die "unknown web app: $id"; done
+    printf '%s\n' "$ERGON_WEBAPPS"; return
+  fi
+  if [ ! -t 0 ]; then default_ids; return; fi
+  while IFS='|' read -r id title _ d; do ids+=("$id"); titles+=("$title"); on+=("$d"); done < <(catalog)
+  while :; do
+    printf '\n   Web apps (each is a window of its own; Chromium is installed for them):\n' >&2
+    for i in "${!ids[@]}"; do
+      printf '     %2d) [%s] %s\n' $((i + 1)) "$([ "${on[$i]}" = 1 ] && echo x || echo ' ')" "${titles[$i]}" >&2
+    done
+    printf '   Numbers to toggle, empty to accept: ' >&2
+    read -r line || line=""
+    [ -n "$line" ] || break
+    for n in $line; do
+      [[ $n =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "${#ids[@]}" ] || { echo "   ignored: $n" >&2; continue; }
+      i=$((n - 1)); on[$i]=$((1 - on[i]))
+    done
+  done
+  for i in "${!ids[@]}"; do [ "${on[$i]}" = 1 ] && printf '%s ' "${ids[$i]}"; done | sed 's/ $//'
+  echo
+}
+
+case "${1:-}" in
+  add)    shift; cmd_add "$@" ;;
+  rm|remove) shift; cmd_rm "$@" ;;
+  list|"") cmd_list ;;
+  launch) shift; cmd_launch "$@" ;;
+  class)  shift; webapp_class "${1:?usage: ergon webapp class URL}" ;;
+  sync)   shift; cmd_sync "$@" ;;
+  choose) cmd_choose ;;
+  *) die "unknown command '$1' (add, rm, list, launch, class, sync, choose)" ;;
+esac

@@ -1,0 +1,13 @@
+# id|Title|URL|on at install (1/0)
+# Read by bin/ergon-webapp. The id is what WEBAPPS in hosts/<host>/host.env
+# names; the icon is <id>.png beside this file. Add a row and its icon here and
+# the installer's checklist, `ergon webapp sync` and the tests all pick it up.
+whatsapp|WhatsApp|https://web.whatsapp.com/|1
+discord|Discord|https://discord.com/channels/@me|1
+youtube|YouTube|https://www.youtube.com/|1
+x|X|https://x.com/|0
+google-photos|Google Photos|https://photos.google.com/|0
+google-maps|Google Maps|https://maps.google.com/|0
+google-contacts|Google Contacts|https://contacts.google.com/|0
+google-messages|Google Messages|https://messages.google.com/web/conversations|0
+zoom|Zoom|https://app.zoom.us/wc/home|0
