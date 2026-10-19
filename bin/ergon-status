@@ -53,7 +53,8 @@ tint() {
   t=$(grep -m1 -oE '^[0-9]+' <<<"$(hyprctl hyprsunset temperature 2>/dev/null)") || true
   [ -n "$t" ] && [ "$t" != "$NEUTRAL" ] && printf '%s' "$t"
 }
-awake()     { systemctl --user is-active --quiet ergon-awake.service 2>/dev/null; }
+awake()     { systemctl --user is-active --quiet ergon-awake.service 2>/dev/null || full; }
+full()      { systemctl --user is-active --quiet ergon-awake-full.service 2>/dev/null; }
 watches() {
   grep -c . <<<"$(systemctl --user list-units --no-legend --state=active 'ergon-watch-*.scope' 2>/dev/null)" || true
 }
@@ -95,7 +96,8 @@ text=() tip=() class=()
 if recording; then text+=("󰑋"); tip+=("recording -- click to stop"); class+=(recording); fi
 if dnd; then text+=("󰂛"); tip+=("do not disturb -- SUPER+CTRL+D to end it"); class+=(dnd); fi
 if t=$(tint); then text+=("󰖔"); tip+=("night light at ${t}K"); class+=(tint); fi
-if awake; then text+=("󰅶"); tip+=("staying awake -- SUPER+CTRL+I to end it"); class+=(awake); fi
+if full; then text+=("󰅶"); tip+=("staying fully awake, lid included: no suspend -- SUPER+CTRL+SHIFT+I to end it"); class+=(awake-full)
+elif awake; then text+=("󰅶"); tip+=("staying awake -- SUPER+CTRL+I to end it"); class+=(awake); fi
 w=$(watches)
 if [ "${w:-0}" -gt 0 ]; then text+=("󰔟 $w"); tip+=("$w ergon watch run(s)"); class+=(watch); fi
 read -r upd news 2>/dev/null < "$CACHE" || { upd=0; news=0; }

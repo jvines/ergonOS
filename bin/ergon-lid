@@ -27,8 +27,14 @@ case "${1:?usage: ergon-lid open|close}" in
     if [ "$externals" -gt 0 ]; then
       hyprctl keyword monitor "$internal, disable"
     else
-      # Nothing else to draw on. Leave the panel alone and let logind's
-      # HandleLidSwitch=suspend-then-hibernate do its job instead.
+      # Nothing else to draw on. Normally: leave the panel alone and let
+      # logind's HandleLidSwitch=suspend-then-hibernate do its job.
+      # In `ergon-awake full` logind is inhibited from acting on the lid
+      # (ERGON-83), so a shut laptop stays up: lock it and blank the panel.
+      if systemctl --user is-active --quiet ergon-awake-full.service 2>/dev/null; then
+        loginctl lock-session || true
+        hyprctl dispatch 'hl.dsp.exec_raw("dpms off")'
+      fi
       exit 0
     fi
     ;;
@@ -37,5 +43,7 @@ case "${1:?usage: ergon-lid open|close}" in
     # different scale if it was docked to something else in between. The
     # per-host file re-applies the real mode on the next reload.
     hyprctl keyword monitor "$internal, preferred, auto, 1"
+    # Blanked by a close in `ergon-awake full`; a no-op otherwise.
+    hyprctl dispatch 'hl.dsp.exec_raw("dpms on")'
     ;;
 esac

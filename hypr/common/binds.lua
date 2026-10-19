@@ -302,6 +302,8 @@ bind("SUPER + SHIFT + A",     "Restore notification",     "makoctl restore")
 bind("SUPER + CTRL + D",      "Do not disturb (toggle)",  "makoctl mode -t do-not-disturb; ergon-status --poke")
 -- Stay awake (ERGON-83): no dim, lock or screen-off until toggled back. Shown on the bar.
 bind("SUPER + CTRL + I",      "Stay awake (toggle)",      "ergon-awake")
+-- And through a shut lid: no suspend at all; the lid locks and blanks instead (ergon-lid).
+bind("SUPER + CTRL + SHIFT + I", "Stay fully awake, lid included (toggle)", "ergon-awake toggle-full")
 
 -- Next keyboard layout (ERGON-85), for a host that lists more than one in kb_layout.
 -- SUPER+SPACE is the launcher; with CTRL it was free. The bar is told by the script.
