@@ -70,9 +70,14 @@ export CRYPTNAME=crypttest ARCH_BOOTSTRAP_TEST=1 HOSTNAME_NEW=testbox USERNAME_N
 # only the arch-chroot line leaves the heredoc body to run as top-level
 # commands -- which is how this first failed: sed went looking for
 # /etc/mkinitcpio.conf on the container instead of inside /mnt.
-sed '/^arch-chroot \\/mnt/,/^CHROOT\$/d' /df/bin/arch-bootstrap.sh > /tmp/bootstrap.sh
+# Under /tmp/ergon/bin with lib/ linked in: the script finds lib/*.sh relative
+# to itself (archive-pin.sh, timezone.sh). TIMEZONE is pinned and the lookup
+# pointed at nothing so the run never depends on a geo-IP answer (ERGON-82).
+mkdir -p /tmp/ergon/bin; ln -sfn /df/lib /tmp/ergon/lib
+export TIMEZONE=America/Santiago ERGON_TZ_URLS=file:///nonexistent
+sed '/^arch-chroot \\/mnt/,/^CHROOT\$/d' /df/bin/arch-bootstrap.sh > /tmp/ergon/bin/bootstrap.sh
 echo '   (chroot stage removed for this test)'
-bash /tmp/bootstrap.sh \"\$LOOP\" 2>&1 | sed 's/^/   /'
+bash /tmp/ergon/bin/bootstrap.sh \"\$LOOP\" 2>&1 | sed 's/^/   /'
 
 echo
 echo '=== GENERATED FSTAB ==='

@@ -459,6 +459,13 @@ else
     ln -sfn ../ergon-oom-notify.service "$HOME/.config/systemd/user/default.target.wants/ergon-oom-notify.service"
     enable_user_unit ergon-oom-notify.service restart ergon-oom-notify.service
   fi
+
+  # ERGON-86: the same follower, for core dumps. Same unit shape, same reasons.
+  if [ "$CHECK" != 1 ]; then
+    cp "$ERGON/systemd/ergon-crash-notify.service" "$HOME/.config/systemd/user/" 2>/dev/null || true
+    ln -sfn ../ergon-crash-notify.service "$HOME/.config/systemd/user/default.target.wants/ergon-crash-notify.service"
+    enable_user_unit ergon-crash-notify.service restart ergon-crash-notify.service
+  fi
 fi
 
 # The shell. link() refuses to replace a real file, which is the behaviour

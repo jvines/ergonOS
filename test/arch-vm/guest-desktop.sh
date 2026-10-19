@@ -2959,6 +2959,277 @@ grep -q 'ergon explain' "$H/.codex/AGENTS.md" 2>/dev/null \
 # shellcheck source=guest-backup.sh
 . "$SHARE/test/arch-vm/guest-backup.sh"
 
+# --- ERGON-82..90: the Omarchy-derived keys and commands, driven live -------
+# The Lua dispatch names these use came from another distro's config and were
+# unverified: a wrong one is accepted and then does nothing. Each check below
+# asserts the OUTCOME in the running compositor. Binds are Lua closures, so
+# there is no way to press one from here; the dispatch a bind issues is
+# issued directly, and the bind itself is only asserted registered.
+echo "--- omarchy-derived behaviour (ERGON-82..90) ---"
+o_dsp() { O_OUT=$(hq "dispatch '$1'" 2>&1); }
+o_addr() { hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | .address' | head -1; }
+# Focus the way a person does: click the window, through ydotool's uinput
+# pointer (the synthetic-clicks section started ydotoold). Runs 1-4 of this
+# section tried hl.dsp.focus({ window = ... }) in four selector forms: each said
+# "ok" and none moved focus, and a window the compositor maps here does not take
+# focus either -- follow_mouse = 1 hands it back to whatever is under the
+# pointer. The dispatch forms are still tried after the click, and reported.
+o_center() { hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | "\((.at[0] + .size[0] / 2) | floor) \((.at[1] + .size[1] / 2) | floor)"' | head -1; }
+o_click() {  # o_click <x> <y> [count]
+  hq "dispatch 'hl.dsp.cursor.move({x = $1, y = $2})'" >/dev/null 2>&1; sleep 0.3
+  usr "YDOTOOL_SOCKET=$YSOCK ydotool click --repeat ${3:-1} --next-delay 60 0xC0" >/dev/null 2>&1; sleep 0.5
+}
+o_key() { usr "YDOTOOL_SOCKET=$YSOCK ydotool key $*" >/tmp/ydotool.out 2>&1; sleep 0.6; }
+o_focus() {  # o_focus <class>: a click first, then the dispatch forms; says which took
+  local a f; a=$(o_addr "$1")
+  [ "$(o_active .address)" = "$a" ] && return 0
+  if [ -S "$YSOCK" ]; then
+    # shellcheck disable=SC2046
+    o_click $(o_center "$1")
+    [ "$(o_active .address)" = "$a" ] && return 0
+    note "a click at $(o_center "$1") left focus on '$(o_active .class)'"
+  fi
+  for f in "hl.dsp.exec_raw(\"focuswindow address:$a\")" "hl.dsp.focus({ window = \"address:$a\" })"; do
+    o_dsp "$f"; sleep 0.5
+    if [ "$(o_active .address)" = "$a" ]; then note "focus form that works: $f"; return 0; fi
+    note "focus form $f did nothing (said: $O_OUT)"
+  done; return 1
+}
+o_has() { [ -n "$(hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | .address' 2>/dev/null | head -1)" ]; }
+o_win() {  # o_win <class> [cmd] -> opens a foot window of that class on the focused workspace, waits for it
+  o_dsp "hl.dsp.exec_cmd(\"foot --app-id=$1 ${2:-sleep 900}\")"
+  for _ in $(seq 1 30); do o_has "$1" && return 0; sleep 0.5; done; return 1
+}
+o_field() {  # o_field <class> <jq path on the client> -> value
+  hq clients -j 2>/dev/null | jq -r --arg c "$1" ".[] | select(.class == \$c) | $2" 2>/dev/null | head -1
+}
+o_until() {  # o_until <seconds> <command...> -> polled until it succeeds
+  local n=$1; shift
+  for _ in $(seq 1 $((n * 2))); do "$@" && return 0; sleep 0.5; done; return 1
+}
+o_active() { hq activewindow -j 2>/dev/null | jq -r "$1" 2>/dev/null; }
+
+# Binds registered (the part of SUPER+C etc. that can be proven here).
+_ob=$(hq binds -j 2>/dev/null)
+for _d in "Copy (every app)" "Paste (every app)" "Cut (every app)" "Next window" "Previous window" \
+          "Swap with left window" "Swap with right window" "Swap with window above" "Swap with window below" \
+          "Emoji picker (copy and type)"; do
+  jq -e --arg d "$_d" 'any(.[]; .description == $d)' <<<"$_ob" >/dev/null 2>&1 \
+    && ok "bind registered: $_d" || bad "bind not registered: $_d"
+done
+
+# What this Hyprland really exposes, for when a dispatch below is silently a no-op.
+hq "eval 'local f = io.open(\"/tmp/o-dsp.txt\", \"w\"); for _, t in ipairs({\"hl\", \"dsp\", \"dsp.window\", \"dsp.workspace\"}) do local m = hl; for p in t:gmatch(\"[^.]+\") do m = m and m[p] end; if type(m) == \"table\" then local k = {}; for n in pairs(m) do k[#k+1] = tostring(n) end; table.sort(k); f:write(t, \": \", table.concat(k, \" \"), \"\\n\") end end; f:close()'" >/dev/null 2>&1
+note "hl API: $(tr '\n' ';' </tmp/o-dsp.txt 2>/dev/null | cut -c1-900)"
+# The screenshot section leaves fuzzel up, and fuzzel is a layer surface with
+# EXCLUSIVE keyboard interactivity: while it is mapped no window can take focus,
+# by click, by dispatch or on map. Runs 1-5 of this section were that.
+note "before the window keys: layers $(hq layers -j 2>/dev/null | jq -c '[.. | objects | select(has("namespace")) | "\(.namespace)/\(.pid)"]' 2>/dev/null); fuzzel: $(pgrep -a -x fuzzel | tr '\n' ' ')"
+pkill -u "$U" -x fuzzel 2>/dev/null
+pkill -u "$U" -x foot 2>/dev/null; sleep 1   # strays from the sections above
+nolauncher() { ! hq layers -j 2>/dev/null | jq -e '[.. | objects | select(.namespace? == "launcher")] | length > 0' >/dev/null; }
+o_until 5 nolauncher || note "a launcher layer is still mapped"
+o_dsp 'hl.dsp.focus({workspace = 7})'
+sleep 1
+# The keys below are PRESSED, through ydotool's uinput keyboard, as the
+# keycode binds above are: Hyprland matches them through the us layout the
+# compositor is back on. evdev: LEFTMETA 125, LEFTALT 56, TAB 15, H 35, O 24,
+# C 46, V 47, ENTER 28.
+if [ ! -S "$YSOCK" ] || ! pgrep -x ydotoold >/dev/null; then
+  note "ydotoold is gone: the window keys below cannot be pressed, only dispatched"
+fi
+if o_win ergon-t1 && o_win ergon-t2; then
+  ok "two windows opened on workspace 7"
+  o_focus ergon-t2 || note "could not focus ergon-t2 before pop"
+  # --- ERGON-89: pop out, SUPER+O ------------------------------------------
+  o_key 125:1 24:1 24:0 125:0
+  pop_on() { [ "$(o_active .floating)" = true ] && [ "$(o_active .pinned)" = true ]; }
+  if o_until 5 pop_on; then ok "SUPER+O (ergon-window pop) floats and pins the focused window"
+  else bad "SUPER+O: floating=$(o_active .floating) pinned=$(o_active .pinned) on '$(o_active .class)'"; fi
+  o_key 125:1 24:1 24:0 125:0
+  pop_off() { [ "$(o_active .floating)" = false ] && [ "$(o_active .pinned)" = false ]; }
+  if o_until 5 pop_off; then ok "SUPER+O again puts it back in the tiling"
+  else bad "SUPER+O again: floating=$(o_active .floating) pinned=$(o_active .pinned)"; fi
+
+  # --- ERGON-89: swap, SUPER+ALT+H -----------------------------------------
+  o_focus ergon-t2 || note "could not focus ergon-t2"
+  _x1=$(o_field ergon-t1 '.at[0]'); _x2=$(o_field ergon-t2 '.at[0]')
+  if [ "${_x1:-0}" -lt "${_x2:-0}" ]; then
+    o_key 125:1 56:1 35:1 35:0 56:0 125:0
+    swapped() { [ "$(o_field ergon-t1 '.at[0]')" -gt "$(o_field ergon-t2 '.at[0]')" ]; }
+    if o_until 5 swapped; then ok "SUPER+ALT+H swapped the focused window with the one on its left (t1 x $_x1 -> $(o_field ergon-t1 '.at[0]'))"
+    else bad "SUPER+ALT+H moved nothing (t1 x=$(o_field ergon-t1 '.at[0]'), t2 x=$(o_field ergon-t2 '.at[0]'), focused '$(o_active .class)')"; fi
+  else
+    bad "precondition: t1 not left of t2 (x $_x1 vs $_x2), swap not tested"
+  fi
+
+  # --- ERGON-89: ALT+TAB (cycle_next + bring_to_top) -----------------------
+  _a0=$(o_active .class)
+  o_key 56:1 15:1 15:0 56:0
+  cyc() { [ "$(o_active .class)" != "$_a0" ]; }
+  if [ "$_a0" != null ] && o_until 4 cyc; then ok "ALT+TAB moved focus to the next window ($_a0 -> $(o_active .class))"
+  else bad "ALT+TAB left focus on '$_a0'"; fi
+
+  # --- ERGON-88: SUPER+C copies a selection in foot to the clipboard -------
+  # A double-click selects the word (foot: pad 8, first row); SUPER+C sends
+  # Ctrl+Insert, which foot.ini binds to clipboard-copy.
+  printf '#!/bin/sh\necho ergonclipprobe\nexec sleep 900\n' > /tmp/o-clip.sh; chmod 755 /tmp/o-clip.sh
+  o_win ergon-t4 /tmp/o-clip.sh; sleep 1
+  usr "printf before | wl-copy" >/dev/null 2>&1
+  _ax=$(o_field ergon-t4 '.at[0]'); _ay=$(o_field ergon-t4 '.at[1]')
+  o_click $((_ax + 40)) $((_ay + 16)) 2
+  [ "$(o_active .class)" = ergon-t4 ] || note "the double-click left focus on '$(o_active .class)'"
+  o_key 125:1 46:1 46:0 125:0
+  clip() { [ "$(usr 'timeout 3 wl-paste -n' 2>/dev/null)" = ergonclipprobe ]; }
+  if o_until 4 clip; then ok "SUPER+C copied foot's selection to the clipboard (wl-paste: ergonclipprobe)"
+  else bad "SUPER+C: wl-paste gives '$(usr 'timeout 3 wl-paste -n' 2>&1 | head -c 60)', primary '$(usr 'timeout 3 wl-paste -p -n' 2>&1 | head -c 60)'"; fi
+
+  # --- ERGON-88: SUPER+V pastes the clipboard into foot --------------------
+  rm -f /tmp/o-keys.out
+  printf '#!/bin/sh\nexec cat -v > /tmp/o-keys.out\n' > /tmp/o-keys.sh; chmod 755 /tmp/o-keys.sh
+  o_win ergon-t3 /tmp/o-keys.sh; sleep 1
+  o_focus ergon-t3 || note "could not focus ergon-t3"
+  # setsid -f: a wl-copy forked inside su's session did not outlive it (run 6
+  # pasted the previous clipboard). Proven set before SUPER+V is pressed.
+  usr "setsid -f wl-copy ergonpasteprobe" >/dev/null 2>&1
+  setclip() { [ "$(usr 'timeout 3 wl-paste -n' 2>/dev/null)" = ergonpasteprobe ]; }
+  o_until 4 setclip || note "harness: wl-copy did not set the clipboard (wl-paste: '$(usr 'timeout 3 wl-paste -n' 2>&1 | head -c 40)')"
+  o_key 125:1 47:1 47:0 125:0
+  o_key 28:1 28:0
+  pasted() { grep -q ergonpasteprobe /tmp/o-keys.out 2>/dev/null; }
+  if o_until 5 pasted; then ok "SUPER+V pasted the clipboard into foot"
+  else bad "SUPER+V: the client read '$(head -c 60 /tmp/o-keys.out 2>/dev/null | tr '\n' ' ')' (focused '$(o_active .class)')"; fi
+  note "SUPER+X (cut) is not pressed: a terminal has nothing to cut, and no GTK/Qt app is in the image"
+  pkill -u "$U" -f 'app-id=ergon-t[34]' 2>/dev/null; sleep 1
+
+  # --- ERGON-90: layout cycle ------------------------------------------------
+  o_dsp 'hl.dsp.focus({ workspace = 7 })'
+  tl() { hq activeworkspace -j 2>/dev/null | jq -r '.tiledLayout // "none"'; }
+  _l0=$(tl)
+  for want in master scrolling; do
+    usr "ergon-tiling next" >/dev/null 2>&1
+    lay() { [ "$(tl)" = "$want" ]; }
+    if o_until 5 lay; then ok "ergon-tiling next -> activeworkspace tiledLayout is $want (started $_l0)"
+    else bad "ergon-tiling next: tiledLayout is '$(tl)', want $want"; fi
+  done
+  usr "ergon-tiling next" >/dev/null 2>&1
+  allfloat() { [ "$(hq clients -j | jq '[.[] | select(.workspace.id == 7 and (.floating | not))] | length')" = 0 ]; }
+  o_until 5 allfloat && ok "ergon-tiling floating floats the workspace's windows" || bad "ergon-tiling floating left tiled windows on workspace 7"
+  usr "ergon-tiling next" >/dev/null 2>&1
+  dwi() { [ "$(tl)" = dwindle ] && [ "$(hq clients -j | jq '[.[] | select(.workspace.id == 7 and .floating)] | length')" = 0 ]; }
+  o_until 5 dwi && ok "ergon-tiling next wraps to dwindle and tiles them again" || bad "ergon-tiling wrap: layout '$(tl)'"
+  usr "ergon-tiling back" >/dev/null 2>&1
+  bk() { [ "$(usr 'ergon-tiling show')" = floating ]; }
+  o_until 5 bk && ok "ergon-tiling back goes the other way round" || bad "ergon-tiling back did not reach floating"
+  usr "ergon-tiling next" >/dev/null 2>&1   # back to dwindle, windows tiled
+
+  # --- ERGON-89: close-all ---------------------------------------------------
+  usr "ergon-window close-all" >/dev/null 2>&1
+  empty7() { [ "$(hq clients -j | jq '[.[] | select(.workspace.id == 7)] | length')" = 0 ]; }
+  o_until 8 empty7 && ok "ergon-window close-all closed every window on the workspace" \
+                   || bad "ergon-window close-all left $(hq clients -j | jq '[.[] | select(.workspace.id == 7)] | length') windows"
+else
+  bad "could not open windows for the window-key checks"
+fi
+pkill -u "$U" -f 'app-id=ergon-t' 2>/dev/null
+
+# --- ERGON-83: stay awake holds an idle inhibitor ---------------------------
+inh() { su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemd-inhibit --list --no-legend 2>/dev/null" | grep -c 'ergon-awake.*idle'; }
+usr "ergon-awake on" >/dev/null 2>&1
+has_inh() { [ "$(inh)" -ge 1 ]; }
+o_until 6 has_inh && ok "ergon-awake on: systemd-inhibit lists an idle inhibitor" \
+                  || { bad "ergon-awake on: no idle inhibitor listed"; usr "systemd-inhibit --list" 2>&1 | head -8 | sed 's/^/     /'; }
+[ "$(usr 'ergon-awake status')" = on ] && ok "ergon-awake status says on" || bad "ergon-awake status says '$(usr 'ergon-awake status')'"
+usr "ergon-awake off" >/dev/null 2>&1
+no_inh() { [ "$(inh)" = 0 ]; }
+o_until 6 no_inh && ok "ergon-awake off: the inhibitor is gone" || bad "ergon-awake off: inhibitor still listed"
+# Full mode: sleep and the lid switch too, and 'off' takes all of it away.
+inhf() { su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemd-inhibit --list --no-legend 2>/dev/null" | grep '^ergon-awake' | awk '{print $6}' | tr : '\n' | grep -cxE 'sleep|handle-lid-switch'; }
+# logind lists WHAT in its own order (run 9: sleep:idle:handle-lid-switch); count the two.
+has_inhf() { [ "$(inhf)" -ge 2 ]; }
+usr "ergon-awake full" >/dev/null 2>&1
+o_until 6 has_inhf && ok "ergon-awake full: systemd-inhibit lists idle, sleep and handle-lid-switch" \
+                   || { bad "ergon-awake full: no idle:sleep:handle-lid-switch inhibitor listed"; usr "systemd-inhibit --list" 2>&1 | head -8 | sed 's/^/     /'; }
+[ "$(usr 'ergon-awake status')" = full ] && ok "ergon-awake status says full" || bad "ergon-awake status says '$(usr 'ergon-awake status')'"
+usr "ergon-awake off" >/dev/null 2>&1
+no_any() { [ "$(inhf)" = 0 ] && [ "$(inh)" = 0 ]; }
+o_until 6 no_any && ok "ergon-awake off: the sleep and lid-switch inhibitors are gone" || bad "ergon-awake off: an ergon-awake inhibitor is still listed"
+
+# --- ERGON-85: layout cycle changes the active keymap -----------------------
+_kb_save=$(kb_main)
+hq "eval 'hl.config({ input = { kb_layout = \"us,es\", kb_variant = \"\" } })'" >/dev/null
+# Any keyboard, not the main one: main is whichever sent the last key, and after
+# the typing above that can be a virtual keyboard kb_layout never reaches (wtype's
+# or an input method's). ergon-layout reads a keyboard that carries the list for that
+# reason, and kidx reads the one it reads.
+note "keyboards: $(hq devices -j | jq -c '[.keyboards[] | {name, layout, main}]')"
+have2() { hq devices -j | jq -e 'any(.keyboards[]; .layout == "us,es")' >/dev/null; }
+if o_until 8 have2; then
+  kidx() { hq devices -j | jq -r '(.keyboards | map(select(.layout | contains(","))) + .)[0].active_layout_index'; }
+  _i0=$(kidx)
+  usr "ergon-layout" >/dev/null 2>&1
+  moved() { [ "$(kidx)" != "$_i0" ]; }
+  if o_until 5 moved; then ok "ergon-layout cycled the active layout (index $_i0 -> $(kidx))"
+  else bad "ergon-layout left the active layout index at $_i0"; fi
+  _wb=$(usr "ergon-layout --waybar")
+  jq -e '.text | test("us|es")' <<<"$_wb" >/dev/null 2>&1 && ok "ergon-layout --waybar names the active layout: $_wb" || bad "ergon-layout --waybar: $_wb"
+else
+  bad "could not give the compositor kb_layout us,es (keyboards: $(hq devices -j | jq -c '[.keyboards[] | {layout, variant, main}]'))"
+fi
+IFS=$'\t' read -r _kl _kv <<<"$_kb_save"; set_layout "$_kl" "$_kv" || true
+
+# --- ERGON-86: a crashing program of the user's raises a notification -------
+# Runs 1-7 proved the pipeline by hand, stage by stage (journal entry, jq,
+# notify-send rc 0); that scaffolding is gone, and its own "traced" toast with
+# it. What is left is the plain check, from a clean mako, with everything mako
+# holds afterwards printed in full whatever the outcome.
+CID=fc2e22bc6ee647b6b90729ab34a250b1
+if su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active ergon-crash-notify.service" >/dev/null 2>&1; then
+  ok "ergon-crash-notify.service is running in the user manager"
+  cat > /tmp/o-crash.sh <<'CRASH'
+#!/bin/bash
+ulimit -c unlimited
+exec -a ergoncrashprobe sleep 300
+CRASH
+  chmod 755 /tmp/o-crash.sh
+  usr "/tmp/o-crash.sh" >/dev/null 2>&1 &
+  sleep 2
+  _cp=$(pgrep -u "$U" -f ergoncrashprobe | head -1)
+  if [ -n "$_cp" ]; then
+    # The memory-kill sections leave critical toasts that never expire; start clean.
+    usr "makoctl dismiss --all" >/dev/null 2>&1
+    _t0=$SECONDS
+    kill -SEGV "$_cp"
+    # Two usr calls, not `usr "makoctl list; makoctl history"`: usr's environment
+    # prefixes only its first command, so in runs 1-8 history was asked with no
+    # bus and answered nothing, and a toast that had expired from the list by the
+    # time a slow coredump was logged could never be seen.
+    crashed() { { usr "makoctl list"; usr "makoctl history"; } 2>/dev/null | grep -qE ': sleep crashed'; }
+    _k=$(date +%s.%N)
+    if o_until 30 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification (within $((SECONDS - _t0))s)"
+    else bad "a SIGSEGV'd program raised no notification within 30s"; fi
+    note "killed at $_k; logged at $(journalctl -b --no-pager -o json -n 1 MESSAGE_ID=$CID COREDUMP_COMM=sleep 2>/dev/null | jq -r '(.__REALTIME_TIMESTAMP | tonumber) / 1e6')"
+    note "the journal entry: $(journalctl -b --no-pager -o short-precise -n 1 MESSAGE_ID=$CID COREDUMP_COMM=sleep 2>&1 | tail -1 | cut -c1-200)"
+    note "the service's own lines: $(journalctl --no-pager -o cat -n 5 _SYSTEMD_USER_UNIT=ergon-crash-notify.service 2>&1 | tr '\n' ';' | head -c 300)"
+    echo "     --- makoctl list, in full ---";    usr "makoctl list" 2>&1 | sed 's/^/     /'
+    echo "     --- makoctl history, in full ---"; usr "makoctl history" 2>&1 | sed 's/^/     /'
+  else
+    bad "the crash probe process did not start"
+  fi
+else
+  bad "ergon-crash-notify.service is not active in the user manager"
+fi
+
+# --- ERGON-87: the emoji list, on the real Unicode file ---------------------
+_en=$(usr "ergon-emoji --list" 2>/dev/null | wc -l)
+[ "${_en:-0}" -gt 1000 ] && ok "ergon-emoji --list reads the installed emoji-test.txt ($_en entries)" \
+                         || bad "ergon-emoji --list gave ${_en:-0} entries from the installed Unicode data"
+
+# --- ERGON-84: audio output with whatever sinks the VM has ------------------
+_ao=$(usr "timeout 10 ergon-audio-output" 2>&1); _ao_rc=$?
+if [ "$_ao_rc" -lt 124 ]; then ok "ergon-audio-output ended (rc $_ao_rc) without hanging: $(head -c 100 <<<"$_ao" | tr '\n' ' ')"
+else bad "ergon-audio-output hung with the VM's sinks"; fi
+
 # ERGON-70, measured rather than asserted: does a user manager that has made a
 # tmux pane scope spin when a unit directory changes under it with no reload,
 # and a second pane is asked for? Seen at ~90% CPU in a container (systemd 262,

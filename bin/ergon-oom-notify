@@ -48,7 +48,9 @@ journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID="$KILLED" _UID="$
   # in the other room explains nothing. Backslashes doubled in the body only:
   # notify-send g_strcompress()es it and not the summary (libnotify 0.8.8,
   # measured); ergon\x2dterm arrived as ergonx2dterm, a unit that is not there.
-  notify-send -u critical "${what:-$unit} was killed for memory" \
+  # Its own app name: mako groups by app-name (mako/config), and a crash toast
+  # from plain `notify-send` would otherwise fold into a held critical one.
+  notify-send -a ergon-oom-notify -u critical "${what:-$unit} was killed for memory" \
     "systemd-oomd ended ${unit//\\/\\\\} and everything running in it. \`ergon watch\` gives a long job a scope of its own." \
     || printf 'could not deliver the notification for %s (no session bus?)\n' "$unit" >&2
 done

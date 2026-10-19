@@ -180,6 +180,8 @@ libva-utils         # `vainfo` is how you find out whether hardware video
 # --- clipboard and capture -------------------------------------------------
 wl-clipboard
 cliphist            # clipboard history
+wtype               # types the emoji ergon-emoji picks
+unicode-emoji       # emoji-test.txt, the data ergon-emoji lists
 grim
 slurp
 satty               # screenshot annotation

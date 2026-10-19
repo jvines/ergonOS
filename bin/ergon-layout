@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# ergon:summary=Cycle the keyboard layout, or show which is active
+# ergon:group=input
+# ergon:args=[cycle | --waybar | --poke]
+#
+# For a machine with more than one layout, e.g. us and es (ERGON-85). The
+# layouts are the compositor's: kb_layout in hosts/<host>/hyprland.lua, a
+# comma-separated list ("us,es"). Nothing else records them, so nothing can
+# disagree; this asks Hyprland what the keyboard has and what is active.
+#
+#   ergon-layout            cycle to the next layout, on every keyboard
+#   ergon-layout --waybar   the active layout as waybar JSON; empty text (the
+#                           module hides) unless more than one is configured
+#   ergon-layout --poke     tell the bar to ask again, now
+#
+# Hyprland owns layout switching here, not fcitx5: fcitx5 runs for the accent
+# addon only, its profile is one fixed keyboard-us item with every hotkey
+# unbound, and a Wayland compositor applies its own xkb state to clients
+# regardless of what fcitx5's group says. Cycling through fcitx5 would change
+# nothing the keyboard does.
+set -euo pipefail
+
+# waybar/config.jsonc's custom/layout has "signal": this number.
+SIGNAL=9
+poke() { pkill -RTMIN+"$SIGNAL" -x waybar 2>/dev/null || true; }
+[ "${1:-}" = --poke ] && { poke; exit 0; }
+case "${1:-}" in
+  -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+# "<layouts comma-list>|<active index or empty>|<active keymap name>" for the
+# main keyboard, else the first. Empty when Hyprland does not answer.
+#
+# A keyboard carrying more than one layout comes first, main or not. "main" is
+# the keyboard that last sent a key, and that can be a VIRTUAL one -- a client
+# speaking the virtual-keyboard protocol (wtype, an input method) uploads a
+# keymap of its own, which kb_layout never reaches. Measured in the VM: after
+# typing through such clients, main was a keyboard reporting "us" while both
+# real ones carried "us,es", and this said one layout was configured.
+state() {
+  hyprctl -j devices 2>/dev/null | jq -r '
+    (.keyboards | (map(select(.main and (.layout | contains(","))))
+                   + map(select(.layout | contains(",")))
+                   + map(select(.main)) + .)[0] // empty)
+    | "\(.layout)|\(.active_layout_index // "")|\(.active_keymap)"' 2>/dev/null || true
+}
+
+IFS='|' read -r layouts idx name <<<"$(state)"
+IFS=',' read -r -a codes <<<"${layouts:-}"
+n=${#codes[@]}
+
+# The active layout's short code: by index when Hyprland reports one, else the
+# keymap's own name, which is longer but never wrong.
+label() { if [ -n "${idx:-}" ] && [ "$idx" -lt "$n" ]; then printf '%s' "${codes[$idx]}"; else printf '%s' "${name:-?}"; fi; }
+
+case "${1:-cycle}" in
+  --waybar)
+    if [ "$n" -lt 2 ]; then printf '{"text":"","tooltip":""}\n'; exit 0; fi
+    printf '{"text":"󰌌 %s","tooltip":"%s -- SUPER+CTRL+SPACE for the next of %s"}\n' \
+      "$(label)" "${name//\"/}" "${layouts//\"/}"
+    exit 0 ;;
+  cycle) ;;
+  *) echo "ergon-layout: unknown argument '$1'" >&2; exit 2 ;;
+esac
+
+if [ "$n" -lt 2 ]; then
+  echo "only one layout is configured; set kb_layout = \"us,es\" in hosts/$(hostname -s)/hyprland.lua" >&2
+  exit 1
+fi
+
+# "all" is every keyboard, not just the main one: a laptop's own and a USB one
+# would otherwise sit on different layouts.
+hyprctl switchxkblayout all next >/dev/null
+IFS='|' read -r layouts idx name <<<"$(state)"
+poke
+if command -v notify-send >/dev/null 2>&1; then
+  # One synchronous slot, so repeated presses replace the toast, not stack it.
+  notify-send -u low -t 1500 -h string:x-canonical-private-synchronous:ergon-layout \
+    "Keyboard layout" "$(label)  ${name:-}" || true
+fi
+printf '%s\n' "$(label)"

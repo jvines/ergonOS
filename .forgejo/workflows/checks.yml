@@ -176,6 +176,31 @@ jobs:
       - name: The bar shows the modes the session is in
         run: cd "$CI_DIR" && ./bin/test-status.sh
 
+      # ERGON-84: the audio-output key. Stubs pactl and swayosd-client; asserts the
+      # sink chosen, the streams moved and the device named on screen.
+      - name: The audio-output key cycles sinks
+        run: cd "$CI_DIR" && ./bin/test-audio-output.sh
+
+      # ERGON-85: the layout key with one layout and with several, stub hyprctl.
+      - name: The layout key cycles the keyboard layouts a host lists
+        run: cd "$CI_DIR" && ./bin/test-layout.sh
+
+      # ERGON-89: pop out and close-all, stub hyprctl.
+      - name: Window pop-out and close-all touch the right windows
+        run: cd "$CI_DIR" && ./bin/test-window.sh
+
+      # ERGON-90: the workspace layout cycle, stub hyprctl.
+      - name: The tiling key cycles a workspace's layout
+        run: cd "$CI_DIR" && ./bin/test-tiling.sh
+
+      # ERGON-87: the emoji list parsed from Unicode's own file; the pick copied and typed.
+      - name: The emoji picker copies and types the pick
+        run: cd "$CI_DIR" && ./bin/test-emoji.sh
+
+      # ERGON-82: detection, the offline picker and the Santiago default, no network.
+      - name: The timezone is detected, or picked, never assumed
+        run: cd "$CI_DIR" && ./bin/test-timezone.sh
+
       # lib/ -- the science tooling, which until now was the only part of this
       # repo with no gate at all. Every step above this line tests the desktop,
       # the installer or the system; none of them imports a single line of the

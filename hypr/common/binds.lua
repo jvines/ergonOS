@@ -145,9 +145,12 @@ bind("SUPER + ALT + SPACE",  "Menu",                "ergon-menu")
 -- ---------------------------------------------------------------------------
 -- Windows
 bind("SUPER + Q",            "Close window",        hl.dsp.window.close())
-bind("SUPER + V",            "Toggle floating",     hl.dsp.window.float({ action = "toggle" }))
+-- SUPER+V is paste (see Clipboard below), so floating moved to SUPER+SHIFT+F.
+bind("SUPER + SHIFT + F",    "Toggle floating",     hl.dsp.window.float({ action = "toggle" }))
 bind("SUPER + F",            "Fullscreen",          hl.dsp.window.fullscreen({ action = "toggle" }))
 bind("SUPER + P",            "Pseudo-tile",         hl.dsp.window.pseudo({ action = "toggle" }))
+bind("SUPER + O",            "Pop window out (float, centre, pin; again to undo)", "ergon-window pop")
+bind("SUPER + CTRL + SHIFT + Q", "Close ALL windows on this workspace", "ergon-window close-all")
 
 -- Focus. hjkl because every other tool on this machine uses them.
 bind("SUPER + H", "Focus left",  hl.dsp.focus({ direction = "left"  }))
@@ -159,6 +162,25 @@ bind("SUPER + SHIFT + H", "Move window left",  hl.dsp.window.move({ direction = 
 bind("SUPER + SHIFT + J", "Move window down",  hl.dsp.window.move({ direction = "down"  }))
 bind("SUPER + SHIFT + K", "Move window up",    hl.dsp.window.move({ direction = "up"    }))
 bind("SUPER + SHIFT + L", "Move window right", hl.dsp.window.move({ direction = "right" }))
+
+-- Swap places with the neighbour (ERGON-89), ALT being the third rung after
+-- SHIFT (move) and CTRL (resize): the layout stays, the two windows trade tiles.
+bind("SUPER + ALT + H", "Swap with left window",  hl.dsp.window.swap({ direction = "l" }))
+bind("SUPER + ALT + J", "Swap with window below", hl.dsp.window.swap({ direction = "d" }))
+bind("SUPER + ALT + K", "Swap with window above", hl.dsp.window.swap({ direction = "u" }))
+bind("SUPER + ALT + L", "Swap with right window", hl.dsp.window.swap({ direction = "r" }))
+
+-- Cycle every window on the workspace, floating ones included, raising each so
+-- a floating window is not left behind a tile. A function bind because one
+-- chord cannot carry two dispatchers (and no chord may be bound twice).
+local function cycle(forward)
+  return function()
+    hl.dispatch(hl.dsp.window.cycle_next({ next = forward }))
+    hl.dispatch(hl.dsp.window.bring_to_top())
+  end
+end
+bind("ALT + TAB",         "Next window",     cycle(true))
+bind("ALT + SHIFT + TAB", "Previous window", cycle(false))
 
 -- Resize without a submap: hold CTRL and use the same hjkl. A submap is a mode
 -- you can be stuck in, and there is no bar indicator worth the risk.
@@ -231,11 +253,34 @@ bind("SUPER + E", "Files",      launch .. term .. " yazi")
 bind("SUPER + N", "Notes",      launch .. term .. " emacs -nw")
 
 -- ---------------------------------------------------------------------------
--- Clipboard. cliphist stores; fuzzel picks; wl-copy puts it back.
+-- Clipboard (ERGON-88). SUPER+C / V / X copy, paste and cut in every app,
+-- terminals included. They send Ctrl+Insert / Shift+Insert / Shift+Delete, the
+-- legacy CUA chords: GTK and Qt honour them as copy/paste/cut, and a terminal
+-- never mistakes them for ^C / ^V (which is why Ctrl+C would be wrong in one).
+-- foot and wezterm bind them to the CLIPBOARD (not the primary selection) in
+-- foot/foot.ini.in and wezterm/wezterm.lua.in; cut has no meaning in a terminal.
+--
+-- No window is targeted, so the chord reaches whatever has focus. A virtual
+-- keyboard would not do: the physically held SUPER merges into the injected
+-- chord. The down/up split, 50 ms apart, avoids synthetic keys sticking.
+local function send_shortcut(mods, key)
+  return function()
+    hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = key, state = "down" }))
+    hl.timer(function()
+      hl.dispatch(hl.dsp.send_key_state({ mods = mods, key = key, state = "up" }))
+    end, { timeout = 50, type = "oneshot" })
+  end
+end
+bind("SUPER + C", "Copy (every app)",  send_shortcut("CTRL",  "Insert"))
+bind("SUPER + V", "Paste (every app)", send_shortcut("SHIFT", "Insert"))
+bind("SUPER + X", "Cut (every app)",   send_shortcut("SHIFT", "Delete"))
+
+-- cliphist stores; fuzzel picks; wl-copy puts it back.
 -- `--no-run-if-empty` stops an empty selection from clearing the clipboard.
 bind("SUPER + SHIFT + V", "Clipboard history",
   "cliphist list | fuzzel --dmenu --prompt 'clip  ' | cliphist decode | wl-copy")
 bind("SUPER + SHIFT + X", "Clear clipboard history", "cliphist wipe")
+bind("SUPER + CTRL + E",   "Emoji picker (copy and type)", "ergon-emoji")
 
 -- ---------------------------------------------------------------------------
 -- Capture. Screenshots live in screenshot.lua — they have their own sync
@@ -255,3 +300,17 @@ bind("SUPER + SHIFT + A",     "Restore notification",     "makoctl restore")
 -- else -- observing, a talk on someone else's screen. Toasts are still kept in
 -- history while it is on, and the bar shows the mode until it is off.
 bind("SUPER + CTRL + D",      "Do not disturb (toggle)",  "makoctl mode -t do-not-disturb; ergon-status --poke")
+-- Stay awake (ERGON-83): no dim, lock or screen-off until toggled back. Shown on the bar.
+bind("SUPER + CTRL + I",      "Stay awake (toggle)",      "ergon-awake")
+-- And through a shut lid: no suspend at all; the lid locks and blanks instead (ergon-lid).
+bind("SUPER + CTRL + SHIFT + I", "Stay fully awake, lid included (toggle)", "ergon-awake toggle-full")
+
+-- Next keyboard layout (ERGON-85), for a host that lists more than one in kb_layout.
+-- SUPER+SPACE is the launcher; with CTRL it was free. The bar is told by the script.
+bind("SUPER + CTRL + SPACE",  "Next keyboard layout",     "ergon-layout")
+
+-- Cycle this workspace's layout (ERGON-90): dwindle, master, scrolling, floating.
+-- Per workspace, so the others keep theirs. W for "ways to lay out"; SUPER+ALT+W
+-- cycles back. The toast names the layout it landed on.
+bind("SUPER + W",       "Next workspace layout",     "ergon-tiling")
+bind("SUPER + ALT + W", "Previous workspace layout", "ergon-tiling back")
