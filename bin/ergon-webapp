@@ -222,14 +222,16 @@ cmd_launch() {
       hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1 && exit 0
     fi
   fi
+  # A fresh profile opens a first-run terms dialog with an empty app_id instead of the app window
+  # (seen in the VM, confirmed in sway); --no-first-run skips it.
   # Chromium picks X11 unless told otherwise (--ozone-platform-hint=auto still chose X11 in the VM,
   # where the session type is not exported) and fails outright with no XWayland ("Missing X server
   # or $DISPLAY"). Ergon is a Wayland session, so say so.
   browser=$(chromium_exec)
   if command -v uwsm-app >/dev/null 2>&1; then
-    exec uwsm-app -- "$browser" --ozone-platform=wayland --app="$url"
+    exec uwsm-app -- "$browser" --ozone-platform=wayland --no-first-run --no-default-browser-check --app="$url"
   fi
-  exec "$browser" --ozone-platform=wayland --app="$url"
+  exec "$browser" --ozone-platform=wayland --no-first-run --no-default-browser-check --app="$url"
 }
 
 # --- host.env, the installer, provisioning ----------------------------------

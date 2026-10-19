@@ -132,7 +132,7 @@ rm "$T/stub/discord"
 
 # --- launch ------------------------------------------------------------------
 : > "$T/log"; "$W" launch https://example.org/x
-check "launch starts Chromium in app mode"         grep -qx "uwsm -- chromium --ozone-platform=wayland --app=https://example.org/x" "$T/log"
+check "launch starts Chromium in app mode"         grep -qx "uwsm -- chromium --ozone-platform=wayland --no-first-run --no-default-browser-check --app=https://example.org/x" "$T/log"
 : > "$T/log"; HYPRLAND_INSTANCE_SIGNATURE=x "$W" launch https://web.whatsapp.com/
 check "an open web app is focused, not relaunched" bash -c 'grep -q "address:0x1" "$1" && ! grep -q chromium "$1"' _ "$T/log"
 check "the class helper matches Chromium's"        test "$("$W" class https://discord.com/channels/@me)" = 'chrome-discord.com__channels_@me-Default'
