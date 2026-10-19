@@ -1,0 +1,10 @@
+# AUR packages that ONLY bin/ergon-hardware builds, for the hardware that needs
+# them. Not provisioned for everyone: packages/aur is that list. This file
+# exists so a package built on demand is pinned like the others -- ergon-aur
+# reads pin=<commit> from both.
+#
+# nvidia-580xx-utils (ERGON-36): NVIDIA's 580 branch, the last with Maxwell,
+# Pascal and Volta (no GSP firmware, so nvidia-open cannot drive them). One AUR
+# repository, three packages: -utils, -dkms, opencl-nvidia-580xx. Move the pin
+# the way packages/aur says: review `git log` in ~/.cache/aur/nvidia-580xx-utils.
+nvidia-580xx-utils    # pin=29eca3400a1143e09a714d467783f4d119c4bb02

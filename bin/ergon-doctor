@@ -713,6 +713,16 @@ else
   rec ok "session" "not in a graphical session; session checks skipped"
 fi
 
+# --- NVIDIA ------------------------------------------------------------------
+# ERGON-36. Rows only where the PCI bus has an NVIDIA display controller: driver
+# loaded, modeset on, sleep handled, and on a hybrid the offload command.
+# bin/ergon-gpu --doctor does the looking, so `ergon gpu` and this agree.
+if [ -x "$ERGON/bin/ergon-gpu" ]; then
+  while IFS='|' read -r gs gn gt; do
+    [ -n "$gs" ] && rec "$gs" "$gn" "$gt"
+  done < <("$ERGON/bin/ergon-gpu" --doctor 2>/dev/null)
+fi
+
 # --- TRIM --------------------------------------------------------------------
 # ERGON-34. dm-crypt drops every discard unless the mapping allows them, and no
 # install before that card allowed them: DISC-MAX 0 on the mapper, so btrfs never

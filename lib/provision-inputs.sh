@@ -36,6 +36,7 @@ ERGON_PROVISION_INPUTS=(
   bin/ergon-boot-guard
   packages/pacman
   packages/aur
+  packages/aur-hardware
   grub
   hardware
   knowledge
