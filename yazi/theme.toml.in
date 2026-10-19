@@ -24,7 +24,6 @@ marker_selected = { fg = "@COOL_3@",      bg = "@COOL_3@" }
 
 tab_active   = { fg = "@COOL_BG0@", bg = "@COOL_ACCENT@" }
 tab_inactive = { fg = "@COOL_DIM@", bg = "@COOL_BG1@" }
-tab_width    = 1
 
 border_symbol = "│"
 border_style  = { fg = "@COOL_BG2@" }
@@ -95,14 +94,14 @@ footer  = { fg = "@COOL_BG1@", bg = "@COOL_FG0@" }
 [filetype]
 rules = [
   { url = "*/", fg = "@COOL_0@", bold = true },
-  { is = "exec",  fg = "@COOL_GOOD@" },
-  { is = "link",  fg = "@COOL_3@" },
-  { is = "orphan", fg = "@COOL_URGENT@" },
+  { url = "*", is = "exec",  fg = "@COOL_GOOD@" },
+  { url = "*", is = "link",  fg = "@COOL_3@" },
+  { url = "*", is = "orphan", fg = "@COOL_URGENT@" },
   { mime = "image/*", fg = "@COOL_BLUSH@" },
   { mime = "video/*", fg = "@COOL_BLUSH@" },
   { mime = "audio/*", fg = "@COOL_BLUSH@" },
   { mime = "application/zip", fg = "@COOL_WARN@" },
   { mime = "application/gzip", fg = "@COOL_WARN@" },
   { mime = "application/x-tar", fg = "@COOL_WARN@" },
-  { name = "*", fg = "@COOL_FG0@" },
+  { url = "*", fg = "@COOL_FG0@" },
 ]
