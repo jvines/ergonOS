@@ -466,6 +466,14 @@ else
     ln -sfn ../ergon-crash-notify.service "$HOME/.config/systemd/user/default.target.wants/ergon-crash-notify.service"
     enable_user_unit ergon-crash-notify.service restart ergon-crash-notify.service
   fi
+
+  # ERGON-96: Taildrop receiver. The unit's ConditionPathExists keeps it inert
+  # where tailscale is not installed.
+  if [ "$CHECK" != 1 ]; then
+    cp "$ERGON/systemd/ergon-taildrop.service" "$HOME/.config/systemd/user/" 2>/dev/null || true
+    ln -sfn ../ergon-taildrop.service "$HOME/.config/systemd/user/default.target.wants/ergon-taildrop.service"
+    enable_user_unit ergon-taildrop.service restart ergon-taildrop.service
+  fi
 fi
 
 # The shell. link() refuses to replace a real file, which is the behaviour
