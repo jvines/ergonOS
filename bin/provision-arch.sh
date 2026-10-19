@@ -896,8 +896,9 @@ else
   # wrong locale, you find out by typing your password wrong.
   #
   # /etc/vconsole.conf is written by arch-bootstrap.sh from the chosen KEYMAP,
-  # so this reads the answer rather than asking again.
-  KB=$(awk -F= '/^KEYMAP=/ { gsub(/"/, "", $2); print $2 }' /etc/vconsole.conf 2>/dev/null)
+  # so this reads the answer rather than asking again. ERGON_KEYMAP (set when
+  # the console map had to be swapped for a Latin one, ERGON-112) wins.
+  KB=$(awk -F= '/^(ERGON_)?KEYMAP=/ { gsub(/"/, "", $2); if ($1 == "ERGON_KEYMAP") e = $2; else k = $2 } END { print (e != "" ? e : k) }' /etc/vconsole.conf 2>/dev/null)
   KB=${KB:-us}
   # Console keymap names and xkb layout names are different vocabularies: the
   # console calls it la-latin1 and xkb calls it latam, and passing the console

@@ -196,6 +196,14 @@ if [ -z "$REGDOM" ]; then
              /usr/share/zoneinfo/zone.tab 2>/dev/null | cut -c1-2)
   [ -n "$REGDOM" ] || REGDOM=00   # 00 is the world-safe fallback domain
 fi
+# The initramfs types the LUKS passphrase with this keymap (ERGON-112): a map
+# whose plain keys are not Latin letters would lock the owner out of their disk.
+# shellcheck source=../lib/bootkeymap.sh
+. "$ERGON/lib/bootkeymap.sh"
+BOOTKEYMAP=$(bootkeymap_resolve "$KEYMAP")
+if [ "$BOOTKEYMAP" != "$KEYMAP" ]; then
+  echo "keymap $KEYMAP does not type Latin letters, so the disk passphrase prompt at boot uses $BOOTKEYMAP; the desktop keeps $KEYMAP" >&2
+fi
 ok "timezone $TIMEZONE, locale $LOCALE, keymap $KEYMAP, wifi regdom $REGDOM"
 
 # ---------------------------------------------------------------------------
@@ -418,7 +426,8 @@ hwclock --systohc
 sed -i 's/^#\($LOCALE\)/\1/' /etc/locale.gen
 locale-gen >/dev/null
 echo "LANG=$LOCALE"     > /etc/locale.conf
-echo "KEYMAP=$KEYMAP"   > /etc/vconsole.conf
+echo "KEYMAP=$BOOTKEYMAP" > /etc/vconsole.conf
+[ "$BOOTKEYMAP" = "$KEYMAP" ] || echo "ERGON_KEYMAP=$KEYMAP" >> /etc/vconsole.conf
 echo "$HOSTNAME"        > /etc/hostname
 cat > /etc/hosts <<HOSTS
 127.0.0.1   localhost

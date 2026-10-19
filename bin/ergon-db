@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# ergon:summary=Run a development database (Postgres, MySQL, Redis...) in a Docker container
+# ergon:group=dev
+# ergon:args=add ENGINE | list | rm NAME [--purge]
+# ergon:help=native
+#
+#   ergon db add ENGINE [--port N]   start a container (postgres mysql mariadb redis mongodb mssql)
+#   ergon db list                    the containers this command made
+#   ergon db rm NAME [--purge]       remove one, keeping its data volume; --purge deletes the data too
+#   ergon db                         pick from a menu
+#
+# ERGON-114. Every container is `ergon-ENGINE`, restart unless-stopped, with a
+# named volume `ergon-ENGINE-data` and the label ergon.db=ENGINE. list and rm
+# select by that label only, so no other container on the machine is visible
+# to them, let alone removable.
+#
+# Ports are published as 127.0.0.1:PORT, spelled out even though
+# /etc/docker/daemon.json already defaults the bind to loopback (see
+# knowledge/security.md): a database has no business answering the room, and
+# the explicit form survives a daemon.json that was never provisioned.
+#
+# Every engine gets the same dev password, ergon-dev (Ergon-dev-1 for mssql,
+# which refuses a simple one). Postgres is NOT run with trust auth: loopback
+# binding keeps the network out, but any local process, container or browser
+# page that can reach 127.0.0.1 would then be a superuser, and the cost of a
+# password is one string in the connection URL this prints. The data is
+# throwaway development data; do not reuse these passwords for anything else.
+#
+# Docker is reached the way the rest of the repo does (lib/docker-cmd.sh):
+# directly in the docker group, otherwise sudo -- no group is granted by default.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+SELF="$ERGON/bin/ergon-db"
+# shellcheck source=../lib/docker-cmd.sh
+. "$ERGON/lib/docker-cmd.sh"
+
+PW='ergon-dev'; MSPW='Ergon-dev-1'
+ENGINES="postgres mysql mariadb redis mongodb mssql"
+
+die() { printf 'ergon db: %s\n' "$*" >&2; exit 2; }
+usage() { sed -n '/^#   ergon db/p' "$SELF" | sed 's/^#//'; }
+
+# spec ENGINE: sets IMAGE PORT CPORT VOLPATH URL, ENVS (array), CMD (array).
+spec() {
+  ENVS=(); CMD=()
+  case "$1" in
+    postgres) IMAGE=postgres:17; PORT=5432; CPORT=5432; VOLPATH=/var/lib/postgresql/data
+              ENVS=(-e "POSTGRES_PASSWORD=$PW") ;;
+    mysql)    IMAGE=mysql:8.4; PORT=3306; CPORT=3306; VOLPATH=/var/lib/mysql
+              ENVS=(-e "MYSQL_ROOT_PASSWORD=$PW") ;;
+    mariadb)  IMAGE=mariadb:11.8; PORT=3307; CPORT=3306; VOLPATH=/var/lib/mysql   # 3307: mysql owns 3306
+              ENVS=(-e "MARIADB_ROOT_PASSWORD=$PW") ;;
+    redis)    IMAGE=redis:7; PORT=6379; CPORT=6379; VOLPATH=/data
+              CMD=(redis-server --requirepass "$PW" --appendonly yes) ;;
+    mongodb)  IMAGE=mongo:8.0; PORT=27017; CPORT=27017; VOLPATH=/data/db
+              ENVS=(-e MONGO_INITDB_ROOT_USERNAME=admin -e "MONGO_INITDB_ROOT_PASSWORD=$PW") ;;
+    mssql)    IMAGE=mcr.microsoft.com/mssql/server:2022-CU12-ubuntu-22.04; PORT=1433; CPORT=1433; VOLPATH=/var/opt/mssql
+              ENVS=(-e MSSQL_PID=Developer -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$MSPW") ;;
+    *) die "unknown engine '$1' (one of: $ENGINES)" ;;
+  esac
+}
+url() {  # url ENGINE PORT
+  case "$1" in
+    postgres) echo "postgresql://postgres:$PW@127.0.0.1:$2/postgres" ;;
+    mysql)    echo "mysql://root:$PW@127.0.0.1:$2" ;;
+    mariadb)  echo "mysql://root:$PW@127.0.0.1:$2" ;;
+    redis)    echo "redis://:$PW@127.0.0.1:$2" ;;
+    mongodb)  echo "mongodb://admin:$PW@127.0.0.1:$2" ;;
+    mssql)    echo "sqlserver://sa:$MSPW@127.0.0.1:$2" ;;
+  esac
+}
+
+dk() { "${DOCKER[@]}" "$@"; }
+# Names of containers carrying our label; the only way any command here finds one.
+mine() { dk ps -a --filter label=ergon.db --format '{{.Names}}'; }
+engine_of() { dk inspect --format '{{index .Config.Labels "ergon.db"}}' "$1"; }
+
+confirm() {  # confirm PROMPT EXPECTED -- the typed word must match; anything else aborts
+  local ans
+  printf '%s ' "$1" >&2
+  read -r ans || ans=
+  [ "$ans" = "$2" ]
+}
+
+cmd_add() {
+  local eng="${1:-}" port=""; [ -n "$eng" ] || die "usage: ergon db add ENGINE [--port N]"; shift
+  while [ $# -gt 0 ]; do case "$1" in
+    --port) port="${2:?--port needs a number}"; shift 2 ;;
+    *) die "unknown option $1" ;; esac; done
+  spec "$eng"
+  [[ "${port:-0}" =~ ^[0-9]+$ ]] || die "--port must be a number"
+  [ -z "$port" ] || PORT="$port"
+  local name="ergon-$eng" vol="ergon-$eng-data" reused=0
+  if mine | grep -qx "$name"; then die "$name already exists (ergon db list; ergon db rm $name)"; fi
+  dk volume inspect "$vol" >/dev/null 2>&1 && reused=1
+  dk run -d --restart unless-stopped --name "$name" --label "ergon.db=$eng" \
+    -p "127.0.0.1:$PORT:$CPORT" -v "$vol:$VOLPATH" "${ENVS[@]}" "$IMAGE" "${CMD[@]}" >/dev/null
+  echo "started $name ($IMAGE), bound to 127.0.0.1:$PORT only"
+  echo "connect:  $(url "$eng" "$PORT")"
+  echo "dev password: $([ "$eng" = mssql ] && echo "$MSPW" || echo "$PW") -- throwaway data, do not reuse it"
+  [ "$reused" = 0 ] || echo "note: volume $vol already held data; the password it was created with still applies"
+}
+
+cmd_list() {
+  local n out
+  out=$(dk ps -a --filter label=ergon.db --format '{{.Names}}	{{.Label "ergon.db"}}	{{.Status}}	{{.Ports}}')
+  [ -n "$out" ] || { echo "no ergon databases (ergon db add ENGINE)"; return 0; }
+  printf '%s\n' "$out" | while IFS=$'\t' read -r n e s p; do printf '%-18s %-9s %-24s %s\n' "$n" "$e" "$s" "$p"; done
+}
+
+cmd_rm() {
+  local name="" purge=0
+  for a in "$@"; do case "$a" in --purge) purge=1 ;; -*) die "unknown option $a" ;; *) name="$a" ;; esac; done
+  [ -n "$name" ] || die "usage: ergon db rm NAME [--purge]"
+  case "$name" in ergon-*) ;; *) name="ergon-$name" ;; esac
+  mine | grep -qx "$name" || die "$name is not an ergon database (ergon db list)"
+  local eng vol; eng=$(engine_of "$name"); vol="ergon-$eng-data"
+  confirm "Remove container $name (its data volume $vol is kept)? Type the name to confirm:" "$name" \
+    || { echo "aborted, nothing removed" >&2; return 1; }
+  dk rm -f "$name" >/dev/null
+  echo "removed $name"
+  if [ "$purge" = 1 ]; then
+    if confirm "PERMANENTLY delete volume $vol and every database in it? Type the volume name:" "$vol"; then
+      dk volume rm "$vol" >/dev/null; echo "deleted volume $vol"
+    else
+      echo "volume $vol kept" >&2
+    fi
+  else
+    echo "kept volume $vol (--purge deletes it)"
+  fi
+}
+
+cmd_pick() {
+  command -v fuzzel >/dev/null || { usage; exit 0; }
+  local e n sel
+  sel=$({ for e in $ENGINES; do printf 'add %s\n' "$e"; done
+          mine | while read -r n; do printf 'rm %s\n' "$n"; done; printf 'list\n'; } \
+        | fuzzel --dmenu --prompt 'db  ') || exit 0
+  [ -n "$sel" ] || exit 0
+  # shellcheck disable=SC2086
+  exec "$ERGON/bin/ergon-term" sh -c '"$0" "$@" || true; echo; echo "-- press enter to close --"; read -r _' "$SELF" $sel
+}
+
+case "${1:-}" in
+  add)  shift; ergon_resolve_docker; cmd_add "$@" ;;
+  list) ergon_resolve_docker; cmd_list ;;
+  rm)   shift; ergon_resolve_docker; cmd_rm "$@" ;;
+  -h|--help|help) usage ;;
+  "")   ergon_resolve_docker; cmd_pick ;;
+  *)    die "unknown subcommand '$1' (add, list, rm)" ;;
+esac

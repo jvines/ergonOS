@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ergon:summary=Window actions that need more than one dispatch: pop out, close all
+# ergon:summary=Window actions that need more than one dispatch: pop out, close all, save and restore width
 # ergon:group=desktop
 # ergon:args=pop | close-all
 #
@@ -12,6 +12,13 @@
 #              ordinary close request, so an app may still ask to save. Bound
 #              to SUPER+CTRL+SHIFT+Q on purpose: three modifiers, and one hand
 #              cannot reach it while reaching for SUPER+Q.
+#   width save|restore
+#              Remember the focused window's width, per workspace and window
+#              class (SUPER+ALT+Home), and put it back later (SUPER+Home), e.g.
+#              after a column was stretched in the scrolling layout. Layout
+#              agnostic: it resizes relatively and re-reads the width until it
+#              matches, flipping direction if the first nudge went the wrong
+#              way. State: $XDG_RUNTIME_DIR/ergon/window-width (cleared at logout).
 #
 # Dispatches go through the Lua form (`ergon explain desktop-config`): a
 # Lua-configured Hyprland reads the payload as Lua, and a classic string dies
@@ -53,8 +60,44 @@ close_all() {
     done
 }
 
+WDIR="${XDG_RUNTIME_DIR:-/tmp}/ergon/window-width"
+
+note() { notify-send -a ergon "$1" "${2:-}" 2>/dev/null || echo "$1 ${2:-}" >&2; }
+
+width_of() { hyprctl clients -j | jq -er --arg a "$1" '.[] | select(.address == $a) | .size[0]'; }
+
+width() {
+  local win addr class ws file cur target dir=1 next i
+  win=$(hyprctl activewindow -j)
+  addr=$(jq -r '.address // empty' <<<"$win")
+  [[ -n $addr ]] || return 0
+  class=$(jq -r '[.class, .initialClass, .title] | map(select(. != null and . != "")) | first // empty' <<<"$win")
+  ws=$(jq -r '.workspace.id // empty' <<<"$win")
+  [[ -n $class && -n $ws ]] || return 0
+  file="$WDIR/ws${ws}-${class//[^A-Za-z0-9._-]/_}"
+  case "${1:-}" in
+    save)
+      mkdir -p "$WDIR"
+      jq -r '.size[0]' <<<"$win" > "$file"
+      note "Saved width: $class" "$(<"$file") px on workspace $ws" ;;
+    restore)
+      [[ -f $file ]] || { note "No saved width: $class" "SUPER+ALT+Home saves one"; return 1; }
+      target=$(<"$file"); cur=$(width_of "$addr") || return 1
+      for i in 1 2 3 4 5 6; do
+        ((cur == target)) && break
+        dispatch "hl.dsp.window.resize({ window = \"address:$addr\", x = $(((target - cur) * dir)), y = 0, relative = true })"
+        next=$(width_of "$addr") || return 1
+        ((next == cur)) && break
+        (((next - cur) * (target - cur) < 0)) && dir=$((-dir))
+        cur=$next
+      done ;;
+    *) echo "usage: ergon-window width save|restore" >&2; exit 2 ;;
+  esac
+}
+
 case "${1:-}" in
+  width)     width "${2:-}" ;;
   pop)       pop ;;
   close-all) close_all ;;
-  *)         echo "usage: ergon-window pop | close-all" >&2; exit 2 ;;
+  *)         echo "usage: ergon-window pop | close-all | width save|restore" >&2; exit 2 ;;
 esac

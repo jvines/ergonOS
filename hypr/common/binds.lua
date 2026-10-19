@@ -151,6 +151,8 @@ bind("SUPER + F",            "Fullscreen",          hl.dsp.window.fullscreen({ a
 bind("SUPER + P",            "Pseudo-tile",         hl.dsp.window.pseudo({ action = "toggle" }))
 bind("SUPER + O",            "Pop window out (float, centre, pin; again to undo)", "ergon-window pop")
 bind("SUPER + CTRL + SHIFT + Q", "Close ALL windows on this workspace", "ergon-window close-all")
+bind("SUPER + ALT + HOME",   "Save this window's width", "ergon-window width save")
+bind("SUPER + HOME",         "Restore the saved window width", "ergon-window width restore")
 
 -- Focus. hjkl because every other tool on this machine uses them.
 bind("SUPER + H", "Focus left",  hl.dsp.focus({ direction = "left"  }))
@@ -284,6 +286,7 @@ bind("SUPER + CTRL + E",   "Emoji picker (copy and type)", "ergon-emoji")
 -- Dictation (ERGON-100): a toggle, not hold-to-talk. bind() takes locked, repeating,
 -- mouse and description only; there is no key-release option to end a recording on.
 bind("SUPER + CTRL + X",   "Dictate (toggle, types the text)", "ergon-dictate toggle")
+bind("SUPER + CTRL + R",   "Reminder (time, then message)", "ergon-remind")
 
 -- ---------------------------------------------------------------------------
 -- Capture. Screenshots live in screenshot.lua — they have their own sync
@@ -317,3 +320,10 @@ bind("SUPER + CTRL + SPACE",  "Next keyboard layout",     "ergon-layout")
 -- cycles back. The toast names the layout it landed on.
 bind("SUPER + W",       "Next workspace layout",     "ergon-tiling")
 bind("SUPER + ALT + W", "Previous workspace layout", "ergon-tiling back")
+
+-- Zoom around the cursor, for presenting (ERGON-108). Z for zoom: CTRL steps in
+-- (x1.5, capped at 8), SHIFT steps back out, ALT returns to 1. Repeating, so
+-- holding the chord keeps stepping.
+bind("SUPER + CTRL + Z",         "Zoom in around the cursor",  "ergon-zoom in",    { repeating = true })
+bind("SUPER + CTRL + SHIFT + Z", "Zoom out",                   "ergon-zoom out",   { repeating = true })
+bind("SUPER + CTRL + ALT + Z",   "Reset zoom",                 "ergon-zoom reset")

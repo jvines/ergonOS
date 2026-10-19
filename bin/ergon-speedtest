@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# ergon:summary=Measure internet speed and the speed of the disk holding $HOME
+# ergon:group=system
+# ergon:args=[net|disk]
+# ergon:help=native
+#
+#   ergon speedtest          both
+#   ergon speedtest net      download, upload, latency (speedtest-cli)
+#   ergon speedtest disk     sequential and 4k random I/O (fio)
+#
+# The disk test WRITES about 1 GiB to the drive that holds $HOME, with O_DIRECT
+# so the page cache cannot flatter the result. The scratch directory is under
+# $HOME on purpose: /tmp is a tmpfs here, and would measure RAM. It is removed
+# on exit, interrupt or failure.
+set -uo pipefail
+export LC_ALL=C
+
+SIZE="${ERGON_SPEEDTEST_SIZE:-1G}"
+RUNTIME="${ERGON_SPEEDTEST_RUNTIME:-8}"
+dir=""
+
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
+
+need() { command -v "$1" >/dev/null 2>&1 || { echo "ergon-speedtest: $1 is required (sudo pacman -S $2)" >&2; return 1; }; }
+
+mbit() { awk -v b="$1" 'BEGIN { printf "%.1f", b / 1e6 }'; }
+mbs()  { awk -v b="$1" 'BEGIN { printf "%.0f", b / 1e6 }'; }
+
+net() {
+  need speedtest-cli speedtest-cli || return 1
+  need jq jq || return 1
+  echo "Network (speedtest-cli) ..."
+  local out
+  out=$(speedtest-cli --json 2>/dev/null) && [ -n "$out" ] || { echo "ergon-speedtest: network test failed (offline?)" >&2; return 1; }
+  local d u p srv
+  d=$(jq -r '.download // empty' <<<"$out") u=$(jq -r '.upload // empty' <<<"$out")
+  p=$(jq -r '.ping // empty' <<<"$out") srv=$(jq -r '.server.sponsor // empty' <<<"$out")
+  [ -n "$d" ] && [ -n "$u" ] || { echo "ergon-speedtest: unreadable speedtest-cli output" >&2; return 1; }
+  [ -n "$srv" ] && echo "  server    $srv"
+  echo "  download  $(mbit "$d") Mbit/s"
+  echo "  upload    $(mbit "$u") Mbit/s"
+  echo "  latency   ${p:-?} ms"
+}
+
+disk() {
+  need fio fio || return 1
+  need jq jq || return 1
+  dir=$(mktemp -d "$HOME/.ergon-speedtest.XXXXXX") || return 1
+  trap '[ -n "$dir" ] && rm -rf "$dir"' EXIT
+  echo "Disk holding $HOME ($(df --output=source "$HOME" | tail -1))"
+  echo "  note: this writes about $SIZE to the drive (wear is negligible, but it is real I/O)"
+  local out fpid
+  # Background + wait: bash defers a trap while a foreground child runs, so an
+  # interrupt would otherwise wait out the whole fio run before cleaning up.
+  fio --output-format=json --directory="$dir" --size="$SIZE" --direct=1 --filename=testfile \
+        --ioengine=libaio --runtime="$RUNTIME" --group_reporting \
+        --name=seqwrite --rw=write --bs=1M --iodepth=8 --stonewall \
+        --name=seqread  --rw=read  --bs=1M --iodepth=8 --stonewall \
+        --name=randwrite --rw=randwrite --bs=4k --iodepth=32 --stonewall \
+        --name=randread  --rw=randread  --bs=4k --iodepth=32 --stonewall  >"$dir/result.json" 2>/dev/null &
+  fpid=$!
+  trap 'kill "$fpid" 2>/dev/null; wait "$fpid" 2>/dev/null; [ -n "$dir" ] && rm -rf "$dir"; exit 130' INT TERM
+  wait "$fpid" && out=$(cat "$dir/result.json") && [ -n "$out" ] || { echo "ergon-speedtest: fio failed (does this filesystem allow O_DIRECT?)" >&2; return 1; }
+  local j v
+  for j in seqwrite seqread; do
+    v=$(jq -r --arg j "$j" '.jobs[] | select(.jobname==$j) | (if $j=="seqwrite" then .write else .read end).bw_bytes // empty' <<<"$out")
+    [ -n "$v" ] || { echo "ergon-speedtest: no result for $j" >&2; return 1; }
+    printf '  %-20s %s MB/s\n' "sequential ${j#seq}" "$(mbs "$v")"
+  done
+  for j in randwrite randread; do
+    v=$(jq -r --arg j "$j" '.jobs[] | select(.jobname==$j) | (if $j=="randwrite" then .write else .read end) | "\(.iops // 0) \(.bw_bytes // 0)"' <<<"$out")
+    [ -n "$v" ] || { echo "ergon-speedtest: no result for $j" >&2; return 1; }
+    printf '  %-20s %s IOPS (%s MB/s)\n' "4k random ${j#rand}" "$(awk -v i="${v% *}" 'BEGIN{printf "%.0f", i}')" "$(mbs "${v#* }")"
+  done
+}
+
+case "${1:-both}" in
+  -h|--help) usage ;;
+  net)  net ;;
+  disk) disk ;;
+  both) rc=0; net || rc=1; echo; disk || rc=1; exit $rc ;;
+  *)    usage >&2; exit 2 ;;
+esac
