@@ -290,6 +290,8 @@ else
   # env-hyprland itself: that is where uwsm has users put their own variables,
   # and linking over it replaced a stow symlink and stopped at a real file.
   link uwsm/env-hyprland.d/ergon-keyring .config/uwsm/env-hyprland.d/ergon-keyring
+  # ERGON-103: $BROWSER, so xdg-open and CLI tools use the default browser and raise it.
+  link uwsm/env-hyprland.d/ergon-browser .config/uwsm/env-hyprland.d/ergon-browser
 
   # ERGON-79: fcitx5, which press-and-hold accents run inside. File by file,
   # into a directory that stays real, because fcitx5 writes into it itself --

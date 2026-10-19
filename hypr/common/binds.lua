@@ -245,7 +245,7 @@ bind("SUPER + SHIFT + code:49", "Send to scratchpad", hl.dsp.window.move({ works
 -- ---------------------------------------------------------------------------
 -- Apps. Short list on purpose: everything that is not a GUI starts from a shell
 -- that is already open.
-bind("SUPER + B", "Browser",    launch .. "firefox")
+bind("SUPER + B", "Browser",    launch .. "ergon-browser")
 bind("SUPER + E", "Files",      launch .. term .. " yazi")
 -- Discord and Moonlight had SUPER+D and SUPER+M here. They are bundles now
 -- (ERGON-39), so the base binds no key to an app it does not install; each
