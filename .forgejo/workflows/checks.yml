@@ -216,6 +216,14 @@ jobs:
       - name: The tiling key cycles a workspace's layout
         run: cd "$CI_DIR" && ./bin/test-tiling.sh
 
+      # ERGON-108: cursor zoom steps, stub hyprctl.
+      - name: The zoom keys step cursor:zoom_factor
+        run: cd "$CI_DIR" && ./bin/test-zoom.sh
+
+      # ERGON-108: cursor zoom steps, stub hyprctl.
+      - name: The zoom keys step cursor:zoom_factor
+        run: cd "$CI_DIR" && ./bin/test-zoom.sh
+
       # ERGON-103: links go to the default browser and raise its window, stubs.
       - name: Links open in the default browser and raise it
         run: cd "$CI_DIR" && ./bin/test-browser.sh

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# ergon:summary=Magnify the screen around the cursor, for presenting
+# ergon:group=windows
+# ergon:args=[in | out | reset]
+#
+# Sets cursor:zoom_factor (ERGON-108). "in" multiplies by 1.5 up to a cap of 8,
+# "out" divides by 1.5 down to 1, "reset" returns to 1. The current factor is read
+# back from the compositor, so there is no state file to drift. It is set with
+# `hyprctl eval` (Lua source), the form a Lua-configured Hyprland accepts. A
+# config reload resets it to the config's value (1).
+set -euo pipefail
+
+case "${1:-in}" in
+  in|out|reset) act=${1:-in} ;;
+  -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *) echo "ergon-zoom: unknown argument '$1'" >&2; exit 2 ;;
+esac
+
+cur=$(hyprctl getoption cursor:zoom_factor -j | jq -r '.float // .int // 1')
+new=$(awk -v c="$cur" -v a="$act" 'BEGIN {
+  if (a == "in") c *= 1.5; else if (a == "out") c /= 1.5; else c = 1
+  if (c > 8) c = 8; if (c < 1.01) c = 1
+  printf "%.4f", c }')
+
+r=$(hyprctl eval "hl.config({ cursor = { zoom_factor = $new } })" 2>&1) || true
+[ "$r" = ok ] || { echo "ergon-zoom: hyprland refused zoom $new: $r" >&2; exit 1; }
+echo "$new"

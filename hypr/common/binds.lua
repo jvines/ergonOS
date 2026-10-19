@@ -317,3 +317,10 @@ bind("SUPER + CTRL + SPACE",  "Next keyboard layout",     "ergon-layout")
 -- cycles back. The toast names the layout it landed on.
 bind("SUPER + W",       "Next workspace layout",     "ergon-tiling")
 bind("SUPER + ALT + W", "Previous workspace layout", "ergon-tiling back")
+
+-- Zoom around the cursor, for presenting (ERGON-108). Z for zoom: CTRL steps in
+-- (x1.5, capped at 8), SHIFT steps back out, ALT returns to 1. Repeating, so
+-- holding the chord keeps stepping.
+bind("SUPER + CTRL + Z",         "Zoom in around the cursor",  "ergon-zoom in",    { repeating = true })
+bind("SUPER + CTRL + SHIFT + Z", "Zoom out",                   "ergon-zoom out",   { repeating = true })
+bind("SUPER + CTRL + ALT + Z",   "Reset zoom",                 "ergon-zoom reset")
