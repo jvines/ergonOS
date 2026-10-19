@@ -35,6 +35,7 @@ stub systemd-run  'echo "systemd-run $*" >> "$S_LOG"'
 stub checkupdates 'for i in $(seq "${S_UPD:-0}"); do echo "pkg$i 1-1 -> 1-2"; done'
 stub informant    '[ "${S_NEWS:-0}" = 0 ]'
 stub ergon-record 'echo record >> "$S_LOG"'
+stub ergon-dictate 'case "$1" in status) [ "${S_DICT:-0}" = 1 ] && echo recording; [ "${S_DICT:-0}" = 1 ];; stop) echo dictate-stop >> "$S_LOG";; esac'
 stub pkill        'echo "$*" >> "$S_LOG"'
 export PATH="$T/stub:$PATH:$REPO/bin" XDG_CACHE_HOME="$T/cache" S_LOG="$T/log"
 : > "$T/log"
@@ -79,12 +80,18 @@ if command -v jq >/dev/null 2>&1; then
   check "  and still parses as JSON, tooltip newlines included" jq -e '.tooltip | contains("\n")' <<<"$out" >/dev/null
 fi
 
+out=$(st S_DICT=1)
+check "dictation shows, classed dictating"     has "$out" '"dictating"'
+
 echo "== a click"
 : > "$T/log"; S_REC=1 S_DND=1 "$REPO/bin/ergon-status" --click
 check "stops the recording first"            grep -qx record "$T/log"
 check "  and leaves do-not-disturb alone"    no_mode_r
 : > "$T/log"; S_DND=1 "$REPO/bin/ergon-status" --click
 check "with no recording, ends do-not-disturb" grep -qx 'mode -r do-not-disturb' "$T/log"
+: > "$T/log"; S_DICT=1 S_DND=1 "$REPO/bin/ergon-status" --click
+check "dictation is finished before do-not-disturb ends" grep -qx dictate-stop "$T/log"
+check "  and leaves do-not-disturb alone"    no_mode_r
 
 
 echo "== stay awake (ERGON-83)"

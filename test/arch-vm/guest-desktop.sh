@@ -117,7 +117,7 @@ rm -f /etc/systemd/logind.conf.d/10-lid.conf /etc/systemd/sleep.conf.d/10-hibern
 #
 # ERGON_ARCHIVE_DATE: the Arch day bin/test-arch-vm.sh installed this disk from.
 # su - starts a clean environment, so it goes on the command line.
-su - "$U" -c "ERGON=$H/ergonOS ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_BUNDLES=notebooks ERGON_HARDWARE=framework-13-amd ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} bash $H/ergonOS/bin/provision-arch.sh" >/tmp/prov.log 2>&1 &
+su - "$U" -c "ERGON=$H/ergonOS ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_BUNDLES=\"notebooks dictation\" ERGON_HARDWARE=framework-13-amd ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} bash $H/ergonOS/bin/provision-arch.sh" >/tmp/prov.log 2>&1 &
 _prov=$!
 _t0=$(date +%s)
 while kill -0 "$_prov" 2>/dev/null; do
@@ -162,6 +162,9 @@ else
   bad "host.env did not record the bundle — a reprovision would forget it"
   grep -n BUNDLES "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null | sed 's/^/     /'
 fi
+if grep -q 'BUNDLES="[^"]*dictation' "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null; then
+  ok "the dictation bundle is recorded in host.env too"
+else bad "host.env did not record the dictation bundle"; fi
 if su - "$U" -c "\$HOME/.local/share/pyfleet/bin/python -c 'import jupyterlab'" >/dev/null 2>&1; then
   ok "the bundle's python packages are importable in pyfleet"
 else
@@ -3440,6 +3443,99 @@ else
   else bad "ergon-webcam with no camera: rc $_wc_rc, ffmpeg $(pgrep -u "$U" -x ffmpeg || echo absent), output: $_wc"; pkill -u "$U" -x ffmpeg; fi
 fi
 note "ERGON-104: a real webcam recording and the Open button on mako are unproven here"
+
+# --- ERGON-100: dictation. Bundle, bind, model download, a real record/stop cycle, typing
+echo "--- ERGON-100 ---"
+if grep -qx 'dictation pacman whisper-cpp' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null; then
+  ok "the ledger records whisper-cpp as installed by the dictation bundle"
+else bad "the ledger has no 'dictation pacman whisper-cpp'"; sed 's/^/     /' "$H/.local/state/ergon/bundle-ledger" 2>/dev/null | head -10; fi
+command -v whisper-cli >/dev/null && ok "whisper-cli is installed" || bad "whisper-cli is missing"
+command -v pw-record >/dev/null && ok "pw-record is installed" || bad "pw-record is missing"
+jq -e 'any(.[]; .description == "Dictate (toggle, types the text)")' <<<"$(hq binds -j 2>/dev/null)" >/dev/null 2>&1 \
+  && ok "bind registered: SUPER+CTRL+X dictation" || bad "bind not registered: Dictate (toggle, types the text)"
+rm -rf "$H/.local/share/ergon/whisper"
+# No model yet: the start refuses and says so, instead of choosing one.
+timeout -k 2 20 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD PATH='$SESSION_PATH' ergon-dictate start" >/tmp/d100.out 2>&1 </dev/null; _d_rc=$?
+if [ "$_d_rc" = 1 ] && grep -qi 'no active model' /tmp/d100.out; then ok "start with no model refuses: $(head -c 90 /tmp/d100.out)"
+else bad "start with no model: rc $_d_rc, $(head -c 150 /tmp/d100.out)"; fi
+pkill -u "$U" -x fuzzel 2>/dev/null; sleep 1
+# The real download, ~75 MB from huggingface, checked against the pinned hash.
+timeout -k 5 300 su - "$U" -s /bin/bash -c "ERGON_DICTATE_QUIET=1 PATH='$SESSION_PATH' ergon-dictate model get tiny.en" >/tmp/d100.out 2>&1 </dev/null; _d_rc=$?
+if [ "$_d_rc" = 0 ] && [ -s "$H/.local/share/ergon/whisper/ggml-tiny.en.bin" ] && [ "$(cat "$H/.local/share/ergon/whisper/active" 2>/dev/null)" = tiny.en ]; then
+  ok "model get tiny.en downloaded, verified and became active ($(stat -c %s "$H/.local/share/ergon/whisper/ggml-tiny.en.bin") bytes)"
+else bad "model get tiny.en: rc $_d_rc, $(tail -c 200 /tmp/d100.out)"; fi
+usr "ergon-dictate model use tiny.en" >/tmp/d100.out 2>&1 </dev/null
+grep -q 'tiny.en is the active' /tmp/d100.out && ok "model use tiny.en" || bad "model use: $(head -c 100 /tmp/d100.out)"
+usr "ergon-dictate model verify tiny.en" >/tmp/d100.out 2>&1 </dev/null
+grep -q '^ok *tiny.en' /tmp/d100.out && ok "model verify re-checks the installed model" || bad "model verify: $(head -c 100 /tmp/d100.out)"
+
+# pipewire is socket-activated on a real login, but the guest's user manager predates the
+# package, so its sockets were never started.
+usr "timeout 30 systemctl --user start pipewire.socket pipewire-pulse.socket wireplumber.service" >/tmp/d100.out 2>&1 </dev/null || note "ERGON-100: starting pipewire: $(head -c 150 /tmp/d100.out)"
+sleep 3
+# A source to record from: the guest may have no audio device, so a null sink's monitor.
+usr "pactl load-module module-null-sink sink_name=d100" >/tmp/d100.out 2>&1 </dev/null; sleep 2; usr "pactl set-default-source d100.monitor" >>/tmp/d100.out 2>&1 </dev/null \
+  || note "ERGON-100: no null source ($(head -c 100 /tmp/d100.out)); recording uses whatever pipewire offers"
+d100_phase() { usr "ergon-dictate status" 2>/dev/null </dev/null | head -1; }
+d100_idle() { [ "$(d100_phase)" = idle ]; }
+d100_rec() { [ "$(d100_phase)" = recording ]; }
+d100_bar() { usr "ergon-status" 2>/dev/null </dev/null | grep -q dictating; }
+pkill -u "$U" -x foot 2>/dev/null; sleep 1
+pkill -u "$U" -f imv 2>/dev/null   # ERGON-104's viewer is imv-wayland, which -x imv misses, and it keeps focus
+o_dsp 'hl.dsp.focus({workspace = 7})'; sleep 1
+
+# 1. A real cycle, real whisper-cli too, on whatever the source gives (silence).
+usr "ergon-dictate start" >/tmp/d100.out 2>&1 </dev/null; _d_rc=$?
+if [ "$_d_rc" = 0 ] && o_until 5 d100_rec; then
+  ok "ergon-dictate start is recording"
+  if o_until 5 d100_bar; then ok "ergon-status shows the dictating state while recording"; else bad "ergon-status did not show dictating"; fi
+  sleep 2
+  usr "pgrep -u $U -x pw-record" >/tmp/d100.pid 2>&1 </dev/null
+  [ -s /tmp/d100.pid ] && ok "pw-record is running while recording" || bad "no pw-record while recording"
+  usr "ergon-dictate stop" >/tmp/d100.out 2>&1 </dev/null
+  if o_until 90 d100_idle; then ok "stop: the real cycle (pw-record then whisper-cli) finished and went back to idle"
+  else bad "after stop the state is still '$(d100_phase)'"; fi
+  [ -z "$(usr "pgrep -u $U -x pw-record" 2>/dev/null </dev/null)" ] && ok "the recorder is gone afterwards" || bad "pw-record is still running"
+  [ -z "$(usr "pgrep -u $U -x whisper-cli" 2>/dev/null </dev/null)" ] && ok "whisper-cli is gone afterwards" || bad "whisper-cli is still running"
+  d100_bar && bad "ergon-status still shows dictating after the cycle" || ok "ergon-status is back to idle"
+  [ ! -e /run/user/1000/ergon-dictate-1000/rec.wav ] && ok "the recording was deleted" || bad "rec.wav is left behind"
+else bad "start: rc $_d_rc, $(head -c 150 /tmp/d100.out), state '$(d100_phase)', pipewire $(usr "systemctl --user is-active pipewire" 2>&1 </dev/null | head -1), pw-record: $(usr "timeout -k 1 3 pw-record --rate 16000 /tmp/d100-probe.wav" 2>&1 </dev/null | head -c 150)"; usr "ergon-dictate stop" >/dev/null 2>&1 </dev/null; fi
+
+# 2. End to end into a window, SUPER+CTRL+X pressed for real, with ONLY whisper-cli stubbed.
+rm -rf /tmp/d100bin /tmp/d100-keys.out /tmp/d100-args; mkdir -p /tmp/d100bin
+printf '#!/bin/sh\necho "$@" > /tmp/d100-args\necho " Hello ergon dictation, test."\n' > /tmp/d100bin/whisper-cli
+chmod a+rx /tmp/d100bin /tmp/d100bin/whisper-cli
+printf '#!/bin/sh\nexec cat -v > /tmp/d100-keys.out\n' > /tmp/d100-keys.sh; chmod 755 /tmp/d100-keys.sh
+# Leftovers from earlier sections (a browser, a picker, a viewer) can hold focus.
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null; pkill -u "$U" -x firefox 2>/dev/null; sleep 1
+if o_win ergon-d100 /tmp/d100-keys.sh; then
+  sleep 2; o_dsp "hl.dsp.focus({workspace = 7})"; sleep 1
+  for _i in 1 2 3 4 5; do o_focus ergon-d100 && break; note "ergon-d100 focus try $_i: workspace $(o_field ergon-d100 .workspace.id) at $(o_field ergon-d100 .at) active $(o_active .class)"; sleep 2; done
+  if [ "$(o_active .class)" != ergon-d100 ]; then
+    note "could not focus ergon-d100; activeworkspace $(hq activeworkspace -j | jq -c "{id,windows}" 2>/dev/null); clients $(hq clients -j | jq -c "[.[] | {class,ws:.workspace.id,hidden,mapped}]" 2>/dev/null | head -c 600)"
+    note "layers with keyboard: $(hq layers -j | jq -c "[.. | objects | select(has(\"namespace\")) | .namespace]" 2>/dev/null | head -c 300)"
+  fi
+  # The keybind spawns ergon-dictate with the compositor's environment, which has
+  # no stub, so the first press is a start made here with the stub on PATH; the
+  # second is the real key.
+  usr "PATH=/tmp/d100bin:$SESSION_PATH ergon-dictate start" >/tmp/d100.out 2>&1 </dev/null
+  if o_until 5 d100_rec; then
+    sleep 2
+    o_key 125:1 29:1 45:1 45:0 29:0 125:0
+    if o_until 60 d100_idle; then
+      o_key 28:1 28:0
+      typed() { grep -q 'Hello ergon dictation, test\.' /tmp/d100-keys.out 2>/dev/null; }
+      if o_until 5 typed; then ok "the dictated phrase was typed into the focused foot window"
+      else bad "typed text: '$(head -c 80 /tmp/d100-keys.out 2>/dev/null)' (focused '$(o_active .class)'), clipboard '$(usr 'timeout 3 wl-paste -n' 2>/dev/null </dev/null | head -c 60)'"; fi
+      grep -q -- '-m .*ggml-tiny.en.bin' /tmp/d100-args 2>/dev/null && grep -q -- ' -l en' /tmp/d100-args && ok "whisper-cli was called with the active model and en for an English-only model" \
+        || bad "whisper-cli args: $(cat /tmp/d100-args 2>/dev/null)"
+    else bad "SUPER+CTRL+X did not end the recording (state '$(d100_phase)')"; usr "ergon-dictate stop" >/dev/null 2>&1 </dev/null; fi
+  else bad "stubbed start did not record: $(head -c 150 /tmp/d100.out)"; fi
+else bad "harness: no foot window for the typing check"; fi
+pkill -u "$U" -f 'app-id=ergon-d100' 2>/dev/null
+usr "pactl unload-module module-null-sink" >/dev/null 2>&1 </dev/null
+rm -rf /tmp/d100bin /tmp/d100-keys.* /tmp/d100-args /tmp/d100.out /tmp/d100.pid
+note "ERGON-100: speech recognition accuracy on real speech and a real microphone are unproven here; the typed phrase comes from a stub whisper-cli"
 
 
 rm -f /etc/sudoers.d/99-harness

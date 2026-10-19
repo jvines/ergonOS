@@ -1,0 +1,3 @@
+DESCRIPTION="Offline dictation, speech to text typed into the focused window"
+SIZE_MB=25
+NOTE="whisper.cpp from the official repos, nothing resident. SUPER+CTRL+X starts and stops; the first press with no model installed opens a picker, since the models (75 MB to 1.6 GB) are yours to choose: ergon dictate model list, then ergon dictate model get NAME. Models are downloaded on request into ~/.local/share/ergon/whisper and removed by ergon dictate model rm, not by removing this bundle."
