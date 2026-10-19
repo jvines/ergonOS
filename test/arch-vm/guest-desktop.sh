@@ -3780,7 +3780,7 @@ _nb="$G/marimo/welcome.py"
 usr "ERGON=$G PATH=$G/bin:\$PATH timeout -k 5 180 \$HOME/.local/share/pyfleet/bin/marimo export html $_nb -o /tmp/wel55x.html --force" >/tmp/wel55.out 2>&1 </dev/null; _ex=$?
 _pw=$(grep -oE '[A-Za-z]{10,}' "$G/knowledge/welcome.md" | sort -u | awk '{print length($0), $0}' | sort -rn | awk '{print $2}' | head -8)
 _pf=0; _pt=0; for _w in $_pw; do _pt=$((_pt+1)); grep -qF -- "$_w" /tmp/wel55x.html 2>/dev/null && _pf=$((_pf+1)); done
-if [ "$_ex" = 0 ] && [ "$_pt" -ge 4 ] && [ "$_pf" -ge $((_pt - 1)) ]; then
+if [ "$_ex" = 0 ] && [ "$_pt" -ge 2 ] && [ "$_pf" = "$_pt" ]; then
   ok "ERGON-55: the exported notebook carries the output of ergon explain welcome ($_pf of its $_pt longest words, $(wc -c < /tmp/wel55x.html) bytes)"
 else bad "ERGON-55: export rc $_ex, $_pf of $_pt welcome.md words found in $(wc -c < /tmp/wel55x.html 2>/dev/null) bytes; words: $(tr '\n' ' ' <<<"$_pw"); $(tail -c 200 /tmp/wel55.out)"; fi
 # and a command section: the accordion title is typed, the body is what `ergon bundle list` printed
