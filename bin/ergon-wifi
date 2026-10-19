@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Wi-Fi picker: connect, disconnect, rescan, radio, share as QR
 # ergon:group=hardware
-# ergon:args=[--format | --qr-payload SSID KEYMGMT PSK]
+# ergon:args=[--format | --join SSID | --qr-payload SSID KEYMGMT PSK]
 #
 # A fuzzel menu over nmcli, so the bar's network module no longer drops you
 # into nmtui for the one thing you wanted: join a network. nmtui stays as the
@@ -51,7 +51,20 @@ qr_payload() {  # $1 ssid  $2 key-mgmt  $3 psk
   esac
 }
 
+# Join a secured network with the password read from stdin. nmcli takes it
+# through passwd-file on an fd, so it is never on argv or disk. The profile is
+# made first (without the psk) and deleted again if activation fails, so a typo
+# leaves no broken saved network.
+join() {  # $1 ssid; password on stdin
+  local pw; IFS= read -r pw
+  nmcli connection add type wifi con-name "$1" ssid "$1" wifi-sec.key-mgmt wpa-psk >/dev/null 2>&1 || return 1
+  if nmcli connection up id "$1" passwd-file /dev/fd/3 >/dev/null 2>&1 3< <(printf "802-11-wireless-security.psk:%s\n" "$pw"); then return 0; fi
+  nmcli connection delete id "$1" >/dev/null 2>&1 || true
+  return 1
+}
+
 case "${1:-}" in
+  --join)       join "${2:?ssid}"; exit $? ;;
   --format)     format; exit 0 ;;
   --qr-payload) qr_payload "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
   "") ;;
@@ -100,8 +113,7 @@ connect() {  # $1 line chosen from the list
     say "$ssid needs enterprise settings: opening Advanced"; advanced
   else
     pw=$(fuzzel --dmenu --password --prompt "$ssid password  " --lines 0) || return 0
-    # --ask reads the password from stdin, so it never appears in `ps`.
-    if printf '%s\n' "$pw" | nmcli --ask dev wifi connect "$ssid" >/dev/null 2>&1; then say "Connected to $ssid"
+    if printf "%s\n" "$pw" | join "$ssid"; then say "Connected to $ssid"
     else say "Could not connect to $ssid (wrong password?)"; fi
   fi
 }

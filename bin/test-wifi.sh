@@ -34,4 +34,24 @@ eq "WPA payload" "$("$W" --qr-payload Home wpa-psk 'pa;ss')" 'WIFI:T:WPA;S:Home;
 eq "payload escapes S" "$("$W" --qr-payload 'a:b,c' sae 'x')" 'WIFI:T:WPA;S:a\:b\,c;P:x;;'
 eq "open payload" "$("$W" --qr-payload Cafe '' '')" 'WIFI:T:nopass;S:Cafe;;'
 
+
+# --join: the password must never be in argv, and a failed join leaves no profile.
+S=$(mktemp -d); trap 'rm -rf "$S"' EXIT
+cat > "$S/nmcli" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$S/argv"
+if [ "\$1 \$2" = "connection up" ]; then
+  cat /dev/fd/3 > "$S/seen" 2>/dev/null; [ -f "$S/fail" ] && exit 4
+fi
+exit 0
+STUB
+chmod +x "$S/nmcli"
+: > "$S/argv"; printf 'hunter2xyz\n' | PATH="$S:$PATH" "$W" --join Home; rc=$?
+eq "join succeeds" "$rc" 0
+grep -q hunter2xyz "$S/argv" && bad "password leaked into argv" || ok "password not in argv"
+eq "password arrives as a passwd-file line" "$(cat "$S/seen")" '802-11-wireless-security.psk:hunter2xyz'
+grep -q 'connection delete' "$S/argv" && bad "profile deleted on success" || ok "profile kept on success"
+touch "$S/fail"; : > "$S/argv"; printf 'typo\n' | PATH="$S:$PATH" "$W" --join Home; rc=$?
+eq "failed join returns non-zero" "$([ $rc -ne 0 ] && echo nonzero)" nonzero
+grep -q "connection delete id Home" "$S/argv" && ok "half-made profile deleted on failure" || bad "profile left behind"
 echo "$PASS passed, $FAIL failed"; [ "$FAIL" -eq 0 ]
