@@ -241,6 +241,21 @@ else
       ok "ergon new --lang $lang: .vscode/extensions.json parses, and recommends all of: ${WANT[$lang]}"
     fi
   done
+
+  # ERGON-67: the python scaffold carries marimo as a dev dependency (so
+  # uv.lock pins it) and a starter notebook that imports the project package,
+  # and says how to open it. Offline, with uv stubbed: lock/sync fail soft.
+  P="$T/new/ppython"
+  if awk '/^\[dependency-groups\]/{g=1;next} /^\[/{g=0} g&&/^dev *= *\[.*"marimo"/{f=1} END{exit !f}' "$P/pyproject.toml" \
+     && grep -q "^    import ppython$" "$P/notebooks/starter.py"; then
+    ok "ergon new: marimo is a dev dependency and notebooks/starter.py imports the package"
+  else
+    bad "ergon new: pyproject lacks marimo in its dev group, or notebooks/starter.py is missing or does not import the package"
+  fi
+  out=$(cd "$T/new" && PATH="$T/new/bin:$PATH" "$REPO/bin/ergon-new" pnext 2>&1)
+  grep -q 'uv run marimo edit notebooks/starter.py' <<< "$out" \
+    && ok "ergon new: next steps say 'uv run marimo edit notebooks/starter.py'" \
+    || bad "ergon new: next steps do not name 'uv run marimo edit notebooks/starter.py'"
 fi
 
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"

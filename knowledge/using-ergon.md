@@ -66,6 +66,9 @@ anything.
   Python, `renv` for R. **Notebooks are marimo** by default (plain `.py`, so
   they diff, and reactive, so there is no stale cell); Jupyter is a bundle
   for anyone who wants `.ipynb` instead, not the thing you have to remove.
+  A project carries marimo itself, as a locked dev dependency, because the base
+  marimo cannot import your project: open its notebooks from the project with
+  `uv run marimo edit notebooks/starter.py` (ERGON-67).
 
 ## Backgrounds
 
