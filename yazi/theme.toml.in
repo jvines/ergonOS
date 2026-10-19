@@ -94,7 +94,7 @@ footer  = { fg = "@COOL_BG1@", bg = "@COOL_FG0@" }
 # name. Directories and executables are what actually change navigation.
 [filetype]
 rules = [
-  { is = "dir",   fg = "@COOL_0@", bold = true },
+  { url = "*/", fg = "@COOL_0@", bold = true },
   { is = "exec",  fg = "@COOL_GOOD@" },
   { is = "link",  fg = "@COOL_3@" },
   { is = "orphan", fg = "@COOL_URGENT@" },
