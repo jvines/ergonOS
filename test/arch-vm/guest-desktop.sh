@@ -3448,9 +3448,11 @@ note "ERGON-104: a real webcam recording and the Open button on mako are unprove
 echo "--- ERGON-105..116 ---"
 pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
 # 106: the session has an agent socket, systemd owns it, and a key round-trips.
-_se=$(usr "systemctl --user show-environment" 2>/dev/null </dev/null)
-grep -qx 'SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket' <<<"$_se" && ok "ERGON-106: the user manager's environment has SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket" \
-  || bad "ERGON-106: SSH_AUTH_SOCK in the user manager: '$(grep SSH_AUTH <<<"$_se")'"
+_henv106=$(tr '\0' '\n' < "/proc/$(pgrep -x Hyprland | head -1)/environ" 2>/dev/null)
+grep -qx 'SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket' <<<"$_henv106" && ok "ERGON-106: the compositor carries SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket from the shipped uwsm drop-in" \
+  || bad "ERGON-106: the compositor's SSH_AUTH_SOCK is '$(grep ^SSH_AUTH <<<"$_henv106" || echo absent)'"
+# uwsm hands the compositor's exports to the user manager; this harness starts Hyprland directly, so do what uwsm does.
+usr "systemctl --user set-environment SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket" >/dev/null 2>&1 </dev/null
 _sa=$(usr "systemctl --user is-active ssh-agent.socket" 2>/dev/null </dev/null)
 [ "$_sa" = active ] && ok "ERGON-106: ssh-agent.socket is active" || bad "ERGON-106: ssh-agent.socket is '$_sa'"
 usr "SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket timeout -k 2 10 ssh-add -l" >/tmp/sa106.out 2>&1 </dev/null; _sa_rc=$?
@@ -3460,18 +3462,19 @@ usr "ssh-keygen -q -t ed25519 -N '' -C ergon106 -f /tmp/k106" >/dev/null 2>&1 </
 usr "SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket timeout -k 2 10 ssh-add /tmp/k106" >/tmp/sa106.out 2>&1 </dev/null
 usr "SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket timeout -k 2 10 ssh-add -l" >/tmp/sa106.out 2>&1 </dev/null
 grep -q ergon106 /tmp/sa106.out && ok "ERGON-106: a key added to the agent is listed" || bad "ERGON-106: ssh-add -l after adding: $(head -c 150 /tmp/sa106.out)"
-_ssh_row=$(doctor_row ssh-agent su - "$U" -c "XDG_RUNTIME_DIR=/run/user/1000 SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket timeout -k 2 120 $G/bin/ergon-doctor --json </dev/null")
+_ssh_row=$(doctor_row ssh-agent su - "$U" -c "XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus WAYLAND_DISPLAY=$WLD timeout -k 2 120 $G/bin/ergon-doctor --json </dev/null")
 case "$_ssh_row" in *'"state":"ok"'*) ok "ERGON-106: ergon-doctor's ssh-agent row is ok: $(head -c 120 <<<"$_ssh_row")" ;; *) bad "ERGON-106: ssh-agent row: '$_ssh_row'" ;; esac
 usr "SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket ssh-add -d /tmp/k106.pub" >/dev/null 2>&1 </dev/null
+usr "systemctl --user unset-environment SSH_AUTH_SOCK" >/dev/null 2>&1 </dev/null
 rm -f /tmp/k106 /tmp/k106.pub /tmp/sa106.out
 
 # 107: ergon remind. A 5s reminder fires as a notification; a 1h one lists and clears.
 _t0=$SECONDS
 usr "timeout -k 2 20 ergon remind 5s vmremind" >/tmp/rm107.out 2>&1 </dev/null; _rm_rc=$?
 [ "$_rm_rc" = 0 ] && [ $((SECONDS - _t0)) -lt 10 ] && ok "ERGON-107: ergon remind 5s returned in $((SECONDS - _t0))s: $(head -c 80 /tmp/rm107.out)" || bad "ERGON-107: ergon remind 5s rc $_rm_rc after $((SECONDS - _t0))s: $(head -c 150 /tmp/rm107.out)"
-_mk_has() { { usr "timeout -k 2 5 makoctl list" 2>/dev/null </dev/null; usr "timeout -k 2 5 makoctl history" 2>/dev/null </dev/null; } | grep -q vmremind; }
-if o_until 14 _mk_has; then ok "ERGON-107: the reminder arrived as a notification with body vmremind"
-else bad "ERGON-107: no notification with vmremind in mako list/history: $(usr 'timeout 5 makoctl history' 2>&1 </dev/null | head -c 300)"; fi
+_mk_has() { { usr "timeout -k 2 5 makoctl list" 2>/dev/null </dev/null; usr "timeout -k 2 5 makoctl history" 2>/dev/null </dev/null; } | grep -q "Notification [0-9]*: Reminder"; }
+if o_until 14 _mk_has; then ok "ERGON-107: the reminder arrived as a notification titled Reminder (makoctl shows summaries only; the body is unproven)"
+else bad "ERGON-107: no Reminder notification in mako: list [$(usr "timeout 5 makoctl list" 2>&1 </dev/null | tr "\n" "|" | head -c 300)] history [$(usr "timeout 5 makoctl history" 2>&1 </dev/null | tr "\n" "|" | head -c 300)] journal [$(usr "journalctl --user --no-pager -o cat -n 8 -u ergon-remind-1 -u ergon-remind-2" 2>&1 </dev/null | tr "\n" "|" | head -c 300)]"; fi
 usr "timeout 5 makoctl dismiss -a" >/dev/null 2>&1 </dev/null
 sleep 2
 _lu=$(usr "systemctl --user list-units --all --plain --no-legend 'ergon-remind-*'" 2>/dev/null </dev/null)
@@ -3531,7 +3534,7 @@ if timeout -k 3 20 sudo docker info >/dev/null 2>&1 </dev/null; then
   elif [ "$_db_rc" = 0 ]; then
     ok "ERGON-114: ergon db add redis exited 0"
     sleep 3
-    printf 'AUTH ergon-dev\r\nPING\r\n' | timeout -k 2 5 nc -q1 127.0.0.1 6379 >/tmp/db114.out 2>&1
+    timeout -k 2 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/6379; printf "AUTH ergon-dev\r\nPING\r\n" >&3; head -c 12 <&3' >/tmp/db114.out 2>&1 </dev/null
     grep -q '+PONG' /tmp/db114.out && ok "ERGON-114: redis answers +PONG after AUTH ergon-dev" || bad "ERGON-114: redis said: $(head -c 150 /tmp/db114.out)"
     _ss=$(ss -ltnH 2>/dev/null | awk '{print $4}' | grep ':6379$' | tr '\n' ' ')
     [ "$_ss" = "127.0.0.1:6379 " ] && ok "ERGON-114: 6379 listens on 127.0.0.1 only" || bad "ERGON-114: 6379 listeners: '$_ss'"
