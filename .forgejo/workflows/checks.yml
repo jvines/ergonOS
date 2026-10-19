@@ -87,6 +87,9 @@ jobs:
       - name: Hardware
         run: cd "$CI_DIR" && ./bin/test-hardware.sh
 
+      - name: Report scrubber
+        run: cd "$CI_DIR" && ./bin/test-report.sh
+
       - name: CLI --help never runs a command, and ergon new writes JSON
         run: cd "$CI_DIR" && ./bin/test-cli.sh
 
