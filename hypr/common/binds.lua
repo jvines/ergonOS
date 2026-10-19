@@ -151,6 +151,8 @@ bind("SUPER + F",            "Fullscreen",          hl.dsp.window.fullscreen({ a
 bind("SUPER + P",            "Pseudo-tile",         hl.dsp.window.pseudo({ action = "toggle" }))
 bind("SUPER + O",            "Pop window out (float, centre, pin; again to undo)", "ergon-window pop")
 bind("SUPER + CTRL + SHIFT + Q", "Close ALL windows on this workspace", "ergon-window close-all")
+bind("SUPER + ALT + HOME",   "Save this window's width", "ergon-window width save")
+bind("SUPER + HOME",         "Restore the saved window width", "ergon-window width restore")
 
 -- Focus. hjkl because every other tool on this machine uses them.
 bind("SUPER + H", "Focus left",  hl.dsp.focus({ direction = "left"  }))
