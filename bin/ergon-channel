@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# ergon:summary=Show or choose the release channel: the tested Arch day, or rolling
+# ergon:group=system
+# ergon:args=[tested | rolling]
+# ergon:help=native
+#
+#   ergon channel            print the channel, and for tested the day it holds
+#   ergon channel tested     the Arch day the VM suite last passed (default)
+#   ergon channel rolling    live Arch mirrors: updates the day they land, untested
+#
+# ERGON-99. The choice is CHANNEL= in hosts/<host>/host.env, beside BUNDLES:
+# what this machine is, reproduced by reprovisioning. Choosing only records it;
+# the next `ergon update` (or provisioning that installs) moves pacman, forcing
+# a full -Syy refresh. Back to tested from rolling holds the machine where it is,
+# upgrading nothing, until a tested day after its last live sync arrives --
+# nothing is downgraded. Why, and the rest of the rules: lib/archive-pin.sh.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# shellcheck source=../lib/archive-pin.sh
+. "$ERGON/lib/archive-pin.sh"
+HOSTENV="$ERGON/hosts/$(hostname -s)/host.env"
+
+die() { echo "ergon-channel: $*" >&2; exit 1; }
+
+show() {
+  ergon_pin_decide
+  [ "$ERGON_CHANNEL_BAD" = 0 ] || echo "CHANNEL in $HOSTENV is neither tested nor rolling: treated as tested"
+  case "$ERGON_PIN_WHY" in
+    rolling)    echo "rolling — live Arch mirrors, none of it tested by the VM suite" ;;
+    tested)     echo "tested — Arch as of $ERGON_TESTED, the day the VM suite last passed" ;;
+    ahead)      echo "tested — Arch as of $ERGON_TESTED, but this machine took live Arch on $ERGON_LIVE:"
+                echo "  ergon update holds it there, upgrading nothing, until a tested day after that" ;;
+    untestable) echo "tested — but packages/tested-date is missing or unreadable, so updates follow live mirrors" ;;
+  esac
+  # Where pacman is now, when the next update would move it.
+  local held want
+  held=$(ergon_pin_held) || held="live mirrors (pacman.conf does not read $ERGON_PIN_LIST)"
+  [ "$held" != live ] || held="live mirrors"
+  want=${ERGON_PIN:-live mirrors}
+  [ "$ERGON_PIN_WHY" = ahead ] || [ "$held" = "$want" ] \
+    || echo "  pacman is at $held now; the next 'ergon update' moves it to $want"
+}
+
+case "${1:-}" in
+  -h|--help) sed -n '7,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  '') show; exit 0 ;;
+  tested|rolling) new=$1 ;;
+  *) die "usage: ergon channel [tested | rolling]" ;;
+esac
+[ $# -eq 1 ] || die "usage: ergon channel [tested | rolling]"
+
+# Recorded the way ergon-bundle records BUNDLES: the line replaced in place,
+# appended when missing, and asserted afterwards rather than trusted.
+mkdir -p "$(dirname "$HOSTENV")"
+[ -f "$HOSTENV" ] || printf '# What this machine IS.\nGRAPHICAL=0\nPROFILE=server\n' > "$HOSTENV"
+if grep -qx "CHANNEL=$new" "$HOSTENV" && [ "$(grep -c '^CHANNEL=' "$HOSTENV")" = 1 ]; then
+  echo "already on $new"
+elif grep -q '^CHANNEL=' "$HOSTENV"; then
+  awk -v v="$new" '/^CHANNEL=/ { if (seen++) next; $0 = "CHANNEL=" v } { print }' "$HOSTENV" > "$HOSTENV.new"
+  cat "$HOSTENV.new" > "$HOSTENV"; rm -f "$HOSTENV.new"
+else
+  printf 'CHANNEL=%s\n' "$new" >> "$HOSTENV"
+fi
+[ "$(grep -c '^CHANNEL=' "$HOSTENV")" = 1 ] && grep -qx "CHANNEL=$new" "$HOSTENV" \
+  || die "could not record CHANNEL=$new in $HOSTENV"
+show
+echo "  recorded in $HOSTENV; 'ergon update' applies it"
