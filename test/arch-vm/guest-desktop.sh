@@ -3143,6 +3143,16 @@ o_until 6 has_inh && ok "ergon-awake on: systemd-inhibit lists an idle inhibitor
 usr "ergon-awake off" >/dev/null 2>&1
 no_inh() { [ "$(inh)" = 0 ]; }
 o_until 6 no_inh && ok "ergon-awake off: the inhibitor is gone" || bad "ergon-awake off: inhibitor still listed"
+# Full mode: sleep and the lid switch too, and 'off' takes all of it away.
+inhf() { su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemd-inhibit --list --no-legend 2>/dev/null" | grep -c 'ergon-awake.*idle:sleep:handle-lid-switch'; }
+usr "ergon-awake full" >/dev/null 2>&1
+has_inhf() { [ "$(inhf)" -ge 1 ]; }
+o_until 6 has_inhf && ok "ergon-awake full: systemd-inhibit lists idle, sleep and handle-lid-switch" \
+                   || { bad "ergon-awake full: no idle:sleep:handle-lid-switch inhibitor listed"; usr "systemd-inhibit --list" 2>&1 | head -8 | sed 's/^/     /'; }
+[ "$(usr 'ergon-awake status')" = full ] && ok "ergon-awake status says full" || bad "ergon-awake status says '$(usr 'ergon-awake status')'"
+usr "ergon-awake off" >/dev/null 2>&1
+no_any() { [ "$(inhf)" = 0 ] && [ "$(inh)" = 0 ]; }
+o_until 6 no_any && ok "ergon-awake off: the sleep and lid-switch inhibitors are gone" || bad "ergon-awake off: an ergon-awake inhibitor is still listed"
 
 # --- ERGON-85: layout cycle changes the active keymap -----------------------
 _kb_save=$(kb_main)
@@ -3168,37 +3178,13 @@ fi
 IFS=$'\t' read -r _kl _kv <<<"$_kb_save"; set_layout "$_kl" "$_kv" || true
 
 # --- ERGON-86: a crashing program of the user's raises a notification -------
-# Runs 1-4: the service was active and the entry was there, readable by the
-# user, and nothing was announced. So the follower's pipeline is also run by
-# hand, as the user, around the crash, stage by stage, and what each stage saw
-# is printed whatever the outcome.
+# Runs 1-7 proved the pipeline by hand, stage by stage (journal entry, jq,
+# notify-send rc 0); that scaffolding is gone, and its own "traced" toast with
+# it. What is left is the plain check, from a clean mako, with everything mako
+# holds afterwards printed in full whatever the outcome.
 CID=fc2e22bc6ee647b6b90729ab34a250b1
 if su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active ergon-crash-notify.service" >/dev/null 2>&1; then
   ok "ergon-crash-notify.service is running in the user manager"
-  note "core_pattern: $(cut -c1-70 /proc/sys/kernel/core_pattern); coredumpctl: $(command -v coredumpctl || echo missing)"
-  cat > /tmp/o-follow.sh <<FOLLOW
-#!/bin/bash
-# A: the service's first stage. B: A through its jq. C: no _UID. D: no --lines=0.
-cd /tmp; echo \$\$ > /tmp/o-follow.sid
-journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID _UID=1000 > /tmp/o-fA.out 2>&1 & echo \$! >> /tmp/o-follow.pids
-journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID _UID=1000 2>/tmp/o-fB.err | jq --unbuffered -r '[.COREDUMP_PID, .COREDUMP_EXE, .COREDUMP_COMM, .COREDUMP_SIGNAL_NAME] | @tsv' > /tmp/o-fB.out 2>&1 & echo \$! >> /tmp/o-follow.pids
-journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID=$CID > /tmp/o-fC.out 2>&1 & echo \$! >> /tmp/o-follow.pids
-journalctl --quiet --follow --lines=1 --output=cat MESSAGE_ID=$CID _UID=1000 > /tmp/o-fD.out 2>&1 & echo \$! >> /tmp/o-follow.pids
-# E: the notifier itself, traced, with the unit's environment.
-env -i HOME=$H USER=$U PATH=/tmp/o-shim:/usr/local/bin:/usr/bin XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus bash -x $H/ergonOS/bin/ergon-crash-notify > /tmp/o-fE.out 2> /tmp/o-fE.err &
-FOLLOW
-  # E's notify-send says "traced ..." so the service's own toast stays the one asserted.
-  mkdir -p /tmp/o-shim; cat > /tmp/o-shim/notify-send <<'SHIM'
-#!/bin/bash
-a=("$@"); for i in "${!a[@]}"; do case "${a[$i]}" in *crashed*) a[$i]="traced ${a[$i]}" ;; esac; done
-/usr/bin/notify-send "${a[@]}"; rc=$?; echo "shim: notify-send rc=$rc" >&2; exit $rc
-SHIM
-  chmod 755 /tmp/o-shim /tmp/o-shim/notify-send
-  chmod 755 /tmp/o-follow.sh; rm -f /tmp/o-f?.out /tmp/o-follow.pids /tmp/o-follow.sid
-  usr "setsid /tmp/o-follow.sh" >/dev/null 2>&1; sleep 3
-  _ns=$(usr "notify-send -u normal 'ergonprobe died (SIGSEGV)' 'A core dump was recorded. \\\`coredumpctl info 1\\\` has the details.'; echo rc=\$?" 2>&1 | tr '\n' ' ')
-  sleep 0.5
-  note "a hand notify-send like the notifier's: $_ns; mako mode '$(usr 'makoctl mode' 2>&1 | tr '\n' ' ')'; listed: $(usr 'makoctl list' 2>&1 | grep -c ergonprobe)"
   cat > /tmp/o-crash.sh <<'CRASH'
 #!/bin/bash
 ulimit -c unlimited
@@ -3208,42 +3194,18 @@ CRASH
   usr "/tmp/o-crash.sh" >/dev/null 2>&1 &
   sleep 2
   _cp=$(pgrep -u "$U" -f ergoncrashprobe | head -1)
-  _cg=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/session.slice/ergon-crash-notify.service
-  cgio() { local p; for p in $(cat "$_cg/cgroup.procs" 2>/dev/null); do printf '%s:%s r=%s w=%s %s; ' "$p" "$(cat /proc/$p/comm)" "$(awk '/^rchar/ {print $2}' /proc/$p/io)" "$(awk '/^wchar/ {print $2}' /proc/$p/io)" "$(cat /proc/$p/wchan)"; done; }
-  _io0=$(cgio)
   if [ -n "$_cp" ]; then
+    # The memory-kill sections leave critical toasts that never expire; start clean.
+    usr "makoctl dismiss --all" >/dev/null 2>&1
+    _t0=$SECONDS
     kill -SEGV "$_cp"
     crashed() { { usr "makoctl list; makoctl history" 2>/dev/null; } | grep -qE ': sleep crashed'; }
-    if o_until 20 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification"
+    if o_until 20 crashed; then ok "a SIGSEGV'd program raised a 'crashed' notification (within $((SECONDS - _t0))s)"
     else bad "a SIGSEGV'd program raised no notification within 20s"; fi
-    note "the service's processes, read/written bytes before the crash: $_io0"
-    note "                                              and after it: $(cgio)"
-    for _s in A B C D; do
-      note "by hand, stage $_s: $(wc -l </tmp/o-f$_s.out 2>/dev/null) line(s): $(head -c 160 /tmp/o-f$_s.out 2>/dev/null | tr '\n' ' ')"
-    done
-    [ -s /tmp/o-fB.err ] && note "stage B stderr: $(head -c 200 /tmp/o-fB.err)"
-    note "the notifier traced by hand, its last steps: $(grep -v '^+ *journalctl\|^+ *jq' /tmp/o-fE.err 2>/dev/null | tail -12 | tr '\n' ';' | cut -c1-900)"
-    _jp=$(pgrep -u "$U" -f "journalctl.*$CID" | head -1)
-    _sp=$(su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user show -p MainPID --value ergon-crash-notify.service" 2>/dev/null)
-    _sj=$(pgrep -P "${_sp:-0}" -x journalctl | head -1)
-    note "journal files the service's journalctl ($_sj) holds: $(ls -l /proc/${_sj:-0}/fd 2>/dev/null | grep -o '/[^ ]*\.journal[~]*' | sort -u | tr '\n' ' '); a hand one ($_jp): $(ls -l /proc/${_jp:-0}/fd 2>/dev/null | grep -o '/[^ ]*\.journal[~]*' | sort -u | tr '\n' ' ')"
-    for _jf in /var/log/journal/*/*.journal /run/log/journal/*/*.journal; do
-      [ -e "$_jf" ] || continue
-      journalctl --file="$_jf" -q -o cat -n 1 MESSAGE_ID=$CID COREDUMP_COMM=sleep 2>/dev/null | grep -q . && note "the entry is in $_jf ($(stat -c '%U %a' "$_jf"))"
-    done
-    note "entry fields: $(journalctl -b --no-pager -o json -n 1 MESSAGE_ID=$CID 2>/dev/null | jq -c '{_UID,_GID,COREDUMP_UID,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,_TRANSPORT}' 2>&1)"
+    note "the journal entry: $(journalctl -b --no-pager -o short-precise -n 1 MESSAGE_ID=$CID COREDUMP_COMM=sleep 2>&1 | tail -1 | cut -c1-200)"
     note "the service's own lines: $(journalctl --no-pager -o cat -n 5 _SYSTEMD_USER_UNIT=ergon-crash-notify.service 2>&1 | tr '\n' ';' | head -c 300)"
-    note "mako: $(usr "makoctl list" 2>&1 | head -4 | tr '\n' ';')"
-    # The same crash against a follower started just now: a stale follower and a
-    # broken one are different bugs.
-    if ! crashed; then
-      su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart ergon-crash-notify.service" >/dev/null 2>&1; sleep 3
-      usr "/tmp/o-crash.sh" >/dev/null 2>&1 & sleep 2
-      _cp=$(pgrep -u "$U" -f ergoncrashprobe | head -1); [ -n "$_cp" ] && kill -SEGV "$_cp"
-      if o_until 15 crashed; then note "after a restart of the service, the same crash WAS announced"
-      else note "after a restart of the service, the crash was still not announced: $(cgio)"; fi
-    fi
-    pkill -s "$(cat /tmp/o-follow.sid 2>/dev/null || echo 999999)" 2>/dev/null   # the hand followers only: their own session
+    echo "     --- makoctl list, in full ---";    usr "makoctl list" 2>&1 | sed 's/^/     /'
+    echo "     --- makoctl history, in full ---"; usr "makoctl history" 2>&1 | sed 's/^/     /'
   else
     bad "the crash probe process did not start"
   fi

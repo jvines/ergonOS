@@ -38,7 +38,10 @@ journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID="$DUMPED" _UID="$
   [[ $pid =~ ^[0-9]+$ ]] || pid=""
   # Backslashes doubled in the body only: notify-send g_strcompress()es it and
   # not the summary (see ergon-oom-notify).
-  notify-send -u normal "$name crashed${sig}" \
-    "A core dump was recorded. \`coredumpctl info ${pid:-$name}\` has the details." \
+  # Its own app name, so mako (group-by=app-name) never folds it into a held,
+  # critical memory-kill toast. The body claims no core: systemd-coredump logs
+  # this MESSAGE_ID also when none was stored ("without generating a coredump").
+  notify-send -a ergon-crash-notify -u normal "$name crashed${sig}" \
+    "\`coredumpctl info ${pid:-$name}\` has the details." \
     || printf 'could not deliver the notification for %s (no session bus?)\n' "$name" >&2
 done
