@@ -100,6 +100,16 @@ export TEST_ROOT="$T" PATH="$T/stub:$PATH" HOME="$T/home" \
        XDG_STATE_HOME="$T/state" XDG_CONFIG_HOME="$T/config" \
        XDG_DATA_HOME="$T/data" XDG_RUNTIME_DIR="$T"
 mkdir -p "$T/state/ergon"
+# swaybg stands in for the fallback; it stays up a few seconds like the real one.
+cat > "$T/stub/swaybg" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/swaybg"
+exec sleep 4
+EOS
+chmod +x "$T/stub/swaybg"
+# A render node exists unless a test says otherwise (ERGON-121).
+mkdir -p "$T/dri" "$T/nodri"; : > "$T/dri/renderD128"
+export ERGON_DRI_DIR="$T/dri"
 
 # Same guard test-theme.sh uses, and for the same reason: a stub that is not
 # first on PATH turns this file into a slow way of rendering real wallpapers.
@@ -408,6 +418,42 @@ _out=$(fetch ERGON_BACKGROUNDS_ONLY=alpha-0)
 check "ERGON_BACKGROUNDS_ONLY takes only the ones named"  test ! -e "$FIELDS/$B"
 check "  and counts only those"                           grep -q "0 fetched, 1 already here, 0 failed" <<<"$_out"
 rm -f "$FIELDS/$A" "$FIELDS/$B"
+
+echo
+echo "== no render node: swaybg, not hyprpaper (ERGON-121)"
+pal cool; rm -f "$T/ergon-wallpaper-swaybg"
+_hp=$(wc -l < "$T/log/hyprpaper" 2>/dev/null || echo 0); _sg=$(wc -l < "$T/log/swaybg" 2>/dev/null || echo 0)
+_hc=$(wc -l < "$T/log/hyprctl")
+_out=$(ERGON_DRI_DIR="$T/nodri" ERGON="$E" "$E/bin/ergon-wallpaper" --force 2>&1); _rc=$?
+check "ergon-wallpaper succeeds"               test "$_rc" -eq 0
+check "  starts swaybg with the image"         test "$(wc -l < "$T/log/swaybg")" -gt "$_sg"
+check "  as -i <png> -m fill"                  grep -qE -- '-i .*\.png -m fill' "$T/log/swaybg"
+check "  never starts hyprpaper"               test "$(wc -l < "$T/log/hyprpaper" 2>/dev/null || echo 0)" -eq "$_hp"
+check "  and stops a running one"              grep -q -- '-x hyprpaper' "$T/log/pkill"
+check "  and remembers the choice"             test -e "$T/ergon-wallpaper-swaybg"
+
+echo
+echo "== a swap in fallback mode restarts swaybg with the new image"
+_sg=$(wc -l < "$T/log/swaybg"); _hp=$(wc -l < "$T/log/hyprpaper" 2>/dev/null || echo 0)
+_img="$T/home/other.png"; cp "$T/home/.local/share/ergon/wallpaper.png" "$_img"
+ERGON_DRI_DIR="$T/dri" ERGON="$E" "$E/bin/ergon-wallpaper" --set "$_img" >/dev/null 2>&1
+check "swaybg is started again"                test "$(wc -l < "$T/log/swaybg")" -gt "$_sg"
+check "  with the new image"                   grep -q 'other' <<<"$(tail -1 "$T/log/swaybg")"
+check "  even though a render node now exists (the session remembers)" \
+  test "$(wc -l < "$T/log/hyprpaper" 2>/dev/null || echo 0)" -eq "$_hp"
+
+echo
+echo "== hyprpaper that dies at start hands over to swaybg"
+rm -f "$T/ergon-wallpaper-swaybg"; pal cool; run
+_sg=$(wc -l < "$T/log/swaybg"); _hp=$(wc -l < "$T/log/hyprpaper" 2>/dev/null || echo 0)
+# Same path again forces the restart path; the stub hyprpaper exits at once.
+_out=$(ERGON="$E" "$E/bin/ergon-wallpaper" --force 2>&1); _rc=$?
+check "ergon-wallpaper succeeds"               test "$_rc" -eq 0
+check "  hyprpaper was tried"                  test "$(wc -l < "$T/log/hyprpaper")" -gt "$_hp"
+check "  then swaybg took over"                test "$(wc -l < "$T/log/swaybg")" -gt "$_sg"
+check "  and says so"                          grep -q "died at start" <<<"$_out"
+check "  and the fallback is remembered"       test -e "$T/ergon-wallpaper-swaybg"
+rm -f "$T/ergon-wallpaper-swaybg"
 
 # --- negative control --------------------------------------------------------
 # Everything above is a string comparison against a palette file, and a bug in

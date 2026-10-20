@@ -2289,15 +2289,42 @@ for _ in $(seq 15); do
   fi
   sleep 1
 done
-# The evidence the GPU-less VM branch below needs, gathered up front. Tested for
+# The evidence the diagnosis below needs, gathered up front. Tested for
 # being non-empty, never by exit status: under pipefail, grep leaving early
 # kills dmesg with SIGPIPE and a match reads as a miss.
 _hp=$(sed 's/\x1b\[[0-9;]*m//g' /run/user/1000/hyprpaper.log 2>/dev/null)
 _k=$({ dmesg; journalctl -k -b --no-pager; } 2>/dev/null | grep -oE 'features: [-+]virgl.*' | head -1)
-_egl=$(grep -m1 'failed to create dri2 screen' <<<"$_hp")
-_gbm=$(grep -m1 'Failed to allocate a GBM buffer' <<<"$_hp")
+# Where hyprpaper cannot run (no render node, or GL that crashes it) ergon-wallpaper
+# falls back to swaybg (ERGON-121). That is a pass, and it is asserted: swaybg
+# is the only wallpaper process, it has the image that was applied, and a
+# change of wallpaper reaches it.
+_sb_img() { pgrep -a -x swaybg | head -1 | sed -n 's/.* -i \([^ ]*\).*/\1/p'; }
 if [ "$_bg" = 1 ]; then
   ok "hyprpaper mapped a background layer"
+elif pgrep -x swaybg >/dev/null; then
+  _want=$(cat "$H/.local/state/ergon/background.applied" 2>/dev/null)
+  ok "hyprpaper cannot draw here; swaybg is the wallpaper (fallback)"
+  pgrep -x hyprpaper >/dev/null && bad "hyprpaper and swaybg are both running" \
+                                || ok "  and hyprpaper is not running beside it"
+  [ "$(pgrep -cx swaybg)" = 1 ] && ok "  one swaybg" || bad "  $(pgrep -cx swaybg) swaybg processes"
+  [ -n "$_want" ] && [ "$(_sb_img)" = "$_want" ] \
+    && ok "  swaybg shows the applied image ($(basename "$_want"))" \
+    || bad "  swaybg shows '$(_sb_img)', the applied image is '$_want'"
+  # A change of wallpaper has to reach the fallback.
+  _sw=/tmp/ergon121-probe.png
+  magick -size 64x64 xc:'#336699' $_sw
+  chmod 644 $_sw
+  usr "timeout 60 ergon-wallpaper --set $_sw" >/tmp/ergon121-set.log 2>&1 </dev/null
+  sleep 1
+  _new=$(_sb_img)
+  case "$_new" in
+    *ergon121-probe*) ok "  after a wallpaper change swaybg shows the new image" ;;
+    *) bad "  after a wallpaper change swaybg shows '$_new'"; sed 's/^/     /' /tmp/ergon121-set.log ;;
+  esac
+  [ "$(pgrep -cx swaybg)" = 1 ] && ! pgrep -x hyprpaper >/dev/null \
+    && ok "  and still exactly one wallpaper process" || bad "  wallpaper processes after the change: $(pgrep -a 'swaybg|hyprpaper' | tr '\n' ';')"
+  # Put the previous one back so later checks see what they expect.
+  usr "timeout 60 ergon-wallpaper --generated" >/dev/null 2>&1 </dev/null
 elif grep -q "createImageFromDmaBufs failed" /run/user/1000/hypr/*/hyprland.log 2>/dev/null; then
   # Same VM limitation that stops grim capturing, and for the same reason:
   # QEMU's virtio-gpu has no working dmabuf path, so EGL refuses the import
@@ -2308,23 +2335,6 @@ elif grep -q "createImageFromDmaBufs failed" /run/user/1000/hypr/*/hyprland.log 
   # otherwise -- a wallpaper regression on a machine that can render must still
   # fail rather than hide behind a VM excuse. Same rule as the grim check above.
   note "wallpaper cannot be composited: no dmabuf path in the VM (see docs/testing-the-desktop.md)"
-elif ! pgrep -x hyprpaper >/dev/null && [[ $_k == *-virgl* ]] && [ -n "$_egl" ] && [ -n "$_gbm" ]; then
-  # The GPU-less VM (checo's runner has no render node, so the guest gets a
-  # virtio-gpu with 3D off). hyprpaper draws with GL through hyprtoolkit; there
-  # is no hardware driver for EGL to load, Mesa falls back to kms_swrast, and
-  # kms_swrast needs dumb buffers, which the device hyprpaper opened refuses
-  # (DRM_IOCTL_MODE_CREATE_DUMB: Permission denied, as a render node does). It
-  # cannot allocate a single buffer and exits. The compositor draws on the same
-  # device because it holds the primary node.
-  #
-  # A SKIP only when all three are in evidence: the kernel says this virtio-gpu
-  # has no virgl, and hyprpaper's own log shows EGL failing and the allocation
-  # failing. On hardware there is no virtio-gpu line; on the render-node VM it
-  # reads +virgl. Either way a hyprpaper that exits is a failure there.
-  note "hyprpaper cannot draw: the VM's GPU has no 3D and hyprpaper needs GL"
-  note "  kernel:    $_k"
-  note "  hyprpaper: $_egl"
-  note "  hyprpaper: $_gbm"
 else
   bad "background layer is empty — the wallpaper is not actually on screen"
   # What hyprpaper said is in the log ergon-wallpaper keeps for it; what it
