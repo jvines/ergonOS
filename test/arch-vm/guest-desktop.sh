@@ -3664,12 +3664,14 @@ if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
     ok "ERGON-118: launching YouTube mapped a client of class $_ycls (the entry's StartupWMClass)"
     _n1=$(hq clients -j | jq --arg c "$_ycls" '[.[] | select(.class == $c)] | length')
     o_win w118other; o_focus w118other >/dev/null; sleep 1
-    usr "timeout -k 3 30 ergon-webapp launch $_yurl" >/tmp/wa118l.out 2>&1 </dev/null; _l2=$?
+    # Traced, into its own file: the first Chromium still writes to wa118l.out.
+    usr "timeout -k 3 30 bash -x \$(command -v ergon-webapp) launch $_yurl" >/tmp/wa118l2.out 2>&1 </dev/null; _l2=$?
+    _act0=$(o_active .class)
     sleep 3
     _n2=$(hq clients -j | jq --arg c "$_ycls" '[.[] | select(.class == $c)] | length')
     _act=$(o_active .class)
     if [ "$_n1" = 1 ] && [ "$_n2" = 1 ] && [ "$_act" = "$_ycls" ]; then ok "ERGON-118: a second launch of the same URL focused the window (still 1 client, active class $_act, rc $_l2)"
-    else bad "ERGON-118: second launch: clients $_n1 -> $_n2, active '$_act', rc $_l2: $(head -c 150 /tmp/wa118l.out)"; fi
+    else bad "ERGON-118: second launch: clients $_n1 -> $_n2, active '$_act0' at once and '$_act' 3s later, rc $_l2; trace: $(grep -vE '^(libva|\[)' /tmp/wa118l2.out | tr '\n' '|' | tail -c 800)"; fi
     if [ "$_act" != "$_ycls" ]; then
       # Diagnostics: trace the launcher's lookup, then try the focus dispatch by hand.
       _yaddr=$(hq clients -j | jq -r --arg c "$_ycls" '.[] | select(.class == $c) | .address' | head -1)
