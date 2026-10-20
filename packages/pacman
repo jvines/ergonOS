@@ -103,7 +103,8 @@ mako                # notifications
 fuzzel              # launcher
 hyprlock
 hypridle
-hyprpaper
+hyprpaper           # wallpaper; needs working GL
+swaybg              # wallpaper fallback (ERGON-121): CPU-only, for where hyprpaper has no GL
 swayosd             # volume/brightness overlay
 hyprpicker          # colour picker
 hyprsunset          # colour temperature

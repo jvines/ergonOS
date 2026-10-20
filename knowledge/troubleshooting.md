@@ -91,6 +91,17 @@ something in `common.env` or `common.binds` itself is broken.
 
 ---
 
+## The desktop is only the background colour, and hyprpaper segfaults
+
+    coredumpctl list hyprpaper     # segfault in libhyprtoolkit
+
+hyprpaper draws with GL. With no working GL (a VM with no render node, a broken
+driver) it crashes on start. `ergon-wallpaper` handles this: with no
+`/dev/dri/renderD*`, or when hyprpaper dies within seconds, it runs `swaybg`
+instead (CPU, wl_shm) and keeps using it for the session (marker
+`$XDG_RUNTIME_DIR/ergon-wallpaper-swaybg`). `ergon-doctor` shows it as ok, with the reason.
+If neither draws, check `pgrep -a swaybg` and that `swaybg` is installed.
+
 ## Clicks do nothing, but the bar looks fine
 
 Two independent causes, and it was both at once:

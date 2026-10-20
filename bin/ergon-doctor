@@ -662,6 +662,17 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
       rec warn "waybar" "$(waybar --version 2>/dev/null | head -1) — clicking a workspace does nothing against a Lua config. See packages/aur"
     fi
   fi
+  # ERGON-121: hyprpaper where GL works, swaybg where it does not. Either one
+  # is a wallpaper; only none, or both at once, is wrong.
+  _hp=0; _sb=0
+  pgrep -x hyprpaper >/dev/null 2>&1 && _hp=1
+  pgrep -x swaybg >/dev/null 2>&1 && _sb=1
+  case "$_hp$_sb" in
+    10) rec ok "wallpaper" "hyprpaper" ;;
+    01) rec ok "wallpaper" "swaybg fallback: hyprpaper cannot run here (no render node, or it crashed); the image is drawn on the CPU" ;;
+    11) rec warn "wallpaper" "hyprpaper and swaybg are both running — ergon-wallpaper should leave one" ;;
+    *)  rec warn "wallpaper" "no wallpaper process — run ergon-wallpaper; if hyprpaper segfaults, install swaybg" ;;
+  esac
   # ERGON-64: whether Electron apps keep their key in the keyring. Both halves:
   # the user manager, which launches every app (uwsm app, XDG autostart, D-Bus
   # activation), carries GNOME_DESKTOP_SESSION_ID set and EMPTY; and the login

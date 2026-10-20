@@ -502,6 +502,52 @@ splash = false
 ipc = on
 CONF
 
+# swaybg fallback (ERGON-121). hyprpaper draws with GL and segfaults at start
+# where GL does not work (a VM with no render node, a broken driver). swaybg
+# draws on the CPU through wl_shm. It is used when there is no DRM render node,
+# or when hyprpaper dies within a couple of seconds of starting; the second case
+# is remembered for the session so later swaps go straight to swaybg.
+# ERGON_WALLPAPER_BACKEND=swaybg|hyprpaper forces one; ERGON_DRI_DIR is for tests.
+FALLBACK_MARK="${XDG_RUNTIME_DIR:-/tmp}/ergon-wallpaper-swaybg"
+
+use_swaybg() {
+  # One swaybg at a time, never beside hyprpaper. The new one is up before the
+  # old one goes, so a swap does not flash.
+  local old new
+  old=$(pgrep -x swaybg 2>/dev/null || true)
+  pkill -x hyprpaper >/dev/null 2>&1 || true
+  if ! command -v swaybg >/dev/null 2>&1; then
+    echo "  swaybg is not installed; there is no wallpaper fallback" >&2
+    return 1
+  fi
+  : > "$FALLBACK_MARK" 2>/dev/null || true
+  # 9>&-: the daemon must not inherit the switch lock (see hyprpaper below).
+  swaybg -i "$SHOWN" -m fill 9>&- >/dev/null 2>&1 &
+  new=$!
+  sleep 0.3
+  if ! kill -0 "$new" 2>/dev/null; then
+    echo "  swaybg exited at start" >&2
+    return 1
+  fi
+  [ -n "$old" ] && kill $old >/dev/null 2>&1 || true
+  return 0
+}
+
+_backend=hyprpaper
+case "${ERGON_WALLPAPER_BACKEND:-}" in
+  swaybg|hyprpaper) _backend=$ERGON_WALLPAPER_BACKEND ;;
+  *) if [ -e "$FALLBACK_MARK" ] || ! compgen -G "${ERGON_DRI_DIR:-/dev/dri}/renderD*" >/dev/null; then
+       _backend=swaybg
+     fi ;;
+esac
+
+if [ "$_backend" = swaybg ]; then
+  if use_swaybg; then applied=1; echo "  wallpaper set on all outputs (swaybg: no usable GL for hyprpaper)"; fi
+  printf '%s\n' "$SHOWN" > "$BG_STATE.applied"
+  [ "${applied:-0}" = 1 ] || echo "  wallpaper not set; it is set at the next session" >&2
+  exit 0
+fi
+
 # Start it if it is not up, then SET the wallpaper over IPC.
 #
 # Starting it with -c is not enough on its own: hyprpaper comes up with nothing
@@ -563,14 +609,27 @@ if [ "${applied:-0}" != 1 ]; then
   # a flat desktop and "did not accept the wallpaper" -- which is how the VM
   # suite's background check stayed red for days with nothing to read.
   hyprpaper -c "$PAPER_CONF" 9>&- >"$PAPER_LOG" 2>&1 &
+  _pp=$!
   sleep 1
   if command -v hyprctl >/dev/null 2>&1; then
     for _ in $(seq 15); do
+      # A dead hyprpaper will never answer; do not wait the loop out.
+      kill -0 "$_pp" 2>/dev/null || break
       if hyprctl hyprpaper wallpaper ",$SHOWN" >/dev/null 2>&1; then
         applied=1; break
       fi
       sleep 1
     done
+  fi
+  # Where GL is broken it crashes on first draw, so look again after the
+  # request. If it is gone, swaybg takes over.
+  [ "${applied:-0}" = 1 ] && sleep 1
+  if ! kill -0 "$_pp" 2>/dev/null; then
+    applied=0
+    echo "  hyprpaper died at start (see $PAPER_LOG); using swaybg" >&2
+    if use_swaybg; then applied=1; fi
+  else
+    pkill -x swaybg >/dev/null 2>&1 || true
   fi
 fi
 
