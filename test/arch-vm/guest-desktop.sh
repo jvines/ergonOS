@@ -3662,6 +3662,21 @@ if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
     _act=$(o_active .class)
     if [ "$_n1" = 1 ] && [ "$_n2" = 1 ] && [ "$_act" = "$_ycls" ]; then ok "ERGON-118: a second launch of the same URL focused the window (still 1 client, active class $_act, rc $_l2)"
     else bad "ERGON-118: second launch: clients $_n1 -> $_n2, active '$_act', rc $_l2: $(head -c 150 /tmp/wa118l.out)"; fi
+    if [ "$_act" != "$_ycls" ]; then
+      # Diagnostics: trace the launcher's lookup, then try the focus dispatch by hand.
+      _yaddr=$(hq clients -j | jq -r --arg c "$_ycls" '.[] | select(.class == $c) | .address' | head -1)
+      cat >/tmp/wa118d.sh <<EOF
+set -x
+hyprctl clients -j | jq -r '.[] | .class + " " + .address'
+hyprctl dispatch 'hl.dsp.exec_raw("focuswindow address:$_yaddr")'; echo "dispatch rc=\$?"
+EOF
+      chmod 755 /tmp/wa118d.sh
+      usr "timeout -k 2 10 bash /tmp/wa118d.sh" >/tmp/wa118d.out 2>&1 </dev/null
+      note "ERGON-118 diag: by hand: $(tr '\n' '|' </tmp/wa118d.out | head -c 600); active now $(o_active .class)"
+      o_focus w118other >/dev/null; sleep 1
+      usr "timeout -k 2 10 bash -x \$(command -v ergon-webapp) launch $_yurl" >/tmp/wa118x.out 2>&1 </dev/null
+      note "ERGON-118 diag: launcher trace: $(grep -E 'addr=|hyprctl|exec |command -v' /tmp/wa118x.out | head -12 | tr '\n' '|' | head -c 900)"
+    fi
     _close_class w118other
   else
     bad "ERGON-118: no client of class $_ycls after 45s; classes now: $(hq clients -j | jq -r '[.[].class] | join(",")'); launcher said: $(head -c 200 /tmp/wa118l.out); chromium: $(pidof chromium >/dev/null && echo running || echo not running)"
