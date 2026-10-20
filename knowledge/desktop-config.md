@@ -35,7 +35,10 @@ and depending on where it sits you get a config that half-applied.
     hl.dsp.exit()
 
 `hl.dsp.exec_raw("<classic dispatcher string>")` is the escape hatch for
-anything without a typed form.
+anything without a typed form. Prefer the typed form when there is one:
+`exec_raw("focuswindow address:0x...")` answers `ok` and does not move focus,
+while `hl.dsp.focus({ window = "address:0x..." })` does (measured in the VM
+suite, 2026-10-19). `ergon-lint` refuses the former.
 
 **Bind options**: `locked`, `repeating`, `mouse`, `description`. It is
 `repeating`, **not** `repeat` — `repeat` is a Lua keyword and using it is a

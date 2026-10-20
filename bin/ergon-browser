@@ -68,5 +68,5 @@ for _ in {1..25}; do
   [ -n "$addr" ] && break
   sleep 0.2
 done
-[ -n "$addr" ] && hyprctl dispatch "hl.dsp.exec_raw(\"focuswindow address:$addr\")" >/dev/null 2>&1 || true
+[ -n "$addr" ] && hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1 || true
 exit 0

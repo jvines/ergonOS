@@ -125,6 +125,18 @@ else
   echo "  ok   no classic hyprctl dispatch calls"
 fi
 
+# exec_raw("focuswindow ...") answers "ok" and does not move focus; the typed
+# hl.dsp.focus({ window = "address:..." }) does (VM suite, 2026-10-19).
+if find -L "$ERGON/bin" "$ERGON/hypr" "$ERGON/waybar" "$ERGON/fuzzel" -type f ! -name 'erg-*' \
+   -exec grep -nE 'exec_raw\(\\?"focuswindow' {} + \
+   | grep -vE '(ergon|erg)-lint' | grep -vE '^[^:]*:[0-9]*:[[:space:]]*(#|--|//)' ; then
+  echo "  FAIL exec_raw(\"focuswindow ...\") above -- it says ok and does nothing." >&2
+  echo "       use: hl.dsp.focus({ window = \"address:0x...\" })" >&2
+  rc=1
+else
+  echo "  ok   no exec_raw focuswindow calls"
+fi
+
 # Every check sets rc rather than exiting, so one failure does not hide another.
 
 # ---------------------------------------------------------------------------
