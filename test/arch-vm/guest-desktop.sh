@@ -3673,15 +3673,24 @@ if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
     if [ "$_act" != "$_ycls" ]; then
       # Diagnostics: trace the launcher's lookup, then try the focus dispatch by hand.
       _yaddr=$(hq clients -j | jq -r --arg c "$_ycls" '.[] | select(.class == $c) | .address' | head -1)
-      cat >/tmp/wa118d.sh <<EOF
-set -x
-hyprctl clients -j | jq -r '.[] | "\(.class) \(.address) ws=\(.workspace.name) float=\(.floating) pin=\(.pinned) fs=\(.fullscreen) mapped=\(.mapped) hidden=\(.hidden)"'
-hyprctl activewindow -j | jq -r '"active \(.class) ws=\(.workspace.name)"'; hyprctl activeworkspace -j | jq -r '"activews \(.name)"'
-hyprctl dispatch 'hl.dsp.exec_raw("focuswindow address:$_yaddr")'; echo "dispatch rc=\$?"
+      _oaddr=$(hq clients -j | jq -r --arg c w118other '.[] | select(.class == $c) | .address' | head -1)
+      cat >/tmp/wa118d.sh <<'EOF'
+Y=$1; O=$2
+act() { hyprctl activewindow -j | jq -r .class; }
+try() { local r; r=$(hyprctl dispatch "$1" 2>&1); sleep 0.7; echo "[$1] said $r -> active $(act)"; }
+hyprctl clients -j | jq -r '.[] | "\(.class) \(.address) at=\(.at) size=\(.size)"'
+hyprctl cursorpos; hyprctl getoption cursor:no_warps -j | jq -c .; hyprctl getoption input:follow_mouse -j | jq -c .
+try "hl.dsp.exec_raw(\"focuswindow address:$Y\")"
+try "hl.dsp.focus({ window = \"address:$Y\" })"
+try "hl.dsp.exec_raw(\"focuswindow class:^(chrome-www.youtube.com__-Default)$\")"
+try "hl.dsp.exec_raw(\"focuswindow address:$O\")"
+try "hl.dsp.focus({ direction = \"l\" })"
+try "hl.dsp.focus({ direction = \"r\" })"
+hyprctl cursorpos
 EOF
       chmod 755 /tmp/wa118d.sh
-      usr "timeout -k 2 10 bash /tmp/wa118d.sh" >/tmp/wa118d.out 2>&1 </dev/null
-      note "ERGON-118 diag: by hand: $(tr '\n' '|' </tmp/wa118d.out | head -c 1400); active now $(o_active .class)"
+      usr "timeout -k 2 20 bash /tmp/wa118d.sh $_yaddr $_oaddr" >/tmp/wa118d.out 2>&1 </dev/null
+      note "ERGON-118 diag: by hand: $(tr '\n' '|' </tmp/wa118d.out | head -c 2500); active now $(o_active .class)"
       o_focus w118other >/dev/null; sleep 1
       usr "timeout -k 2 10 bash -x \$(command -v ergon-webapp) launch $_yurl" >/tmp/wa118x.out 2>&1 </dev/null
       note "ERGON-118 diag: launcher trace: $(grep -E 'addr=|hyprctl|exec |command -v' /tmp/wa118x.out | head -12 | tr '\n' '|' | head -c 900)"
