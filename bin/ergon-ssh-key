@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# ergon:summary=Make, load, list and copy SSH keys; keys load into the session agent
+# ergon:group=system
+# ergon:args=[new [NAME] [--comment C] | add PATH | list | copy [NAME] | setup]
+# ergon:help=native
+#
+#   ergon ssh-key                 fuzzel menu of the below
+#   ergon ssh-key new [NAME]      ed25519 key ~/.ssh/NAME (default id_ed25519), passphrase
+#                                 prompted, loaded into the agent, public half printed
+#                                 and copied to the clipboard. --comment C sets the label.
+#                                 An empty passphrase needs an explicit "yes".
+#   ergon ssh-key add PATH        load an existing key into the agent
+#   ergon ssh-key list            keys in ~/.ssh and whether the agent holds them
+#   ergon ssh-key copy [NAME]     copy a public key to the clipboard
+#   ergon ssh-key setup           (install.sh runs it) AddKeysToAgent yes, see below
+#
+# ERGON-106. `setup` writes ~/.ssh/config.d/ergon.conf (Host * / AddKeysToAgent
+# yes: the first use of a key loads it, so the passphrase is asked once per
+# login) and APPENDS a marked block to the END of ~/.ssh/config: `Match all` (resets
+# scope so the Include is global) plus the Include. Last, it only supplies a
+# default: ssh is first-match, so a user's earlier per-host setting wins. An
+# existing config is otherwise never touched (an earlier prepended Include is
+# migrated away); the first time it is copied to config.ergon-backup. Idempotent.
+set -uo pipefail
+
+SSH_DIR="$HOME/.ssh"
+OLDMARK='# ergon: managed include, keep it the first line'
+MARK='# ergon: managed default, keep this block last'
+BLOCK="$MARK
+Match all
+Include ~/.ssh/config.d/ergon.conf"
+
+die() { echo "ergon-ssh-key: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required (sudo pacman -S openssh)"; }
+
+setup() {
+  mkdir -p "$SSH_DIR/config.d" && chmod 700 "$SSH_DIR" || die "cannot create $SSH_DIR"
+  printf '%s\n' '# Managed by ergonOS (ergon ssh-key setup); rewritten on every install.' \
+    '# Loads a key into the session agent the first time it is used.' \
+    'Host *' '    AddKeysToAgent yes' > "$SSH_DIR/config.d/ergon.conf"
+  local cfg="$SSH_DIR/config"
+  if [ ! -e "$cfg" ]; then
+    ( umask 077; printf '%s\n' "$BLOCK" > "$cfg" )
+    return
+  fi
+  grep -qF "$MARK" "$cfg" && { _check_last "$cfg"; return; }
+  [ -e "$cfg.ergon-backup" ] || cp -p "$cfg" "$cfg.ergon-backup"
+  local tmp; tmp=$(mktemp "$SSH_DIR/.config.XXXXXX") || die "mktemp failed"
+  # Migration: an earlier version prepended its Include (and one blank line).
+  if grep -qF "$OLDMARK" "$cfg"; then
+    awk -v m="$OLDMARK" 'skip { skip=0; if ($0 == "") next } index($0, m) { skip=1; next } { print }' "$cfg" > "$tmp"
+  else
+    cat "$cfg" > "$tmp"
+  fi
+  [ -z "$(tail -c1 "$tmp")" ] || echo >> "$tmp"
+  printf '\n%s\n' "$BLOCK" >> "$tmp"
+  chmod --reference="$cfg" "$tmp"; mv "$tmp" "$cfg"
+}
+
+_check_last() {
+  [ "$(grep -vE '^[[:space:]]*(#|$)' "$1" | tail -2 | tr '\n' '|')" = "Match all|Include ~/.ssh/config.d/ergon.conf|" ] ||
+    echo "ergon-ssh-key: the ergon block in $1 is no longer last; keys it supplies as defaults may now be shadowed or scoped (move it to the end)" >&2
+}
+
+copy_pub() {  # $1: .pub path
+  if command -v wl-copy >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    wl-copy < "$1" >/dev/null 2>&1 && echo "(copied to the clipboard)"
+  fi
+}
+
+hint() {
+  cat <<'H'
+Paste it where the server asks for a public key:
+  GitHub   Settings > SSH and GPG keys > New SSH key
+  Forgejo  Settings > SSH / GPG Keys > Add key (your instance's web page)
+H
+}
+
+agent_ok() { ssh-add -l >/dev/null 2>&1; [ $? -ne 2 ] || die "no reachable ssh-agent (SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-unset}); log in again, or: ergon doctor"; }
+
+resolve() {  # NAME or path -> private key path
+  case "$1" in */*) echo "$1" ;; *) echo "$SSH_DIR/$1" ;; esac
+}
+
+cmd_new() {
+  need ssh-keygen; need ssh-add
+  local name="" comment="${USER:-user}@$(hostname -s 2>/dev/null || echo host)" empty=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --comment) [ $# -ge 2 ] || die "--comment needs a value"; comment="$2"; shift ;;
+      --insecure-empty-passphrase) empty=1 ;;
+      -*) die "unknown option $1" ;;
+      *) [ -z "$name" ] || die "one NAME only"; name="$1" ;;
+    esac; shift
+  done
+  name="${name:-id_ed25519}"
+  case "$name" in */*|.*) die "NAME is a file name inside ~/.ssh, not a path" ;; esac
+  local key="$SSH_DIR/$name"
+  [ ! -e "$key" ] && [ ! -e "$key.pub" ] || die "$key already exists; pick another NAME"
+  agent_ok
+  mkdir -p "$SSH_DIR" && chmod 700 "$SSH_DIR"
+  if [ "$empty" = 1 ]; then
+    ssh-keygen -q -t ed25519 -C "$comment" -N "" -f "$key" || die "ssh-keygen failed"
+  else
+    ssh-keygen -q -t ed25519 -C "$comment" -f "$key" || { rm -f "$key" "$key.pub"; die "ssh-keygen failed"; }
+    if ssh-keygen -y -P "" -f "$key" >/dev/null 2>&1; then
+      echo "That key has NO passphrase: anyone who copies the file can use it."
+      read -r -p 'Type "yes" to keep it that way: ' ans
+      [ "$ans" = yes ] || { rm -f "$key" "$key.pub"; die "removed; run it again and choose a passphrase"; }
+    fi
+  fi
+  ssh-add "$key" || die "key made at $key but could not be loaded (ssh-add $key)"
+  echo; cat "$key.pub"; echo
+  copy_pub "$key.pub"; hint
+}
+
+cmd_add() {
+  need ssh-add; [ $# -eq 1 ] || die "usage: ergon ssh-key add PATH"
+  local key; key=$(resolve "$1"); [ -f "$key" ] || die "$key: no such key"
+  agent_ok; ssh-add "$key"
+}
+
+cmd_list() {
+  need ssh-keygen; need ssh-add
+  local loaded p fp state n=0
+  loaded=$(ssh-add -l 2>/dev/null)
+  for p in "$SSH_DIR"/*.pub; do
+    [ -f "$p" ] || continue
+    fp=$(ssh-keygen -lf "$p" 2>/dev/null | awk '{print $2}') || continue
+    [ -n "$fp" ] || continue
+    if grep -qF " $fp " <<<"$loaded "; then state="loaded"; else state="not loaded"; fi
+    printf '%-24s %-11s %s\n' "$(basename "${p%.pub}")" "$state" "$fp"; n=$((n+1))
+  done
+  [ "$n" -gt 0 ] || echo "no keys in $SSH_DIR (ergon ssh-key new)"
+}
+
+cmd_copy() {
+  local name="${1:-id_ed25519}" p
+  p=$(resolve "$name"); p="${p%.pub}.pub"
+  [ -f "$p" ] || die "$p: no such public key"
+  cat "$p"
+  command -v wl-copy >/dev/null 2>&1 || die "wl-copy is not installed; the key is printed above"
+  copy_pub "$p"; hint
+}
+
+menu() {
+  command -v fuzzel >/dev/null 2>&1 || { sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+  local sel key
+  sel=$(printf 'New key\nAdd a key to the agent\nCopy a public key\nList keys\n' | fuzzel --dmenu --prompt 'ssh key  ') || exit 0
+  case "$sel" in
+    "New key")  # asks for a passphrase, so it needs a terminal
+      if [ -t 0 ]; then "$0" new; else exec "$(dirname "$0")/ergon-term" sh -c '"$0" new; echo; echo "-- press enter to close --"; read -r _' "$0"; fi ;;
+    "Add a key to the agent")
+      key=$(ls "$SSH_DIR" 2>/dev/null | grep -v -e '\.pub$' -e '^config' -e '^known_hosts' -e '^authorized_keys' -e '\.ergon-backup$' | fuzzel --dmenu --prompt 'add  ') || exit 0
+      [ -n "$key" ] || exit 0
+      if [ -t 0 ]; then "$0" add "$key"; else exec "$(dirname "$0")/ergon-term" sh -c '"$0" add "$1"; echo; echo "-- press enter to close --"; read -r _' "$0" "$key"; fi ;;
+    "Copy a public key")
+      key=$(cd "$SSH_DIR" 2>/dev/null && ls *.pub 2>/dev/null | sed 's/\.pub$//' | fuzzel --dmenu --prompt 'copy  ') || exit 0
+      [ -n "$key" ] && "$0" copy "$key" >/dev/null && { command -v notify-send >/dev/null && notify-send -a ergon-ssh-key "SSH key" "$key.pub copied"; } ;;
+    "List keys")
+      if [ -t 0 ]; then "$0" list; else exec "$(dirname "$0")/ergon-term" sh -c '"$0" list; echo; echo "-- press enter to close --"; read -r _' "$0"; fi ;;
+  esac
+}
+
+case "${1:-}" in
+  "") menu ;;
+  new) shift; cmd_new "$@" ;;
+  add) shift; cmd_add "$@" ;;
+  list) cmd_list ;;
+  copy) shift; cmd_copy "$@" ;;
+  setup) setup ;;
+  -h|--help|help) sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command $1 (new, add, list, copy, setup)" ;;
+esac

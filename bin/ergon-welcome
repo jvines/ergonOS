@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # ergon:summary=Show what this machine has and where to look (once at first login)
 # ergon:group=help
-# ergon:args=[--first-run]
+# ergon:args=[--first-run|--gui|--edit]
 # ergon:help=native
 #
 #   ergon welcome              show it now: glow and a pager on a terminal,
 #                              plain markdown to anything else (an agent, a pipe)
+#   ergon welcome --gui        the marimo notebook (marimo/welcome.py) in a browser
+#   ergon welcome --edit       copy the notebook to ~/notebooks/welcome.py to edit it
 #   ergon welcome --first-run  what autostart runs: opens a window once per
 #                              user, and returns at once whatever happens
 #
 # ERGON_WELCOME=0 in the session environment makes --first-run do nothing.
+# ERGON_WELCOME_GUI=0 skips the notebook and goes straight to the terminal page.
 # The stamp that makes it once is ${XDG_STATE_HOME:-~/.local/state}/ergon/
 # welcome-shown; delete it to have the next login open the window again.
 set -uo pipefail
@@ -34,7 +37,7 @@ LIMIT=5
 
 # ERGON-30: help before anything, wherever it sits in the arguments.
 for a in "$@"; do
-  case "$a" in -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+  case "$a" in -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 done
 
 # section <title> <ergon args...>: the command's own output under a heading, or
@@ -70,6 +73,31 @@ page() {
   section Commands --help
 }
 
+NB="$ERGON/marimo/welcome.py"
+VENV="${PYFLEET_VENV:-${XDG_DATA_HOME:-$HOME/.local/share}/pyfleet}"
+
+# gui: serve the notebook on a free local port and open it in the browser.
+# Returns non-zero, having opened nothing, when marimo, the notebook or the
+# browser is missing -- the caller falls back to the terminal page (the
+# permanent degradation path). `marimo run` is app mode: code hidden, cells
+# executed once per page load. timeout bounds the server's life; a notebook
+# nobody closes must not outlive the login for good.
+gui() {
+  local m="$VENV/bin/marimo" port url log pid
+  [ -x "$m" ] && [ -f "$NB" ] && [ -x "$BIN/ergon-browser" ] || return 1
+  # A fixed port, not a probed one: a leftover server on it is the same notebook,
+  # and probing a closed port can stall on a host that drops loopback packets.
+  port=${ERGON_WELCOME_PORT:-2730}
+  log="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/welcome-marimo.log"; mkdir -p "${log%/*}"
+  ERGON="$ERGON" PATH="$BIN:$PATH" setsid timeout 4h "$m" run --headless --no-token --port "$port" "$NB" </dev/null >>"$log" 2>&1 &
+  pid=$!
+  url="http://127.0.0.1:$port"
+  # Gone early (marimo crashed) means no point waiting out the minute.
+  for _ in $(seq 120); do curl -sf -m 2 -o /dev/null "$url" && break; kill -0 $pid 2>/dev/null || return 1; sleep 0.5; done
+  curl -sf -m 2 -o /dev/null "$url" || return 1
+  "$BIN/ergon-browser" "$url"
+}
+
 first_run() {
   [ "${ERGON_WELCOME:-1}" != 0 ] || exit 0
   [ ! -e "$STAMP" ] || exit 0
@@ -88,7 +116,11 @@ first_run() {
   # compositor's unit; see binds.lua) and to fall back through ergon-term's
   # list. The window's class comes out as ergon-tui-ergon-welcome.
   (
-    if command -v glow >/dev/null && "$BIN/ergon-launch-tui" "$BIN/ergon-welcome"; then
+    # The notebook first (ERGON-55 phase 2); the stamp is spent once the browser
+    # was handed the URL. Any failure falls through to the terminal page.
+    if [ "${ERGON_WELCOME_GUI:-1}" != 0 ] && gui; then
+      mkdir -p "${STAMP%/*}" && : > "$STAMP"
+    elif command -v glow >/dev/null && "$BIN/ergon-launch-tui" "$BIN/ergon-welcome"; then
       # A launcher that hands off (uwsm-app with a service unit, a terminal
       # that daemonises) returns before the window draws, so allow ten seconds
       # for the stamp before calling it a failure.
@@ -102,6 +134,8 @@ first_run() {
 
 case "${1:-}" in
   --first-run) first_run ;;
+  --gui) gui || { echo "ergon-welcome: no marimo, notebook or browser here; showing the terminal page" >&2; exec "$0"; }; exit 0 ;;
+  --edit) mkdir -p ~/notebooks && cp -n "$NB" ~/notebooks/welcome.py && echo ~/notebooks/welcome.py; exit $? ;;
   '') ;;
   *) echo "ergon-welcome: unknown argument '$1' (see --help)" >&2; exit 2 ;;
 esac

@@ -401,6 +401,18 @@ table inet ergon {
 		udp dport 5353 ip daddr 224.0.0.251 accept
 		udp dport 5353 ip6 daddr ff02::fb accept
 
+		# LocalSend (ERGON-118): TCP for the transfer and the REST API, UDP for
+		# discovery (it also joins the multicast group 224.0.0.167). Opened to
+		# private networks only: nftables has no notion of "the LAN" on a laptop
+		# that changes network every week, so the rule is by SOURCE address --
+		# RFC 1918, link-local, and IPv6 ULA / link-local, none of which a public
+		# host can usefully send from past a router. The same interface-kind drop
+		# as mDNS above comes first, so a docker bridge or VM tap (also private
+		# addresses) is not "the LAN". The tailnet is accepted wholesale above.
+		meta iifkind { "bridge", "veth", "tun", "macvlan", "macvtap", "ipvlan", "vxlan", "wireguard" } meta l4proto { tcp, udp } th dport 53317 drop
+		ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } meta l4proto { tcp, udp } th dport 53317 accept
+		ip6 saddr { fc00::/7, fe80::/10 } meta l4proto { tcp, udp } th dport 53317 accept
+
 		# Traffic from the docker bridges is dropped with everything else, so a
 		# container reaching back to the host gateway (host.docker.internal,
 		# --add-host ...:host-gateway) hangs. That is deliberate and it is in
@@ -890,6 +902,10 @@ else
     case "$_a" in [yY]|[yY][eE][sS]) _ts=1 ;; esac
   fi
   [ "$_ts" = 1 ] && sed -i 's/^TAILSCALE=0$/TAILSCALE=1/' "$ERGON/hosts/$HOST/host.env"
+  # ERGON-118: web apps, a checklist with WhatsApp, Discord and YouTube on.
+  # ERGON_WEBAPPS="id id"/none answers unattended; with no terminal and no
+  # answer the defaults stand.
+  _wa=$("$ERGON/bin/ergon-webapp" choose) && sed -i "s/^WEBAPPS=.*/WEBAPPS=\"$_wa\"/" "$ERGON/hosts/$HOST/host.env"
   # The keyboard layout the installer was told about. hypr/common/looknfeel.lua
   # used to hardcode kb_layout = "us", which silently gave every non-US user a
   # US graphical layout no matter what they answered at install -- and unlike a

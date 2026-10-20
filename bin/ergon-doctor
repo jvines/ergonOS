@@ -687,7 +687,7 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
       SSH_AUTH_SOCK=$sock ssh-add -l >/dev/null 2>&1; arc=$?
       case $arc in
         0) rec ok "ssh-agent" "reachable at $sock, keys loaded" ;;
-        1) rec ok "ssh-agent" "reachable at $sock, no keys yet — ssh-add once, or AddKeysToAgent yes in ~/.ssh/config" ;;
+        1) rec ok "ssh-agent" "reachable at $sock, no keys yet — ergon ssh-key new (or add PATH); other keys load on first use" ;;
         *) rec warn "ssh-agent" "SSH_AUTH_SOCK=$sock does not answer — systemctl --user status ssh-agent.socket (ergon explain troubleshooting)" ;;
       esac
     fi
@@ -711,6 +711,16 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
   fi
 else
   rec ok "session" "not in a graphical session; session checks skipped"
+fi
+
+# --- NVIDIA ------------------------------------------------------------------
+# ERGON-36. Rows only where the PCI bus has an NVIDIA display controller: driver
+# loaded, modeset on, sleep handled, and on a hybrid the offload command.
+# bin/ergon-gpu --doctor does the looking, so `ergon gpu` and this agree.
+if [ -x "$ERGON/bin/ergon-gpu" ]; then
+  while IFS='|' read -r gs gn gt; do
+    [ -n "$gs" ] && rec "$gs" "$gn" "$gt"
+  done < <("$ERGON/bin/ergon-gpu" --doctor 2>/dev/null)
 fi
 
 # --- TRIM --------------------------------------------------------------------

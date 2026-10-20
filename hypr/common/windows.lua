@@ -40,6 +40,10 @@ win({ class = "^(org.gnome.Nautilus|blueman-manager|nm-connection-editor|pavucon
 -- when the keybind fired.
 win("^(ergon-float)$", { float = true, center = true, size = { 1100, 700 } })
 
+-- LocalSend (ERGON-118): a small transfer window, not a tile. Flutter reports
+-- either app id depending on the build.
+win("^(org.localsend.localsend_app|localsend_app)$", { float = true, center = true, size = { 900, 640 } })
+
 -- ---------------------------------------------------------------------------
 -- Picture-in-picture. Pinned so it survives a workspace switch, aspect locked
 -- so dragging a corner does not letterbox it, and parked top-right where the

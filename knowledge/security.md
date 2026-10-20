@@ -109,6 +109,14 @@ necessarily sent on whichever network this machine is on right now. A
 unicast query straight at this host's own address on 5353 still hits the
 drop policy this section opened with.
 
+LocalSend (TCP and UDP 53317, ERGON-118) is open to private source addresses
+only: RFC 1918, link-local, IPv6 ULA and link-local. A laptop has no fixed name
+for "the LAN", so the rule is by source address, with the same virtual-interface
+drop first so a docker bridge or VM is not mistaken for it. A public address
+is dropped like everything else. A hostile host on the same Wi-Fi can still
+reach the port, which is the cost of receiving files from a stranger's phone at
+all; LocalSend asks before it accepts a transfer.
+
 Except from a virtual interface (ERGON-69): a docker, podman or libvirt bridge,
 a container's veth, a VM's tap and a VPN tunnel are each a local segment of
 their own, so the destination alone admitted mDNS from them too. They are

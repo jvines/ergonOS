@@ -205,6 +205,12 @@ else
         }
       ' "$MIMEAPPS" > "$MIMEAPPS.new" && mv "$MIMEAPPS.new" "$MIMEAPPS"
     }
+    # ERGON-118: chromium is in the base now, and with no default browser set xdg-open takes the first
+    # handler it finds, which is chromium. Firefox stays the default (ergon-webapp uses chromium only for
+    # web apps); a pick the user already made is kept by _mimedefault.
+    _mimedefault x-scheme-handler/https firefox.desktop
+    _mimedefault x-scheme-handler/http firefox.desktop
+    _mimedefault text/html firefox.desktop
     _mimedefault image/fits "cl.jvines.theia.desktop;ds9.desktop" ds9.desktop
     _mimedefault application/fits "cl.jvines.theia.desktop;topcat.desktop"
     _mimedefault application/vnd.apache.parquet "com.columna.Columna.desktop;topcat.desktop" topcat.desktop
@@ -388,6 +394,11 @@ else
   # until it is, so adding the bundle later needs no second sync.
   link applications/discord.desktop .local/share/applications/discord.desktop
 
+  # ERGON-118: the web app launchers WEBAPPS in host.env names (unset: WhatsApp,
+  # Discord, YouTube). Creates those and removes only entries it made, so this
+  # is as safe to rerun as the links around it.
+  if [ "$CHECK" = 1 ]; then "$ERGON/bin/ergon-webapp" sync --check; else "$ERGON/bin/ergon-webapp" sync || warn "web apps: sync failed"; fi
+
   if [ "$CHECK" != 1 ]; then
     # ERGON-72: `su -`/`sudo -u` (provisioning, the VM harness) open no
     # logind session, so a bare `systemctl --user` below reached no manager
@@ -488,6 +499,10 @@ else
     ln -sfn /usr/lib/systemd/user/ssh-agent.socket "$HOME/.config/systemd/user/sockets.target.wants/ssh-agent.socket"
     enable_user_unit ssh-agent.socket start "ssh-agent.socket"
   fi
+
+  # ERGON-106: AddKeysToAgent yes via a managed ~/.ssh/config.d/ergon.conf and one
+  # Include line at the top of ~/.ssh/config (idempotent; backs the file up once).
+  if [ "$CHECK" != 1 ]; then "$ERGON/bin/ergon-ssh-key" setup || warn "ssh config include failed"; fi
 fi
 
 # The shell. link() refuses to replace a real file, which is the behaviour

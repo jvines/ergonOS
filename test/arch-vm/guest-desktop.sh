@@ -1293,10 +1293,12 @@ if [ "$NB" -gt 20 ]; then ok "$NB keybindings registered"; else bad "only $NB ke
 # terminal to draw on -- so a stamp beside a window proves the page ran there.
 # Closed again straight away: every check below was written for a screen with
 # nothing on it, and the screenshot is meant to show the desktop.
-welcome_n() { hq clients -j 2>/dev/null | jq '[.[] | select(.class == "ergon-tui-ergon-welcome")] | length' 2>/dev/null || echo 0; }
+# ERGON-55: the first login opens the marimo notebook in the browser (or, without marimo or a
+# browser, the terminal page), so either window counts as the welcome.
+welcome_n() { hq clients -j 2>/dev/null | jq '[.[] | select(.class == "ergon-tui-ergon-welcome" or (.class | test("^(firefox|chromium|librewolf)$"; "i")))] | length' 2>/dev/null || echo 0; }
 for _ in $(seq 1 30); do [ "$(welcome_n)" -ge 1 ] && break; sleep 1; done
 if [ "$(welcome_n)" -ge 1 ]; then
-  ok "the first login opened the welcome window"
+  ok "the first login opened the welcome window ($(hq clients -j | jq -r '[.[].class] | join(",")'); notebook server on 2730: $(timeout -k 2 5 curl -s -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:2730/ </dev/null 2>/dev/null))"
 else
   bad "the first login opened no welcome window (autostart: ergon-welcome --first-run)"
   usr "makoctl list" 2>&1 | head -8 | sed 's/^/     mako: /'
@@ -1309,7 +1311,8 @@ _wel=$(usr "ergon-welcome" </dev/null 2>&1); _wkeys=$(usr "ergon-keys --print" 2
 [ -n "$_wkeys" ] && [[ $_wel == *"$_wkeys"* ]] && ok "the welcome page carries what ergon-keys prints in this session" \
   || bad "the welcome page does not carry ergon-keys' output: $(grep -A2 '^## Keys' <<<"$_wel" | tr '\n' ' ')"
 welcome_close() {
-  for _p in $(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-tui-ergon-welcome") | .pid'); do kill "$_p"; done
+  for _p in $(hq clients -j 2>/dev/null | jq -r '.[] | select(.class == "ergon-tui-ergon-welcome" or (.class | test("^(firefox|chromium|librewolf)$"; "i"))) | .pid'); do kill "$_p"; done
+  pkill -u "$U" -f 'marimo run --headless --no-token --port 2730' 2>/dev/null; pkill -u "$U" -x firefox 2>/dev/null
   for _ in $(seq 1 10); do [ "$(welcome_n)" = 0 ] && break; sleep 1; done
 }
 welcome_close
@@ -3599,6 +3602,247 @@ _ek=$(awk -F= '/^ERGON_KEYMAP=/ {gsub(/"/,"",$2); print $2}' /etc/vconsole.conf 
 if [ -n "$_vk" ] && . "$G/lib/bootkeymap.sh" 2>/dev/null && bootkeymap_latin "$_vk"; then
   ok "ERGON-112: /etc/vconsole.conf KEYMAP=$_vk is a Latin keymap${_ek:+ (ERGON_KEYMAP=$_ek kept for the desktop)}"
 else bad "ERGON-112: /etc/vconsole.conf KEYMAP='$_vk' is empty or not Latin: $(head -c 150 /etc/vconsole.conf)"; fi
+
+# --- ERGON-118, 106b, 67, 36, 55: web apps + LocalSend, ssh-key block order, marimo scaffold, GPU report, welcome notebook
+echo "--- ERGON-118, 106b, 67, 36, 55 ---"
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
+_A="$H/.local/share/applications"
+_net() { timeout -k 2 10 curl -sS -o /dev/null -m 6 https://pypi.org/simple/ >/dev/null 2>&1 </dev/null; }
+_close_class() {  # _close_class <class>: closes every client of that class
+  local a
+  for a in $(hq clients -j 2>/dev/null | jq -r --arg c "$1" '.[] | select(.class == $c) | .address' 2>/dev/null); do
+    o_dsp "hl.dsp.window.close({ window = \"address:$a\" })"
+  done
+}
+_cls_re() {  # _cls_re <regex>: classes of clients whose class matches
+  hq clients -j 2>/dev/null | jq -r --arg r "$1" '.[] | select(.class | test($r; "i")) | .class' 2>/dev/null
+}
+
+# 118: web apps
+command -v chromium >/dev/null && ok "ERGON-118: chromium is installed" || bad "ERGON-118: chromium is missing"
+for _w in WhatsApp Discord YouTube; do
+  _f="$_A/$_w.desktop"
+  if [ -f "$_f" ] && grep -qx 'X-Ergon-Webapp=true' "$_f"; then
+    _ic=$(sed -n 's/^Icon=//p' "$_f" | head -1)
+    case "$_ic" in
+      /*) [ -s "$_ic" ] && ok "ERGON-118: $_w.desktop is marked and its icon exists ($_ic)" || bad "ERGON-118: $_w.desktop icon $_ic is missing or empty" ;;
+      ?*) ok "ERGON-118: $_w.desktop is marked, Icon=$_ic (a theme name)" ;;
+      *)  bad "ERGON-118: $_w.desktop has no Icon=" ;;
+    esac
+  else bad "ERGON-118: $_f is absent or lacks X-Ergon-Webapp=true ($(ls "$_A" 2>&1 | tr '\n' ' ' | head -c 200))"; fi
+done
+_extra=$(for _w in X "Google Photos" "Google Maps" "Google Contacts" "Google Messages" Zoom; do [ -e "$_A/$_w.desktop" ] && echo "$_w"; done | tr '\n' ' ')
+[ -z "$_extra" ] && ok "ERGON-118: the non-default catalog entries are absent" || bad "ERGON-118: non-default entries present: $_extra"
+# add / list / rm, and an unmarked launcher must survive all of it
+printf '[Desktop Entry]\nType=Application\nName=Handmade118\nExec=true\n' > "$_A/Handmade118.desktop"; chown "$U" "$_A/Handmade118.desktop"
+usr "timeout -k 2 40 ergon-webapp add Test https://example.org" >/tmp/wa118.out 2>&1 </dev/null; _wa_rc=$?
+[ "$_wa_rc" = 0 ] && grep -qx 'X-Ergon-Webapp=true' "$_A/Test.desktop" 2>/dev/null && ok "ERGON-118: webapp add Test wrote a marked entry: $(head -c 80 /tmp/wa118.out | tr '\n' ' ')" || bad "ERGON-118: webapp add rc $_wa_rc: $(head -c 200 /tmp/wa118.out)"
+usr "timeout -k 2 20 ergon-webapp list" >/tmp/wa118.out 2>&1 </dev/null
+grep -q 'Test' /tmp/wa118.out && ! grep -q Handmade118 /tmp/wa118.out && ok "ERGON-118: webapp list shows Test and not the unmarked launcher" || bad "ERGON-118: webapp list: $(head -c 300 /tmp/wa118.out | tr '\n' '|')"
+usr "timeout -k 2 20 ergon-webapp rm Handmade118" >/tmp/wa118.out 2>&1 </dev/null; _wr_rc=$?
+[ "$_wr_rc" != 0 ] && [ -f "$_A/Handmade118.desktop" ] && ok "ERGON-118: webapp rm refuses an unmarked launcher (rc $_wr_rc)" || bad "ERGON-118: rm Handmade118 rc $_wr_rc, file present: $([ -f "$_A/Handmade118.desktop" ] && echo yes || echo no)"
+usr "timeout -k 2 20 ergon-webapp rm Test" >/tmp/wa118.out 2>&1 </dev/null; _wr_rc=$?
+[ "$_wr_rc" = 0 ] && [ ! -e "$_A/Test.desktop" ] && [ -f "$_A/Handmade118.desktop" ] && [ -f "$_A/YouTube.desktop" ] && ok "ERGON-118: webapp rm Test removed it and touched nothing unmarked" || bad "ERGON-118: rm Test rc $_wr_rc: $(head -c 200 /tmp/wa118.out)"
+rm -f "$_A/Handmade118.desktop" /tmp/wa118.out
+# launch: a client whose class is the entry's StartupWMClass, then focus-not-duplicate
+_yt="$_A/YouTube.desktop"
+_ycls=$(sed -n 's/^StartupWMClass=//p' "$_yt" 2>/dev/null | head -1)
+_yurl=$(sed -n 's/^Exec=ergon-webapp launch "\(.*\)"$/\1/p' "$_yt" 2>/dev/null | head -1)
+if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
+  # uwsm gives the user manager the compositor's WAYLAND_DISPLAY; this harness starts Hyprland directly, so do what uwsm does.
+  usr "systemctl --user set-environment WAYLAND_DISPLAY=$WLD" >/dev/null 2>&1 </dev/null
+  # greetd's pam_gnome_keyring unlocks the login keyring at a real login (checked under ERGON-64).
+  # This harness skips greetd, so unlock it here, or Chromium opens an "unlock keyring" prompt.
+  if [ -n "${USERPASS:-}" ]; then
+    printf '%s' "$USERPASS" >/tmp/wa118pw; chown "$U" /tmp/wa118pw; chmod 600 /tmp/wa118pw
+    usr "timeout -k 2 10 gnome-keyring-daemon --unlock --components=secrets </tmp/wa118pw" >/tmp/wa118kr.out 2>&1 </dev/null
+    rm -f /tmp/wa118pw
+    note "ERGON-118: unlocked the login keyring as greetd's PAM would ($(tr '\n' ' ' </tmp/wa118kr.out | head -c 120))"
+  fi
+  usr "setsid -f ergon-webapp launch $_yurl </dev/null >/tmp/wa118l.out 2>&1" </dev/null >/dev/null 2>&1
+  if o_until 45 o_has "$_ycls"; then
+    ok "ERGON-118: launching YouTube mapped a client of class $_ycls (the entry's StartupWMClass)"
+    _n1=$(hq clients -j | jq --arg c "$_ycls" '[.[] | select(.class == $c)] | length')
+    o_win w118other; o_focus w118other >/dev/null; sleep 1
+    # Traced, into its own file: the first Chromium still writes to wa118l.out.
+    usr "timeout -k 3 30 bash -x \$(command -v ergon-webapp) launch $_yurl" >/tmp/wa118l2.out 2>&1 </dev/null; _l2=$?
+    _act0=$(o_active .class)
+    sleep 3
+    _n2=$(hq clients -j | jq --arg c "$_ycls" '[.[] | select(.class == $c)] | length')
+    _act=$(o_active .class)
+    if [ "$_n1" = 1 ] && [ "$_n2" = 1 ] && [ "$_act" = "$_ycls" ]; then ok "ERGON-118: a second launch of the same URL focused the window (still 1 client, active class $_act, rc $_l2)"
+    else bad "ERGON-118: second launch: clients $_n1 -> $_n2, active '$_act0' at once and '$_act' 3s later, rc $_l2; trace: $(grep -vE '^(libva|\[)' /tmp/wa118l2.out | tr '\n' '|' | tail -c 800)"; fi
+    if [ "$_act" != "$_ycls" ]; then
+      # Diagnostics: trace the launcher's lookup, then try the focus dispatch by hand.
+      _yaddr=$(hq clients -j | jq -r --arg c "$_ycls" '.[] | select(.class == $c) | .address' | head -1)
+      _oaddr=$(hq clients -j | jq -r --arg c w118other '.[] | select(.class == $c) | .address' | head -1)
+      cat >/tmp/wa118d.sh <<'EOF'
+Y=$1; O=$2
+act() { hyprctl activewindow -j | jq -r .class; }
+try() { local r; r=$(hyprctl dispatch "$1" 2>&1); sleep 0.7; echo "[$1] said $r -> active $(act)"; }
+hyprctl clients -j | jq -r '.[] | "\(.class) \(.address) at=\(.at) size=\(.size)"'
+hyprctl cursorpos; hyprctl getoption cursor:no_warps -j | jq -c .; hyprctl getoption input:follow_mouse -j | jq -c .
+try "hl.dsp.exec_raw(\"focuswindow address:$Y\")"
+try "hl.dsp.focus({ window = \"address:$Y\" })"
+try "hl.dsp.exec_raw(\"focuswindow class:^(chrome-www.youtube.com__-Default)$\")"
+try "hl.dsp.exec_raw(\"focuswindow address:$O\")"
+try "hl.dsp.focus({ direction = \"l\" })"
+try "hl.dsp.focus({ direction = \"r\" })"
+hyprctl cursorpos
+EOF
+      chmod 755 /tmp/wa118d.sh
+      usr "timeout -k 2 20 bash /tmp/wa118d.sh $_yaddr $_oaddr" >/tmp/wa118d.out 2>&1 </dev/null
+      note "ERGON-118 diag: by hand: $(tr '\n' '|' </tmp/wa118d.out | head -c 2500); active now $(o_active .class)"
+      o_focus w118other >/dev/null; sleep 1
+      usr "timeout -k 2 10 bash -x \$(command -v ergon-webapp) launch $_yurl" >/tmp/wa118x.out 2>&1 </dev/null
+      note "ERGON-118 diag: launcher trace: $(grep -E 'addr=|hyprctl|exec |command -v' /tmp/wa118x.out | head -12 | tr '\n' '|' | head -c 900)"
+    fi
+    _close_class w118other
+  else
+    bad "ERGON-118: no client of class $_ycls after 45s; classes now: $(hq clients -j | jq -r '[.[].class] | join(",")'); launcher said: $(head -c 200 /tmp/wa118l.out); chromium: $(pidof chromium >/dev/null && echo running || echo not running)"
+  fi
+  _close_class "$_ycls"; sleep 1; pkill -u "$U" -x chromium 2>/dev/null; sleep 1
+  usr "systemctl --user unset-environment WAYLAND_DISPLAY" >/dev/null 2>&1 </dev/null
+else bad "ERGON-118: cannot derive class/URL from $_yt (class '$_ycls', url '$_yurl')"; fi
+rm -f /tmp/wa118l.out
+# LocalSend: firewall, package, float rule
+_nft=$(timeout -k 2 10 nft list ruleset 2>&1 </dev/null)
+_l53=$(grep -E '53317' <<<"$_nft")
+_l53a=$(grep -E 'accept' <<<"$_l53"); _l53s=$(grep -E 'saddr' <<<"$_l53a"); _l53u=$(grep -v 'saddr' <<<"$_l53a")
+case "$_l53s" in *tcp*udp*|*udp*tcp*) _l53ok=1 ;; *) _l53ok=0 ;; esac
+if [ "$_l53ok" = 1 ] && [ -z "$_l53u" ]; then
+  ok "ERGON-118: nft accepts 53317 tcp+udp only from a saddr set: $(head -1 <<<"$_l53s" | tr -s ' \t' ' ' | head -c 200)"
+else bad "ERGON-118: nft 53317 rules: '$(head -c 300 <<<"$_l53")'"; fi
+if pacman -Q localsend-bin >/dev/null 2>&1; then
+  ok "ERGON-118: localsend-bin is installed ($(pacman -Q localsend-bin))"
+  pkill -u "$U" -x imv 2>/dev/null
+  # the package's own launcher says what to run
+  _lsx=$(grep -h '^Exec=' /usr/share/applications/*ocalsend*.desktop /usr/share/applications/*ocalSend*.desktop 2>/dev/null | head -1)
+  _lsx=${_lsx#Exec=}; _lsx=${_lsx%% *}
+  usr "setsid -f ${_lsx:-localsend_app} </dev/null >/tmp/ls118.log 2>&1" </dev/null >/dev/null 2>&1
+  _lsc=""
+  for _i in $(seq 1 90); do _lsc=$(_cls_re 'localsend' | head -1); [ -n "$_lsc" ] && break; sleep 0.5; done
+  if [ -n "$_lsc" ]; then
+    _fl=$(o_field "$_lsc" '.floating')
+    [ "$_fl" = true ] && ok "ERGON-118: the LocalSend window ($_lsc) floats" || bad "ERGON-118: LocalSend window $_lsc floating=$_fl"
+    _close_class "$_lsc"; sleep 1
+  else bad "ERGON-118: localsend_app mapped no window in 45s; classes: $(hq clients -j | jq -r '[.[].class] | join(",")'); exec '${_lsx:-none}'; package files: $(pacman -Ql localsend-bin 2>/dev/null | grep -E '/bin/|\.desktop' | awk '{print $2}' | head -6 | tr '\n' ' '); log: $(tail -c 300 /tmp/ls118.log | tr '\n' '|')"; fi
+  pkill -u "$U" -f "${_lsx:-localsend_app}" 2>/dev/null; rm -f /tmp/ls118.log
+else note "ERGON-118: localsend-bin is not installed in the guest (the AUR build did not land: $(pacman -Q localsend-bin 2>&1 | head -c 100)); the firewall rule was checked, the window float is unproven"; fi
+
+# 106b: the managed block is last, so a user's earlier stanza wins
+_cfg="$H/.ssh/config"
+if [ "$(tail -n 3 "$_cfg" 2>/dev/null | tr '\n' '|')" = "# ergon: managed default, keep this block last|Match all|Include ~/.ssh/config.d/ergon.conf|" ]; then
+  ok "ERGON-106: ~/.ssh/config ends with the marked Match all + Include block"
+else bad "ERGON-106: ~/.ssh/config tail: $(tail -n 4 "$_cfg" 2>&1 | tr '\n' '|')"; fi
+usr "timeout -k 2 10 ssh -G github.com" >/tmp/ssh106.out 2>&1 </dev/null
+grep -qi '^addkeystoagent true' /tmp/ssh106.out && ok "ERGON-106: ssh -G github.com says addkeystoagent true" || bad "ERGON-106: ssh -G github.com: '$(grep -i addkeys /tmp/ssh106.out | head -c 100)'"
+{ printf 'Host github.com\n    AddKeysToAgent no\n\n'; cat "$_cfg"; } > /tmp/ssh106.cfg; chmod a+r /tmp/ssh106.cfg
+usr "timeout -k 2 10 ssh -F /tmp/ssh106.cfg -G github.com" >/tmp/ssh106.out 2>&1 </dev/null
+grep -qi '^addkeystoagent false' /tmp/ssh106.out && ok "ERGON-106: an earlier 'AddKeysToAgent no' stanza wins over the managed default" || bad "ERGON-106: with an earlier stanza ssh -G says: '$(grep -i addkeys /tmp/ssh106.out | head -c 100)'"
+rm -f /tmp/ssh106.cfg /tmp/ssh106.out
+# ssh-key new / list / clipboard
+_SA="SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket"
+rm -f "$H/.ssh/vmkey" "$H/.ssh/vmkey.pub"
+usr "$_SA timeout -k 3 40 ergon-ssh-key new vmkey --insecure-empty-passphrase" >/tmp/sk106.out 2>&1 </dev/null; _sk_rc=$?
+if [ "$_sk_rc" = 0 ] && [ -f "$H/.ssh/vmkey.pub" ]; then
+  ok "ERGON-106: ergon ssh-key new vmkey returned 0 and made the key"
+  _fp=$(ssh-keygen -lf "$H/.ssh/vmkey.pub" | awk '{print $2}')
+  usr "$_SA timeout -k 2 10 ssh-add -l" >/tmp/sk106.out 2>&1 </dev/null
+  grep -qF "$_fp" /tmp/sk106.out && ok "ERGON-106: ssh-add -l lists vmkey ($_fp)" || bad "ERGON-106: ssh-add -l: $(head -c 200 /tmp/sk106.out)"
+  usr 'timeout 3 wl-paste -n' >/tmp/sk106.clip 2>&1 </dev/null
+  [ "$(cat /tmp/sk106.clip)" = "$(cat "$H/.ssh/vmkey.pub")" ] && ok "ERGON-106: wl-paste returns the new public key" || bad "ERGON-106: clipboard is '$(head -c 100 /tmp/sk106.clip)'"
+  usr "$_SA timeout -k 2 20 ergon-ssh-key list" >/tmp/sk106.out 2>&1 </dev/null
+  grep -E '^vmkey +loaded' /tmp/sk106.out >/dev/null && ok "ERGON-106: ergon ssh-key list shows vmkey loaded" || bad "ERGON-106: ssh-key list: $(head -c 250 /tmp/sk106.out | tr '\n' '|')"
+else bad "ERGON-106: ssh-key new rc $_sk_rc: $(head -c 300 /tmp/sk106.out)"; fi
+usr "$_SA ssh-add -d $H/.ssh/vmkey.pub" >/dev/null 2>&1 </dev/null
+pkill -u "$U" -x wl-copy 2>/dev/null
+rm -f "$H/.ssh/vmkey" "$H/.ssh/vmkey.pub" /tmp/sk106.out /tmp/sk106.clip
+
+# 67: the project scaffold carries marimo in its dev group
+_p67=$(mktemp -d /tmp/p67.XXXXXX); chown "$U" "$_p67"
+usr "cd $_p67 && timeout -k 5 300 ergon new vmproj" >/tmp/np67.out 2>&1 </dev/null; _np_rc=$?
+if [ "$_np_rc" = 0 ] && [ -f "$_p67/vmproj/pyproject.toml" ]; then
+  awk '/^\[dependency-groups\]/ {g=1; next} /^\[/ {g=0} g && /marimo/ {f=1} END {exit !f}' "$_p67/vmproj/pyproject.toml" \
+    && ok "ERGON-67: pyproject.toml lists marimo under [dependency-groups]" || bad "ERGON-67: no marimo in the dev group: $(grep -A3 dependency-groups "$_p67/vmproj/pyproject.toml" | tr '\n' '|')"
+  [ -f "$_p67/vmproj/notebooks/starter.py" ] && ok "ERGON-67: notebooks/starter.py exists" || bad "ERGON-67: notebooks/starter.py missing ($(ls "$_p67/vmproj" | tr '\n' ' '))"
+  if _net; then
+    usr "cd $_p67/vmproj && timeout -k 5 400 uv sync" >/tmp/np67.out 2>&1 </dev/null; _us=$?
+    usr "cd $_p67/vmproj && timeout -k 5 120 uv run python -c 'import marimo; print(marimo.__version__)'" >/tmp/np67b.out 2>&1 </dev/null; _ur=$?
+    [ "$_us" = 0 ] && [ "$_ur" = 0 ] && ok "ERGON-67: uv sync and import marimo succeed in the project env (marimo $(tail -1 /tmp/np67b.out))" || bad "ERGON-67: uv sync rc $_us, import rc $_ur: $(tail -c 200 /tmp/np67.out) / $(tail -c 200 /tmp/np67b.out)"
+  else note "ERGON-67: the guest has no route to pypi.org; uv sync and import marimo are unproven"; fi
+else bad "ERGON-67: ergon new rc $_np_rc: $(tail -c 300 /tmp/np67.out)"; fi
+rm -rf "$_p67" /tmp/np67.out /tmp/np67b.out
+
+# 36: GPU report on a machine without NVIDIA
+usr "timeout -k 2 30 ergon gpu" >/tmp/gpu36.out 2>&1 </dev/null; _gpu_rc=$?
+if [ "$_gpu_rc" = 0 ] && [ -s /tmp/gpu36.out ] && ! grep -qi 'error\|traceback\|command not found' /tmp/gpu36.out; then
+  ok "ERGON-36: ergon gpu exited 0: $(head -3 /tmp/gpu36.out | tr -s ' ' | tr '\n' '|' | head -c 200)"
+else bad "ERGON-36: ergon gpu rc $_gpu_rc: $(head -c 300 /tmp/gpu36.out)"; fi
+if grep -qs '^0x10de$' /sys/bus/pci/devices/*/vendor; then
+  note "ERGON-36: the guest has an NVIDIA controller; the non-NVIDIA expectations are skipped"
+else
+  _dj=$(su - "$U" -c "XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus WAYLAND_DISPLAY=$WLD timeout -k 2 120 $G/bin/ergon-doctor --json </dev/null" 2>/dev/null | grep -o '{"name":"[^}]*}')
+  _nv=$(grep -i '"name":"[^"]*nvidia' <<<"$_dj" | grep '"state":"fail"')
+  [ -n "$_dj" ] && [ -z "$_nv" ] && ok "ERGON-36: ergon doctor has no failing NVIDIA row on a non-NVIDIA guest ($(grep -ci nvidia <<<"$_dj") NVIDIA rows of $(wc -l <<<"$_dj"))" || bad "ERGON-36: doctor rows ($(wc -l <<<"$_dj") total), NVIDIA failures: $_nv"
+  [ ! -e /etc/modprobe.d/ergon-nvidia.conf ] && [ ! -e /etc/mkinitcpio.conf.d/ergon-nvidia.conf ] && ok "ERGON-36: no ergon-nvidia modprobe or initramfs drop-in on this guest" || bad "ERGON-36: NVIDIA drop-ins exist: $(ls /etc/modprobe.d/ergon-nvidia.conf /etc/mkinitcpio.conf.d/ergon-nvidia.conf 2>&1 | tr '\n' ' ')"
+  _hooks=$(cat /etc/mkinitcpio.conf /etc/mkinitcpio.conf.d/*.conf 2>/dev/null | grep -E '^HOOKS')   # captured: grep -q in a pipe would SIGPIPE cat under pipefail
+  case " $_hooks " in *[' ()=']kms[' )']*) ok "ERGON-36: the kms hook is still in the initramfs HOOKS" ;; *) bad "ERGON-36: kms hook missing from HOOKS: $(head -c 200 <<<"$_hooks")" ;; esac
+fi
+rm -f /tmp/gpu36.out
+
+# 55: the welcome notebook, then the terminal fallback
+_stamp="$H/.local/state/ergon/welcome-shown"
+_before=$(hq clients -j | jq -r '.[].address' | sort)
+_new_clients() { comm -13 <(printf '%s\n' "$_before") <(hq clients -j 2>/dev/null | jq -r '.[].address' | sort); }
+_new_classes() { local a; for a in $(_new_clients); do hq clients -j | jq -r --arg a "$a" '.[] | select(.address == $a) | .class'; done | tr '\n' ' '; }
+rm -f "$_stamp"
+usr "timeout -k 3 30 ergon-welcome --first-run" >/tmp/wel55.out 2>&1 </dev/null; _wf_rc=$?
+[ "$_wf_rc" = 0 ] && ok "ERGON-55: ergon-welcome --first-run returned 0 at once" || bad "ERGON-55: --first-run rc $_wf_rc: $(head -c 150 /tmp/wel55.out)"
+_mz() { timeout -k 2 5 curl -sf -m 2 -o /tmp/wel55.html http://127.0.0.1:2730/ </dev/null >/dev/null 2>&1; }
+if o_until 90 _mz; then
+  ok "ERGON-55: the marimo server answers on 127.0.0.1:2730 ($(wc -c < /tmp/wel55.html) bytes of HTML)"
+  grep -qi marimo /tmp/wel55.html && ok "ERGON-55: the served page is a marimo app" || bad "ERGON-55: the page on 2730 does not mention marimo: $(head -c 150 /tmp/wel55.html)"
+else bad "ERGON-55: nothing on 127.0.0.1:2730 after 90s; log: $(tail -c 300 "$H/.local/state/ergon/welcome-marimo.log" 2>&1)"; fi
+_wn() { [ -n "$(_new_clients)" ]; }
+if o_until 90 _wn; then ok "ERGON-55: a browser window mapped (class $(_new_classes))"
+else bad "ERGON-55: no browser window within 90s"; fi
+_sn() { [ -e "$_stamp" ]; }
+o_until 20 _sn && ok "ERGON-55: the welcome stamp was written" || bad "ERGON-55: no stamp at $_stamp"
+# `marimo run` streams cell outputs over a websocket, so the HTML the server hands curl is a shell;
+# the same notebook exported to HTML carries what its cells printed.
+_nb="$G/marimo/welcome.py"
+usr "ERGON=$G PATH=$G/bin:\$PATH timeout -k 5 180 \$HOME/.local/share/pyfleet/bin/marimo export html $_nb -o /tmp/wel55x.html --force" >/tmp/wel55.out 2>&1 </dev/null; _ex=$?
+_pw=$(grep -oE '[A-Za-z]{10,}' "$G/knowledge/welcome.md" | sort -u | awk '{print length($0), $0}' | sort -rn | awk '{print $2}' | head -8)
+_pf=0; _pt=0; for _w in $_pw; do _pt=$((_pt+1)); grep -qF -- "$_w" /tmp/wel55x.html 2>/dev/null && _pf=$((_pf+1)); done
+if [ "$_ex" = 0 ] && [ "$_pt" -ge 2 ] && [ "$_pf" = "$_pt" ]; then
+  ok "ERGON-55: the exported notebook carries the output of ergon explain welcome ($_pf of its $_pt longest words, $(wc -c < /tmp/wel55x.html) bytes)"
+else bad "ERGON-55: export rc $_ex, $_pf of $_pt welcome.md words found in $(wc -c < /tmp/wel55x.html 2>/dev/null) bytes; words: $(tr '\n' ' ' <<<"$_pw"); $(tail -c 200 /tmp/wel55.out)"; fi
+# and a command section: the accordion title is typed, the body is what `ergon bundle list` printed
+_bl=$(usr "timeout -k 2 30 ergon bundle list" 2>/dev/null </dev/null | awk 'NF {print $1; exit}')
+[ -n "$_bl" ] && grep -qF -- "$_bl" /tmp/wel55x.html && ok "ERGON-55: the notebook export also names '$_bl', the first thing ergon bundle list prints" || note "ERGON-55: first token of ergon bundle list ('$_bl') not found in the export (too generic a probe to fail on)"
+# close what we opened
+for _a in $(_new_clients); do o_dsp "hl.dsp.window.close({ window = \"address:$_a\" })"; done
+sleep 2
+pkill -u "$U" -f 'marimo run --headless --no-token --port 2730' 2>/dev/null
+if [ -n "$(_new_clients)" ]; then pkill -u "$U" -x firefox 2>/dev/null; pkill -u "$U" -x chromium 2>/dev/null; fi
+sleep 2
+_mz && bad "ERGON-55: the marimo server still answers on 2730 after the kill" || ok "ERGON-55: the notebook server is gone"
+rm -f /tmp/wel55.out /tmp/wel55.html /tmp/wel55x.html /tmp/wel55h.out
+# ERGON_WELCOME_GUI=0 goes to the terminal page
+_before=$(hq clients -j | jq -r '.[].address' | sort)
+rm -f "$_stamp"
+if command -v glow >/dev/null; then
+  usr "ERGON_WELCOME_GUI=0 timeout -k 3 30 ergon-welcome --first-run" >/tmp/wel55.out 2>&1 </dev/null
+  if o_until 40 _wn; then
+    ok "ERGON-55: ERGON_WELCOME_GUI=0 opened a terminal window (class $(_new_classes))"
+    o_until 15 _sn && ok "ERGON-55: and wrote the stamp" || bad "ERGON-55: terminal path wrote no stamp"
+    _mz && bad "ERGON-55: GUI=0 still started the marimo server" || ok "ERGON-55: GUI=0 did not start the notebook server"
+  else bad "ERGON-55: ERGON_WELCOME_GUI=0 opened no window in 40s: $(head -c 150 /tmp/wel55.out)"; fi
+  for _a in $(_new_clients); do o_dsp "hl.dsp.window.close({ window = \"address:$_a\" })"; done
+  sleep 1; pkill -u "$U" -f 'ergon-welcome' 2>/dev/null
+else note "ERGON-55: glow is not installed in the guest; the terminal-page path is unproven"; fi
+rm -f /tmp/wel55.out "$_stamp"
 
 # --- ERGON-100: dictation. Bundle, bind, model download, a real record/stop cycle, typing
 echo "--- ERGON-100 ---"

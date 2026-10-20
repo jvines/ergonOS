@@ -27,15 +27,9 @@ if command -v hyprctl >/dev/null; then
   addr=$(hyprctl clients -j 2>/dev/null \
          | jq -r --arg c "$class" 'map(select(.class == $c)) | first | .address // empty')
   if [ -n "$addr" ]; then
-    # hl.dsp.exec_raw, not `dispatch focuswindow address:...`.
-    #
-    # A Lua-configured Hyprland evaluates the dispatch payload AS LUA, so the
-    # classic form arrives as `return hl.dispatch(focuswindow address:0x...)`
-    # and dies on a syntax error nothing here would ever have seen -- the window
-    # simply never came forward, and a second one opened instead. exec_raw is
-    # the escape hatch that takes the classic string; verified against a running
-    # compositor, along with the typed forms hl.dsp.focus{} and hl.dsp.cursor.
-    exec hyprctl dispatch "hl.dsp.exec_raw(\"focuswindow address:$addr\")"
+    # The typed form. exec_raw("focuswindow address:...") answers "ok" and does
+    # nothing (VM run of 2026-10-19), and the classic string is parsed as Lua.
+    exec hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })"
   fi
 fi
 

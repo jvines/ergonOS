@@ -144,7 +144,7 @@ expect {
   "SHARE_OK" {}
 }
 
-send "echo '$USERPASS' | sudo -S env BACKUP_NAS=$BACKUP_NAS ERGON_ARCHIVE_DATE=$ARCHIVE_DATE bash /mnt/test/arch-vm/guest-desktop.sh\r"
+send "echo '$USERPASS' | sudo -S env USERPASS=$USERPASS BACKUP_NAS=$BACKUP_NAS ERGON_ARCHIVE_DATE=$ARCHIVE_DATE bash /mnt/test/arch-vm/guest-desktop.sh\r"
 # SILENCE, not a budget.
 #
 # "set timeout 1800" above plus a single expect makes 1800s the allowance for

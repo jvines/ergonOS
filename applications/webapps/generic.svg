@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Fallback icon of ergon-webapp, used when a site offers no usable one. -->
+  <rect width="256" height="256" rx="48" fill="#4b5d8a"/>
+  <circle cx="128" cy="128" r="76" fill="none" stroke="#e8ecf5" stroke-width="10"/>
+  <ellipse cx="128" cy="128" rx="34" ry="76" fill="none" stroke="#e8ecf5" stroke-width="10"/>
+  <path d="M52 128h152M64 90h128M64 166h128" stroke="#e8ecf5" stroke-width="10" fill="none"/>
+</svg>
