@@ -3651,6 +3651,14 @@ _yurl=$(sed -n 's/^Exec=ergon-webapp launch "\(.*\)"$/\1/p' "$_yt" 2>/dev/null |
 if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
   # uwsm gives the user manager the compositor's WAYLAND_DISPLAY; this harness starts Hyprland directly, so do what uwsm does.
   usr "systemctl --user set-environment WAYLAND_DISPLAY=$WLD" >/dev/null 2>&1 </dev/null
+  # greetd's pam_gnome_keyring unlocks the login keyring at a real login (checked under ERGON-64).
+  # This harness skips greetd, so unlock it here, or Chromium opens an "unlock keyring" prompt.
+  if [ -n "${USERPASS:-}" ]; then
+    printf '%s' "$USERPASS" >/tmp/wa118pw; chown "$U" /tmp/wa118pw; chmod 600 /tmp/wa118pw
+    usr "timeout -k 2 10 gnome-keyring-daemon --unlock --components=secrets </tmp/wa118pw" >/tmp/wa118kr.out 2>&1 </dev/null
+    rm -f /tmp/wa118pw
+    note "ERGON-118: unlocked the login keyring as greetd's PAM would ($(tr '\n' ' ' </tmp/wa118kr.out | head -c 120))"
+  fi
   usr "setsid -f ergon-webapp launch $_yurl </dev/null >/tmp/wa118l.out 2>&1" </dev/null >/dev/null 2>&1
   if o_until 45 o_has "$_ycls"; then
     ok "ERGON-118: launching YouTube mapped a client of class $_ycls (the entry's StartupWMClass)"
@@ -3667,12 +3675,13 @@ if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
       _yaddr=$(hq clients -j | jq -r --arg c "$_ycls" '.[] | select(.class == $c) | .address' | head -1)
       cat >/tmp/wa118d.sh <<EOF
 set -x
-hyprctl clients -j | jq -r '.[] | .class + " " + .address'
+hyprctl clients -j | jq -r '.[] | "\(.class) \(.address) ws=\(.workspace.name) float=\(.floating) pin=\(.pinned) fs=\(.fullscreen) mapped=\(.mapped) hidden=\(.hidden)"'
+hyprctl activewindow -j | jq -r '"active \(.class) ws=\(.workspace.name)"'; hyprctl activeworkspace -j | jq -r '"activews \(.name)"'
 hyprctl dispatch 'hl.dsp.exec_raw("focuswindow address:$_yaddr")'; echo "dispatch rc=\$?"
 EOF
       chmod 755 /tmp/wa118d.sh
       usr "timeout -k 2 10 bash /tmp/wa118d.sh" >/tmp/wa118d.out 2>&1 </dev/null
-      note "ERGON-118 diag: by hand: $(tr '\n' '|' </tmp/wa118d.out | head -c 600); active now $(o_active .class)"
+      note "ERGON-118 diag: by hand: $(tr '\n' '|' </tmp/wa118d.out | head -c 1400); active now $(o_active .class)"
       o_focus w118other >/dev/null; sleep 1
       usr "timeout -k 2 10 bash -x \$(command -v ergon-webapp) launch $_yurl" >/tmp/wa118x.out 2>&1 </dev/null
       note "ERGON-118 diag: launcher trace: $(grep -E 'addr=|hyprctl|exec |command -v' /tmp/wa118x.out | head -12 | tr '\n' '|' | head -c 900)"
