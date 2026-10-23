@@ -58,9 +58,9 @@ mkdir -p "$(dirname "$STAMP")"
 # Shaped like the repo, not a copy of it: every path below is one the shared
 # input list names, plus two that it deliberately does not.
 M="$T/machine"
-mkdir -p "$M/bin" "$M/lib" "$M/packages" "$M/grub" "$M/hardware/fake" \
+mkdir -p "$M/bin" "$M/lib" "$M/packages" "$M/grub" "$M/plymouth" "$M/hardware/fake" \
          "$M/knowledge" "$M/systemd" "$M/zsh"
-cp "$REPO/lib/provision-inputs.sh" "$M/lib/provision-inputs.sh"
+cp "$REPO/lib/provision-inputs.sh" "$REPO/lib/bootloader.sh" "$M/lib/"
 cat > "$M/install.sh" <<EOF
 #!/usr/bin/env bash
 echo install.sh >> "$LOG"
@@ -85,6 +85,9 @@ printf 'wezterm-git\n' > "$M/packages/aur"
 printf 'x\n' > "$M/bin/ergon-hardware"
 printf 'x\n' > "$M/bin/ergon-backup"
 printf 'x\n' > "$M/bin/ergon-boot-guard"
+printf 'x\n' > "$M/bin/ergon-boot-entries"
+printf 'x\n' > "$M/bin/ergon-plymouth"
+printf 'x\n' > "$M/plymouth/ergon.script.tpl"
 printf 'x\n' > "$M/grub/09_x"
 printf 'x\n' > "$M/hardware/fake/profile.sh"
 printf 'x\n' > "$M/knowledge/desktop-config.md"
@@ -389,7 +392,7 @@ pam_ok() {  # each keyring line exactly once, straight after the include it exte
 if [ ! -s "$T/pam.awk" ]; then
   bad "provisioning's keyring PAM edit is gone, or its PAMKR heredoc moved"
 else
-  awk -f "$T/pam.awk" "$T/greetd" > "$T/pam1"; awk -f "$T/pam.awk" "$T/pam1" > "$T/pam2"
+  awk -v keep=1 -f "$T/pam.awk" "$T/greetd" > "$T/pam1"; awk -v keep=1 -f "$T/pam.awk" "$T/pam1" > "$T/pam2"
   # auth after the include, where pam_unix has checked the password; session
   # after it, where pam_systemd has made the runtime dir the daemon listens in.
   pam_ok "$T/pam1" && ok "greetd's PAM gets pam_gnome_keyring once, right after each include" \
@@ -401,11 +404,28 @@ else
   # passwd, shadow 4.20's file, tabs and all: one password line after its include
   # and nothing else, or `passwd` leaves the keyring on the old password.
   printf '#%%PAM-1.0\nauth\t\tinclude\t\tsystem-auth\naccount\t\tinclude\t\tsystem-auth\npassword\tinclude\t\tsystem-auth\n' > "$T/passwd"
-  awk -f "$T/pam.awk" "$T/passwd" > "$T/pw1"
+  awk -v keep=1 -f "$T/pam.awk" "$T/passwd" > "$T/pw1"
   [ "$(sed 1,3d "$T/pw1" | tr -s ' \t' ' ')" = "$(printf 'password include system-auth\npassword optional pam_gnome_keyring.so')" ] \
-    && awk -f "$T/pam.awk" "$T/pw1" | cmp -s - "$T/pw1" && ok "passwd's PAM gets pam_gnome_keyring once, after its include, and keeps it" \
+    && awk -v keep=1 -f "$T/pam.awk" "$T/pw1" | cmp -s - "$T/pw1" && ok "passwd's PAM gets pam_gnome_keyring once, after its include, and keeps it" \
     || bad "passwd's keyring line is missing, doubled, misplaced or moves on a re-run: $(tr '\n' '|' < "$T/pw1")"
 fi
+
+# ERGON-123: keep=0 is every machine with the passwordless default keyring.
+# The lines go, including ones an earlier run added, and nothing else moves.
+if [ -s "$T/pam.awk" ]; then
+  awk -v keep=0 -f "$T/pam.awk" "$T/pam1" > "$T/pam0"
+  if ! grep -q pam_gnome_keyring "$T/pam0" && cmp -s "$T/pam0" "$T/greetd"; then
+    ok "without a login keyring to keep, greetd's PAM loses the keyring lines and nothing else"
+  else
+    bad "keep=0 left: $(tr '\n' '|' < "$T/pam0")"
+  fi
+  grep -q pam_gnome_keyring <<<"$(awk -v keep=0 -f "$T/pam.awk" "$T/pw1")" \
+    && bad "  passwd keeps pam_gnome_keyring with keep=0" || ok "  and so does passwd's"
+fi
+# The keyring itself is written in shell, not awk: assert on the text.
+grep -q 'Default_keyring' "$REPO/bin/provision-arch.sh" && grep -q 'initial_session' "$REPO/bin/provision-arch.sh" \
+  && ok "provisioning writes the passwordless default keyring and greetd's initial_session" \
+  || bad "provisioning no longer writes Default_keyring or initial_session"
 
 # --- ERGON-40: nss-mdns, without clobbering a line a person changed ---------
 # The awk program is pulled out of provision-arch.sh, not copied, same as the

@@ -479,6 +479,68 @@ else
   rec warn "rollback" "root is not btrfs; snapshots and rollback are unavailable"
 fi
 
+# --- boot chain --------------------------------------------------------------
+# ERGON-123. Installs from then on boot systemd-boot -> a UKI on the ESP ->
+# Plymouth's passphrase prompt (none with ENCRYPT=0) -> greetd's automatic
+# login. Older installs keep
+# GRUB with /boot inside LUKS until ERGON-125 migrates them; both are healthy,
+# and the rows say which one this is. The ESP is root-only (umask 0077), so the
+# file checks need sudo, as the snapshot count above does.
+if [ -f /etc/kernel/cmdline ]; then
+  if sudo -n true 2>/dev/null; then
+    esp=""
+    for m in /efi /boot/efi /boot; do
+      [ "$(findmnt -no FSTYPE "$m" 2>/dev/null)" = vfat ] && { esp=$m; break; }
+    done
+    nuki=$(sudo -n find "$esp/EFI/ergon" -maxdepth 1 -name '*.efi' 2>/dev/null | wc -l)
+    nsnap=$(sudo -n find "$esp/loader/entries" -maxdepth 1 -name 'ergon-snapshot-*.conf' 2>/dev/null | wc -l)
+    if [ -z "$esp" ]; then
+      rec fail "bootloader" "systemd-boot layout, but no ESP is mounted at /efi"
+    elif [ "$nuki" -lt 1 ]; then
+      rec fail "bootloader" "systemd-boot, but no UKI in $esp/EFI/ergon -- sudo mkinitcpio -P"
+    else
+      rec ok "bootloader" "systemd-boot, $nuki UKI(s) on $esp, $nsnap snapshot entr$([ "$nsnap" = 1 ] && echo y || echo ies)"
+    fi
+  else
+    rec ok "bootloader" "systemd-boot (the ESP is root-only; run: sudo ergon doctor for its contents)"
+  fi
+  if systemctl is-enabled --quiet ergon-boot-entries.path 2>/dev/null; then
+    rec ok "snapshot-menu" "ergon-boot-entries.path rewrites the boot menu when snapshots change"
+  else
+    rec warn "snapshot-menu" "ergon-boot-entries.path is not enabled, so new snapshots never reach the boot menu -- re-run bin/provision-arch.sh"
+  fi
+  if [ -x "$ERGON/bin/ergon-plymouth" ]; then
+    if sp=$("$ERGON/bin/ergon-plymouth" status 2>/dev/null); then
+      rec ok "boot-splash" "${sp#   }"
+    else
+      rec warn "boot-splash" "${sp#   } -- ergon-plymouth install"
+    fi
+  fi
+elif [ -f /etc/default/grub ]; then
+  rec ok "bootloader" "GRUB with /boot inside LUKS (installed before ERGON-123; ERGON-125 migrates it)"
+  if systemctl is-enabled --quiet grub-btrfsd 2>/dev/null; then
+    rec ok "snapshot-menu" "grub-btrfsd keeps the snapshot submenu"
+  else
+    rec warn "snapshot-menu" "grub-btrfsd is not enabled, so snapshots never reach the GRUB menu"
+  fi
+fi
+if [ -r /etc/greetd/config.toml ]; then
+  if grep -q '^\[initial_session\]' /etc/greetd/config.toml; then
+    who=$(sed -n '/^\[initial_session\]/,/^\[/ s/^user *= *"\(.*\)"/\1/p' /etc/greetd/config.toml | head -1)
+    if [ -e "${ERGON_SYSROOT:-}/dev/mapper/cryptroot" ]; then
+      rec ok "autologin" "$who is logged in after the disk passphrase (AUTOLOGIN=1); tuigreet after logout"
+    elif grep -qx 'ENCRYPT=0' "${ERGON_SYSROOT:-}/etc/ergon/install.env" 2>/dev/null; then
+      # ERGON-123: installed without encryption on purpose, so straight to the
+      # desktop is what was asked for, not an oversight to warn about.
+      rec ok "autologin" "$who is logged in at boot; the disk was installed unencrypted (ENCRYPT=0); tuigreet after logout"
+    else
+      rec warn "autologin" "$who is logged in automatically but the root is not encrypted: anyone who powers this on is in. AUTOLOGIN=0 in host.env"
+    fi
+  else
+    rec ok "autologin" "off: tuigreet asks for the password (AUTOLOGIN=0)"
+  fi
+fi
+
 # --- off-disk backup ---------------------------------------------------------
 # Snapshots share the disk they protect, so without this a dead SSD is total
 # loss. Read from ergon-backup's status file, which is world-readable on
@@ -702,22 +764,30 @@ if [ -n "${WAYLAND_DISPLAY:-}" ]; then
         *) rec warn "ssh-agent" "SSH_AUTH_SOCK=$sock does not answer — systemctl --user status ssh-agent.socket (ergon explain troubleshooting)" ;;
       esac
     fi
+    # ERGON-123: apps store in whatever the "default" alias names. On a new
+    # install that is Default_keyring, which has no password and is never
+    # locked; on an older one still logging in at the greeter it is login,
+    # which pam_gnome_keyring unlocks (ERGON-64). Either is fine while it
+    # reads unlocked. Locked, or none at all, is a dialog in front of the
+    # first Electron app.
+    kfile=${XDG_DATA_HOME:-$HOME/.local/share}/keyrings/default
     if [ "$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.freedesktop.secrets 2>/dev/null)" != "b true" ]; then
-      rec ok "login-keyring" "no Secret Service running; nothing to check"
-    elif dk=$(busctl --user call org.freedesktop.secrets /org/freedesktop/secrets org.freedesktop.Secret.Service ReadAlias s default 2>/dev/null) \
-         && ! printf '%s\n' "$dk" | grep -qxE 'o "(/|/org/freedesktop/secrets/collection/login)"'; then
-      # Apps store in whatever "default" names, and PAM makes and unlocks only
-      # "login". A keyring an app made the default before ERGON-64 stays so, and
-      # locked, behind a dialog -- while login itself reads unlocked (measured).
-      rec warn "login-keyring" "apps store in a default keyring that is not login (~/.local/share/keyrings/default), and PAM unlocks only login — ergon explain troubleshooting"
+      if [ "$(cat "$kfile" 2>/dev/null)" = Default_keyring ]; then
+        rec ok "keyring" "the default keyring has no password (Default_keyring); no Secret Service running yet"
+      else
+        rec ok "keyring" "no Secret Service running; nothing to check"
+      fi
     else
-      case "$(busctl --user get-property org.freedesktop.secrets /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked 2>/dev/null)" in
-        "b false") rec ok "login-keyring" "unlocked" ;;
-        "b true")  rec warn "login-keyring" "locked — the first Electron app waits behind an unlock dialog. pam_gnome_keyring in /etc/pam.d/greetd?" ;;
-        # Also the whole of a FIRST login: the keyring PAM creates is listed but
-        # not served until the next one (gnome-keyring 50, measured).
-        *)         rec warn "login-keyring" "none on the bus — Electron apps cannot encrypt. After a first login this clears at the next; otherwise pam_gnome_keyring in /etc/pam.d/greetd?" ;;
-      esac
+      dk=$(busctl --user call org.freedesktop.secrets /org/freedesktop/secrets org.freedesktop.Secret.Service ReadAlias s default 2>/dev/null | sed -n 's/^o "\(.*\)"$/\1/p')
+      if [ -z "$dk" ] || [ "$dk" = / ]; then
+        rec warn "keyring" "no default keyring: the first app to store a secret asks for a new keyring password. Re-run bin/provision-arch.sh (ergon explain troubleshooting)"
+      else
+        case "$(busctl --user get-property org.freedesktop.secrets "$dk" org.freedesktop.Secret.Collection Locked 2>/dev/null)" in
+          "b false") rec ok "keyring" "default keyring ${dk##*/} is unlocked: Electron apps do not prompt" ;;
+          "b true")  rec warn "keyring" "default keyring ${dk##*/} is locked: the first Electron app waits behind an unlock dialog (ergon explain troubleshooting)" ;;
+          *)         rec warn "keyring" "the default keyring ${dk##*/} is not served on the bus (ergon explain troubleshooting)" ;;
+        esac
+      fi
     fi
   fi
 else

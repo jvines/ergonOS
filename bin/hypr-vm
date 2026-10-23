@@ -120,8 +120,8 @@ $(printf '%s\n' $BINDS | sed "s|^|      vnc://|; s|\$|:$PORT|")
   From the Mac:  Finder -> Go -> Connect to Server
                  (macOS Screen Sharing speaks VNC; nothing to install)
 
-  Log in at the greeter as $USERNAME / $USERPASS
-  (the disk unlocks itself here; the greeter is the only thing to answer)
+  The session starts by itself after the disk unlock (AUTOLOGIN=1, ERGON-123);
+  after a logout, log in at the greeter as $USERNAME / $USERPASS
 
 $GPU_NOTE
 
@@ -208,8 +208,8 @@ send "echo '$USERPASS' | sudo -S nohup bash /mnt/test/arch-vm/guest-wallpaper-wa
 # a fifteen-minute suite run that produced assertions and no pixels.
 send "echo '$USERPASS' | sudo -S nohup bash /mnt/test/arch-vm/guest-loop.sh >/dev/null 2>&1 &\r"
 
-puts "\n-- booted. The greeter is on vt1; connect to vnc://$BIND:$PORT"
-puts "-- log in as $USERNAME / $USERPASS"
+puts "\n-- booted. Hyprland starts on vt1 by itself (greeter after logout); connect to vnc://$BIND:$PORT"
+puts "-- greeter login: $USERNAME / $USERPASS"
 puts "-- Ctrl-C here stops the VM\n"
 
 # The serial console stays live, so you can still type into the guest here

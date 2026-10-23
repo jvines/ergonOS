@@ -36,8 +36,10 @@ Say why in the file.
                 revise product_name between batches.
     packages    extra pacman packages, one per line, same format as
                 packages/pacman
-    cmdline     kernel parameters, one per line, added to GRUB's default
-                cmdline (next boot). Never removed automatically.
+    cmdline     kernel parameters, one per line, added to the default
+                cmdline: /etc/kernel/cmdline and the UKIs (systemd-boot), or
+                /etc/default/grub (older installs). Next boot. Never removed
+                automatically.
     etc/        copied into / preserving structure, mode 644
     apply.sh    anything that is not a file drop. Runs with sudo available.
                 Must be idempotent -- provisioning re-runs.

@@ -82,7 +82,7 @@ chmod 440 /etc/sudoers.d/99-harness
 #
 # ERGON_HARDWARE: a VM's DMI says QEMU, so no hardware profile can ever match
 # and the profile mechanism would go permanently unexercised. Forcing it is the
-# only way to assert that a profile's kernel parameters reach grub.cfg. The lid,
+# only way to assert that a profile's kernel parameters reach the UKI. The lid,
 # the ABM block, fprintd and auto-brightness are capabilities, not profile
 # items, and are asserted from what this VM actually has.
 #
@@ -155,6 +155,18 @@ fi
 grep -q 'uwsm start -S' /etc/greetd/config.toml 2>/dev/null \
   && bad "greetd uses 'uwsm start -S', which errors on an unrecognized argument" \
   || ok "no invalid -S flag in the session command"
+# ERGON-123: the installer's AUTOLOGIN=1 reached host.env, and greetd starts
+# the same uwsm session for the user once per boot. That it really lands in
+# Hyprland is the screenshot boot's job (guest-autologin.sh), after this suite.
+if grep -qx 'AUTOLOGIN=1' "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null \
+   && awk -v u="$U" '/^\[initial_session\]/ { s = 1; next } /^\[/ { s = 0 }
+        s && /^command = "uwsm start -e -D Hyprland hyprland.desktop"$/ { c = 1 }
+        s && $0 == "user = \"" u "\"" { w = 1 } END { exit !(c && w) }' /etc/greetd/config.toml; then
+  ok "AUTOLOGIN=1: greetd's initial_session starts the uwsm session as $U"
+else
+  bad "no initial_session for $U in /etc/greetd/config.toml (AUTOLOGIN=$(sed -n 's/^AUTOLOGIN=//p' "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null))"
+  sed 's/^/     /' /etc/greetd/config.toml
+fi
 # Bundles: installed AND recorded. Two different claims.
 if grep -q 'BUNDLES="[^"]*notebooks' "$H/ergonOS/hosts/$(hostname -s)/host.env" 2>/dev/null; then
   ok "the notebooks bundle is recorded in host.env"
@@ -380,25 +392,23 @@ else
   tail -5 /tmp/sync-setup.log | sed 's/^/     /'
 fi
 
-# --- ERGON-64: greetd unlocks the login keyring ------------------------------
-# After BOTH provisioning runs, so "exactly once" is idempotence on the file the
-# greetd package really ships. This harness never logs in through greetd; what
-# is asked is whether the lines sit where they work, each after its include.
-if awk 'p ~ /^auth +include +system-local-login$/ && /^auth +optional +pam_gnome_keyring\.so$/ { a++ }
-        p ~ /^session +include +system-local-login$/ && /^session +optional +pam_gnome_keyring\.so +auto_start$/ { s++ }
-        /pam_gnome_keyring/ { n++ }  { p = $0 }
-        END { exit !(a == 1 && s == 1 && n == 2) }' /etc/pam.d/greetd 2>/dev/null; then
-  ok "/etc/pam.d/greetd has pam_gnome_keyring once each, right after its auth and session includes"
-else
-  bad "/etc/pam.d/greetd does not carry both pam_gnome_keyring lines, once, after the includes"
-  sed 's/^/     /' /etc/pam.d/greetd 2>/dev/null
-fi
-[ -e /usr/lib/security/pam_gnome_keyring.so ] && ok "  and the module is where PAM looks for it" \
-  || bad "  but /usr/lib/security/pam_gnome_keyring.so does not exist"
-if [ "$(grep -c pam_gnome_keyring /etc/pam.d/passwd)" = 1 ] && grep -A1 -E '^password[[:space:]]+include[[:space:]]+system-auth' \
-     /etc/pam.d/passwd | grep -qE '^password[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so$'; then
-  ok "/etc/pam.d/passwd re-keys the login keyring, once, right after its include"
-else bad "/etc/pam.d/passwd does not carry pam_gnome_keyring once after its include"; sed 's/^/     /' /etc/pam.d/passwd; fi
+# --- ERGON-123: the passwordless default keyring ------------------------------
+# After BOTH provisioning runs. With automatic login nobody types a login
+# password for PAM to unlock a keyring with, so the default keyring has none:
+# Default_keyring, made before any app could ask for one. ERGON-64's
+# pam_gnome_keyring lines are gone from greetd and passwd on such a machine,
+# so a greeter login cannot make a second, password-protected keyring.
+_kr="$H/.local/share/keyrings"
+[ "$(cat "$_kr/default" 2>/dev/null)" = Default_keyring ] && [ -f "$_kr/Default_keyring.keyring" ] \
+  && ok "the default keyring is Default_keyring, which has no password" \
+  || bad "default keyring: '$(cat "$_kr/default" 2>/dev/null)', file $(ls "$_kr" 2>/dev/null | tr '\n' ' ')"
+[ "$(stat -c %U "$_kr/Default_keyring.keyring" 2>/dev/null)" = "$U" ] \
+  && ok "  owned by $U" || bad "  Default_keyring.keyring is not $U's"
+grep -q pam_gnome_keyring /etc/pam.d/greetd /etc/pam.d/passwd \
+  && { bad "pam_gnome_keyring is still in greetd or passwd"; grep -n pam_gnome_keyring /etc/pam.d/greetd /etc/pam.d/passwd | sed 's/^/     /'; } \
+  || ok "greetd and passwd carry no pam_gnome_keyring lines"
+grep -q '^auth.*include.*system-local-login' /etc/pam.d/greetd \
+  && ok "  and greetd's own PAM lines are intact" || bad "  greetd's PAM file lost its include"
 
 # --- ERGON-20: the firewall, and where a published port binds --------------
 # bin/test-firewall.sh reads the ruleset provisioning WRITES. Only a booted
@@ -803,10 +813,11 @@ systemctl is-enabled ergon-fprintd-resume.service >/dev/null 2>&1 \
   && ok "fprintd is restarted after resume" || bad "ergon-fprintd-resume.service is not enabled"
 pacman -Q illuminanced >/dev/null 2>&1 \
   && bad "illuminanced installed on a machine with no light sensor" || ok "no auto-brightness without a light sensor"
-if grep -q 'amdgpu.dcdebugmask=0x610' /etc/default/grub && grep -q 'amdgpu.dcdebugmask=0x610' /boot/grub/grub.cfg; then
-  ok "the forced Framework profile's kernel parameter is in grub.cfg"
+# ERGON-123: the cmdline is /etc/kernel/cmdline, baked into the UKI.
+if grep -q 'amdgpu.dcdebugmask=0x610' /etc/kernel/cmdline && grep -aq 'amdgpu.dcdebugmask=0x610' /efi/EFI/ergon/linux.efi; then
+  ok "the forced Framework profile's kernel parameter is in /etc/kernel/cmdline and the UKI"
 else
-  bad "the Framework profile's kernel parameter did not reach grub.cfg"
+  bad "the Framework profile's kernel parameter did not reach the UKI"
 fi
 _sc=$(su - "$U" -c "$H/ergonOS/bin/ergon-sleep check" 2>&1)
 if printf '%s\n' "$_sc" | grep -q 's2idle only' && printf '%s\n' "$_sc" | grep -q 'hibernation: ready'; then
@@ -839,14 +850,31 @@ else
   bad "snapper is not installed"
 fi
 
-# grub-btrfs turns those snapshots into bootable GRUB entries, which is the
-# difference between "you can roll back" and "you can roll back without a live
-# USB and a manual btrfs subvolume swap".
-if systemctl is-enabled grub-btrfsd >/dev/null 2>&1; then
-  ok "grub-btrfsd enabled (snapshots appear in the boot menu)"
+# Snapshots in the systemd-boot menu (ERGON-123), which is the difference
+# between "you can roll back" and "you can roll back without a live USB and a
+# manual btrfs subvolume swap". ergon-boot-entries writes one entry per recent
+# snapshot from a path unit; provisioning's pacman runs made several.
+_ents=$(ls /efi/loader/entries/ergon-snapshot-*.conf 2>/dev/null | wc -l)
+if systemctl is-enabled ergon-boot-entries.path >/dev/null 2>&1 && [ "$_ents" -ge 1 ]; then
+  ok "$_ents snapshot entries in the boot menu, kept by ergon-boot-entries.path"
 else
-  bad "grub-btrfsd is not enabled — snapshots will not be bootable"
+  bad "snapshot entries: $_ents, path unit $(systemctl is-enabled ergon-boot-entries.path 2>&1)"
 fi
+_newest=$(snapper -c root list --columns number 2>/dev/null | grep -Eo '^ *[0-9]+' | tr -d ' ' | sort -n | tail -1)
+_e=/efi/loader/entries/ergon-snapshot-$_newest.conf
+# The path unit settles for 3 s before it writes; a snapshot just taken may
+# not have its entry yet.
+for _ in $(seq 30); do [ -f "$_e" ] && break; sleep 1; done
+if [ -f "$_e" ] && grep -q "rootflags=subvol=@snapshots/$_newest/snapshot" "$_e" \
+   && [ -s "/efi$(sed -n 's/^linux *//p' "$_e")" ] && [ -s "/efi$(sed -n 's/^initrd *//p' "$_e")" ]; then
+  ok "  the newest snapshot ($_newest) has one, with its own kernel and initramfs on the ESP"
+else
+  bad "  snapshot $_newest has no complete entry"; cat "$_e" 2>/dev/null | sed 's/^/     /'
+fi
+_g=$("$H/ergonOS/bin/ergon-boot-guard" get tries 2>/dev/null)
+[ "$_g" = 2 ] && [ -f /efi/loader/entries/ergon-fallback.conf ] \
+  && ok "boot guard: the main entry counts 2 tries, and the fallback entry exists" \
+  || bad "boot guard: tries '$_g', fallback entry $(ls /efi/loader/entries/ergon-fallback.conf 2>&1)"
 
 grep -q 'TIMELINE_LIMIT_HOURLY="5"' /etc/snapper/configs/root 2>/dev/null \
   && ok "snapper timeline trimmed" || bad "snapper timeline not trimmed"
@@ -2227,8 +2255,8 @@ fi
 # module comes back from the initramfs. The cmdline is the durable fact.
 grep -q 'modprobe.blacklist=floppy' /proc/cmdline 2>/dev/null \
   && ok "floppy blacklisted on the running cmdline" \
-  || { grep -q 'modprobe.blacklist=floppy' /boot/grub/grub.cfg 2>/dev/null \
-       && ok "floppy blacklisted in grub.cfg (takes effect next boot)" \
+  || { grep -q 'modprobe.blacklist=floppy' /etc/kernel/cmdline 2>/dev/null \
+       && ok "floppy blacklisted in /etc/kernel/cmdline (takes effect next boot)" \
        || bad "nothing blacklists floppy on the cmdline — the prompt returns every boot"; }
 [ -e /dev/fd0 ] \
   && note "/dev/fd0 still present in this boot (it predates the blacklist)" \
@@ -2411,6 +2439,7 @@ oom_diag() {
   oom_diag_shown=1
   echo "     --- out-of-memory diagnosis ---"
   for f in /etc/systemd/user/app.slice.d/10-ergon-oomd.conf \
+           /etc/systemd/user/app-.slice.d/10-ergon-oomd.conf \
            /etc/systemd/user/tmux-spawn-.scope.d/10-ergon-oomd.conf \
            /etc/systemd/user/wayland-wm@.service.d/10-ergon-oom.conf \
            /etc/systemd/oomd.conf.d/10-ergon.conf; do
@@ -2543,6 +2572,8 @@ case "$hist" in
     bad "the run was not recorded as an OOM kill — nothing contained it, or the kill was not attributed"
     printf '%s\n' "$hist" | tail -20 | sed 's/^/     /'
     tail -10 /tmp/oomprobe.log | sed 's/^/     /'
+    journalctl -b -u systemd-oomd --no-pager -n 15 2>&1 | sed "s/^/     oomd: /"
+    swapon --show 2>&1 | sed "s/^/     swap: /"; grep -E "^(MemTotal|SwapTotal|SwapFree)" /proc/meminfo | sed "s/^/     /"
     oom_diag ;;
 esac
 case "$rc" in
@@ -2608,7 +2639,9 @@ if usr "pgrep -x mako" >/dev/null 2>&1; then
     *"was killed for memory"*) bad "ergon watch's own kill was announced a second time, by ergon-oom-notify" ;;
     *) ok "ergon watch's own kill was announced once, by ergon watch" ;;
   esac
-  usr "timeout 120 systemd-run --user --quiet --wait --unit=ergon-vm-oom-bare --slice=app.slice \
+  # 300 s, as the watched run above gets: on a loaded host oomd took longer
+  # than 120 s to act on this one (ERGON-123 VM run 4, load average 43).
+  usr "timeout 300 systemd-run --user --quiet --wait --unit=ergon-vm-oom-bare --slice=app.slice \
        -p MemoryHigh=256M -- python3 /tmp/eat-memory.py" >/dev/null 2>&1
   usr "systemctl --user stop ergon-vm-oom-bare.service; systemctl --user reset-failed ergon-vm-oom-bare.service" >/dev/null 2>&1
   sleep 2
@@ -3661,17 +3694,13 @@ _yurl=$(sed -n 's/^Exec=ergon-webapp launch "\(.*\)"$/\1/p' "$_yt" 2>/dev/null |
 if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
   # uwsm gives the user manager the compositor's WAYLAND_DISPLAY; this harness starts Hyprland directly, so do what uwsm does.
   usr "systemctl --user set-environment WAYLAND_DISPLAY=$WLD" >/dev/null 2>&1 </dev/null
-  # greetd's pam_gnome_keyring unlocks the login keyring at a real login (checked under ERGON-64).
-  # This harness skips greetd, so unlock it here, or Chromium opens an "unlock keyring" prompt.
-  if [ -n "${USERPASS:-}" ]; then
-    printf '%s' "$USERPASS" >/tmp/wa118pw; chown "$U" /tmp/wa118pw; chmod 600 /tmp/wa118pw
-    usr "timeout -k 2 10 gnome-keyring-daemon --unlock --components=secrets </tmp/wa118pw" >/tmp/wa118kr.out 2>&1 </dev/null
-    rm -f /tmp/wa118pw
-    note "ERGON-118: unlocked the login keyring as greetd's PAM would ($(tr '\n' ' ' </tmp/wa118kr.out | head -c 120))"
-  fi
+  # ERGON-123: the default keyring has no password, so nothing is unlocked
+  # here: Chromium must store its key without a dialog, exactly as after the
+  # automatic login.
   usr "setsid -f ergon-webapp launch $_yurl </dev/null >/tmp/wa118l.out 2>&1" </dev/null >/dev/null 2>&1
   if o_until 45 o_has "$_ycls"; then
     ok "ERGON-118: launching YouTube mapped a client of class $_ycls (the entry's StartupWMClass)"
+    sleep 2; pgrep -x gcr-prompter >/dev/null && bad "ERGON-123: Chromium raised a keyring prompt (gcr-prompter)" || ok "ERGON-123: Chromium started with no keyring prompt"
     _n1=$(hq clients -j | jq --arg c "$_ycls" '[.[] | select(.class == $c)] | length')
     o_win w118other; o_focus w118other >/dev/null; sleep 1
     # Traced, into its own file: the first Chromium still writes to wa118l.out.

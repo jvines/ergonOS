@@ -17,8 +17,7 @@ case "$(systemctl is-system-running 2>/dev/null)" in
   running|degraded) ok "the system reached its default target" ;;
   *) bad "the system is $(systemctl is-system-running 2>/dev/null)" ;;
 esac
-ESP=$(findmnt -no TARGET -t vfat | head -1)
-tries=$(grub-editenv "$ESP/EFI/ergon/grubenv" list 2>/dev/null | sed -n 's/^ergon_tries=//p')
+tries=$("$E/bin/ergon-boot-guard" get tries 2>/dev/null)
 [ "$tries" = "2" ] && ok "the counter is back to 2 after a good boot" || bad "the counter is $tries"
 "$E/bin/ergon-boot-guard" status | sed 's/^/     /'
 echo "--- $P passed, $F failed ---"

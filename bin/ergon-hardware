@@ -22,6 +22,8 @@ set -uo pipefail
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 HWDIR="$ERGON/hardware"
+# shellcheck source=../lib/bootloader.sh
+. "$ERGON/lib/bootloader.sh"
 ROOT="${ERGON_SYSROOT:-}"
 DEST="${ERGON_DESTROOT:-}"
 DMI="$ROOT/sys/class/dmi/id"
@@ -539,25 +541,27 @@ _detected() {
   done
 }
 
-# Kernel parameters a profile needs, added to GRUB's default cmdline if absent.
-# They take effect on the next boot, and are never removed automatically: a
-# parameter someone relies on disappearing because DMI changed is worse than one
+# Kernel parameters a profile needs, added to the default cmdline if absent:
+# /etc/kernel/cmdline on systemd-boot installs (baked into the UKIs, so they
+# are rebuilt), /etc/default/grub on GRUB ones (lib/bootloader.sh). They take
+# effect on the next boot, and are never removed automatically: a parameter
+# someone relies on disappearing because DMI changed is worse than one
 # lingering.
 _kernel_args() {  # _kernel_args <param>...
-  local g="$DEST/etc/default/grub" cur new a added=()
-  [ -f "$g" ] || { warn "no /etc/default/grub; add these kernel parameters by hand: $*"; return 0; }
-  cur=$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"$/\1/p' "$g")
-  new=$cur
-  for a in "$@"; do
-    case " $new " in *" $a "*) ;; *) new="${new:+$new }$a"; added+=("$a") ;; esac
-  done
-  [ "${#added[@]}" -gt 0 ] || { skip "kernel parameters already set: $*"; return 0; }
-  sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$new\"|" "$g"
-  grep -qxF "GRUB_CMDLINE_LINUX_DEFAULT=\"$new\"" "$g" || { warn "could not set kernel parameters in $g"; return 1; }
-  if sudo grub-mkconfig -o "$DEST/boot/grub/grub.cfg" >/dev/null 2>&1; then
-    ok "kernel parameters: ${added[*]} (next boot)"
+  local added rc=0
+  if [ "$(ergon_boot_layout "$DEST")" = none ]; then
+    warn "no /etc/kernel/cmdline or /etc/default/grub; add these kernel parameters by hand: $*"; return 0
+  fi
+  added=$(ergon_cmdline_add "$DEST" "$@") || rc=$?
+  case $rc in
+    2) skip "kernel parameters already set: $*"; return 0 ;;
+    0) ;;
+    *) warn "could not set kernel parameters ($(ergon_boot_layout "$DEST"))"; return 1 ;;
+  esac
+  if ergon_boot_regen "$DEST"; then
+    ok "kernel parameters: $added (next boot)"
   else
-    warn "kernel parameters written to $g but grub-mkconfig failed"
+    warn "kernel parameters written but the boot files were not rebuilt"
   fi
 }
 

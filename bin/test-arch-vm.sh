@@ -12,10 +12,10 @@
 # out correctly -- subvolumes, fstab, NOCOW swapfile. It stops exactly where it
 # gets interesting, because a container has no firmware and never boots:
 #
-#   * GRUB is installed but never runs
-#   * the initramfs never unlocks LUKS
+#   * systemd-boot is installed but never runs
+#   * the UKI never boots, and Plymouth never asks for the passphrase
 #   * `resume=` is written but never resumes
-#   * grub-btrfs writes a snapshot submenu nobody ever selects
+#   * a snapshot entry is written that nobody ever selects
 #   * snapper rollback is never exercised on a live root
 #
 # Every one of those is a thing that fails at the worst possible moment -- on a
@@ -116,7 +116,7 @@ rm -f "$WORK/disk.qcow2" "$WORK/OVMF_VARS.fd" "$WORK/install.qcow2" "$WORK/OVMF_
 "${DOCKER[@]}" run --rm -v "$WORK:/w" -v "$ISO:/iso:ro" "$IMAGE" bash -euo pipefail -c "
   qemu-img create -f qcow2 /w/disk.qcow2 ${DISK_GIB}G >/dev/null
   # A WRITABLE copy of the variable store. This is not bookkeeping: the UEFI
-  # boot entry efibootmgr creates during grub-install lives in here, and with a
+  # boot entry bootctl install creates lives in here, and with a
   # read-only VARS file the install would appear to succeed and then boot to a
   # firmware shell with no boot option at all.
   cp /usr/share/OVMF/OVMF_VARS_4M.fd /w/OVMF_VARS.fd
@@ -278,9 +278,9 @@ ok "installed (log: $WORK/phase1.log)"
 cp "$ERGON/test/arch-vm/lib.exp" "$WORK/lib.exp"
 
 say "phase 2: boot the installed system"
-# No cdrom and no -kernel/-initrd this time: the firmware has to find GRUB in
-# the ESP by itself, via the boot entry grub-install wrote into the NVRAM we
-# made writable. If that entry is missing this drops to a UEFI shell and the
+# No cdrom and no -kernel/-initrd this time: the firmware has to find
+# systemd-boot in the ESP by itself, via the boot entry bootctl wrote into the
+# NVRAM we made writable. If that entry is missing this drops to a UEFI shell and the
 # first expect times out -- which is exactly the failure worth catching.
 #
 # Nothing below matches on a shell prompt. The install gives the user /bin/zsh,
@@ -322,20 +322,31 @@ if ! grep -q 'ASSERT_RESULT=' "$WORK/phase2.log"; then
 fi
 GUESTFAIL=$(grep -o 'ASSERT_RESULT=[0-9]*' "$WORK/phase2.log" | tail -1 | cut -d= -f2)
 FAILED=$((FAILED + GUESTFAIL))
+# ERGON-123: one passphrase per boot. lib.exp types it once, and again only if
+# the prompt said it was wrong, and prints how many times.
+_typed=$(grep -ao 'passphrase typed [0-9]* time' "$WORK/phase2.log" | head -1 | awk '{ print $3 }')
+if [ "${_typed:-}" = 1 ]; then
+  ok "the passphrase was asked for and typed once"
+else
+  fail "the passphrase was typed ${_typed:-no} time(s) in phase 2, expected once"
+fi
 
 
 # ---------------------------------------------------------------------------
 say "phase 3: rehearse a rollback"
 # The claim the entire btrfs layout exists to support.
 #
-# NOT via `snapper rollback` -- that repoints the default subvolume, and
-# grub-mkconfig unconditionally pins rootflags=subvol=@ over the top of it, so
-# the kernel mounts @ regardless. Verified: with the default correctly set to @
-# snapper still refuses with "Cannot detect ambit". See bin/ergon-rollback.
+# NOT via `snapper rollback` -- that repoints the default subvolume, and the
+# kernel cmdline pins rootflags=subvol=@ over the top of it, so the kernel
+# mounts @ regardless. Verified: with the default correctly set to @ snapper
+# still refuses with "Cannot detect ambit". See bin/ergon-rollback.
 #
-# Instead this exercises the recovery you would actually perform: boot the Arch
-# ISO, unlock the disk, replace @ with a snapshot, reboot. Three boots, because
-# you cannot replace the subvolume you are running from.
+# Instead this exercises the recovery you would actually perform. First the
+# snapshot boots from its own boot-menu entry, which ergon-boot-entries wrote
+# when it appeared (ERGON-123): that is how a person gets a working system
+# back. Then the permanent fix: boot the Arch ISO, unlock the disk, replace @
+# with the snapshot, reboot. Four boots, because you cannot replace the
+# subvolume you are running from.
 cat > "$WORK/rollback.exp" <<EXPECT
 set timeout 1200
 log_user 1
@@ -357,11 +368,28 @@ expect {
   timeout { puts "\n!! arming the rollback timed out"; exit 1 }
   -re {PRE_SNAPSHOT=([0-9]+)} { set snapnum \$expect_out(1,string); exp_continue }
   "SNAPSHOT_CONTAINS_CANARY" { puts "\n!! the snapshot already contains the canary"; exit 1 }
+  "SNAPSHOT_ENTRY=no" { puts "\n!! the snapshot never reached the boot menu"; exit 1 }
   "ARM_DONE" {}
 }
 if {\$snapnum eq ""} { puts "\n!! could not read the snapshot number"; exit 1 }
 puts "\n-- armed against snapshot \$snapnum"
 
+send "echo '$USERPASS' | sudo -S poweroff\r"
+expect eof
+
+# --- boot 1b: the snapshot's own boot entry, set as the one-shot ---------
+spawn qemu-system-x86_64 $(qemu_args)
+unlock_and_login "$PASSPHRASE" "$VMHOST" "$USERNAME" "$USERPASS"
+send "echo '$USERPASS' | sudo -S mount -t 9p -o trans=virtio,version=9p2000.L,ro ergon /mnt && echo SHARE''_OK\r"
+expect {
+  timeout { puts "\n!! share failed on the snapshot boot"; exit 1 }
+  "SHARE_OK" {}
+}
+send "echo '$USERPASS' | sudo -S bash /mnt/test/arch-vm/guest-snapshot-boot-verify.sh \$snapnum\r"
+expect {
+  timeout { puts "\n!! the snapshot boot check timed out"; exit 1 }
+  -re {SNAPBOOT_RESULT=[0-9]+} {}
+}
 send "echo '$USERPASS' | sudo -S poweroff\r"
 expect eof
 
@@ -446,6 +474,12 @@ if ! grep -q 'ROLLBACK_RESULT=' "$WORK/phase3.log"; then
   FAILED=$((FAILED + 1))
 else
   FAILED=$((FAILED + $(grep -o 'ROLLBACK_RESULT=[0-9]*' "$WORK/phase3.log" | tail -1 | cut -d= -f2)))
+fi
+if ! grep -q 'SNAPBOOT_RESULT=' "$WORK/phase3.log"; then
+  echo "   FAIL the snapshot's boot entry was never booted — see $WORK/phase3.log" >&2
+  FAILED=$((FAILED + 1))
+else
+  FAILED=$((FAILED + $(grep -o 'SNAPBOOT_RESULT=[0-9]*' "$WORK/phase3.log" | tail -1 | cut -d= -f2)))
 fi
 
 # ---------------------------------------------------------------------------

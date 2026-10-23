@@ -198,7 +198,7 @@ stop there: the unit is still *active* after someone types
 `nft list` as "I am not root" reported ok, to root, on a machine with an empty
 ruleset. An active unit with no `inet ergon` table is now a hard failure.
 
-## What LUKS actually protects, and the keyfile that doesn't weaken it
+## What LUKS actually protects, and what the unencrypted ESP holds
 
 Full-disk encryption answers a stolen or lost laptop, not a process already
 running on it: `cryptsetup open` at boot is the last question this machine
@@ -207,20 +207,47 @@ have everything the passphrase would otherwise hide. What stays protected is
 exactly the powered-off case -- the bag left on a train, the laptop lifted at
 an observatory.
 
-The passphrase is typed once, at GRUB, not twice. `/boot` lives *inside* the
-LUKS2 volume rather than on the unencrypted ESP, which is what lets GRUB boot a
-rollback snapshot's own kernel instead of whatever the live system currently
-has -- `ergon rollback`'s entire reason to exist -- and it means GRUB itself
-must decrypt the volume to read a kernel at all. The initramfs GRUB then hands
-off to would need to decrypt that same volume again, prompting a second long
-passphrase on every boot and every hibernate resume. `arch-bootstrap.sh` adds a second key
-instead: a random keyfile (`/etc/cryptsetup-keys.d/cryptroot.key`) embedded in
-the initramfs image, which `systemd-cryptsetup` finds automatically. That is
-not a weaker unlock left somewhere less protected -- the initramfs is itself
-inside the encrypted volume, so the keyfile is encrypted at rest along with
-the kernel and everything else. An attacker holding the powered-off disk still
-has neither key; the shortcut only removes a SECOND prompt for a volume that
-was already unlocked once, this boot, by the real passphrase.
+The passphrase is typed once, at Plymouth's prompt in the initramfs
+(ERGON-123). The ESP is unencrypted and holds systemd-boot, one unified kernel
+image per kernel, and the kernels and initramfs images of the recent snapshots
+that `ergon-boot-entries` copies there so the boot menu can start them. None
+of that is secret: they are the same files the Arch packages ship, and the
+initramfs carries no key. The root -- `/home`, `/etc`, the swapfile and with
+it every hibernation image -- stays inside LUKS2, with an Argon2id key derived
+from the passphrase alone. There is one keyslot and no keyfile.
+
+**What it weakens, against the old layout:** someone with the powered-off disk
+can replace what is on the ESP. A tampered kernel would see the passphrase the
+next time it is typed. GRUB's layout (`/boot` inside LUKS) had the same hole
+one step earlier -- GRUB itself lived on the plain ESP -- so this is not a new
+class of attack, and the answer to both is Secure Boot with your own keys,
+which this machine does not set up yet.
+
+**Automatic login.** With `AUTOLOGIN=1` (the installer's default), greetd
+starts the session after the unlock without asking for a password, so the disk
+passphrase is the only one at boot. The lock screen still asks for your
+password on resume and after idle, and `sudo` still does.
+
+**Installing without encryption.** The installer asks whether to encrypt the
+disk (`ENCRYPT`, default yes). `ENCRYPT=0` puts btrfs straight on the
+partition: no passphrase, a splash with no prompt, and with automatic login
+the machine goes from power button to desktop asking nothing. Whoever holds
+the laptop then holds everything on it, `/home` and the hibernation image
+included; the lock screen guards only a machine that is already on. It is
+recorded in `/etc/ergon/install.env` and cannot be changed without
+reinstalling. `ergon doctor` warns about automatic login on an unencrypted
+root only when that was not the installer's answer.
+
+**The keyring has no password.** Nobody types a login password for PAM to
+unlock a keyring with, so the default keyring (`Default_keyring`) is stored
+without one: what Chromium, VS Code or Discord keep there is protected by the
+disk encryption, as the rest of `/home` is, and readable by any process
+running as you, as the rest of `/home` is.
+
+Installs from before ERGON-123 keep GRUB with `/boot` inside LUKS2 and a
+random keyfile in the initramfs, so the passphrase is typed once at GRUB. That
+keyfile is encrypted at rest with everything else; ERGON-125 moves those
+machines to the layout above.
 
 ## TRIM passes through the disk encryption
 
@@ -235,10 +262,11 @@ someone holding it powered off can tell roughly how full it is and guess the
 filesystem. **What stays true:** not one byte of what the used blocks hold, and
 nothing about the passphrase.
 
-New installs boot with `rd.luks.options=discard`. Provisioning also writes
-`allow-discards` into the LUKS2 header (`cryptsetup refresh --persistent`,
-unlocked with the boot keyfile, so it never prompts), which reaches machines
-installed before that and every later opener, the rescue ISO included.
+New installs boot with `rd.luks.options=discard`, and the installer opens the
+volume with `--allow-discards --persistent`, which writes the flag into the
+LUKS2 header for every later opener, the rescue ISO included. On GRUB installs
+provisioning writes the same flag (`cryptsetup refresh --persistent`, unlocked
+with their boot keyfile, so it never prompts).
 `fstrim.timer` runs weekly on top. There is no knob: provisioning puts the flag
 back if it is removed. `ergon doctor`'s `trim` row fails when the mapper shows
 DISC-MAX 0 -- over a disk that takes no discards at all, too.

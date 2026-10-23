@@ -24,7 +24,8 @@
 # instead of http_proxy/https_proxy. Nothing here sets a proxy, so nothing moves
 # today; one exported later would be ignored by every Electron app.
 #
-# Half of the fix. With the login keyring locked, the first Electron app waits
-# behind an "Unlock Login Keyring" dialog; the pam_gnome_keyring lines
-# bin/provision-arch.sh adds to /etc/pam.d/greetd unlock it at login.
+# Half of the fix. The other half is a default keyring that is never locked:
+# bin/provision-arch.sh makes Default_keyring, which has no password
+# (ERGON-123), or on an older machine still logging in at the greeter keeps
+# the pam_gnome_keyring lines that unlock its login keyring.
 export GNOME_DESKTOP_SESSION_ID=

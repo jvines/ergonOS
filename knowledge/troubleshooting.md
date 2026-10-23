@@ -168,18 +168,21 @@ directly.
 ## Discord asks you to log in after every session
 
 Or VS Code says encryption is not available and an OS keyring couldn't be
-identified, or an **Unlock Login Keyring** dialog sits in front of the first
-Electron app you start. One cause, ERGON-64: Chromium does not know "Hyprland"
-as a desktop and keeps the key in plaintext or memory, unless
+identified, or an **Unlock Keyring** dialog sits in front of the first
+Electron app you start. Two halves. ERGON-64: Chromium does not know
+"Hyprland" as a desktop and keeps the key in plaintext or memory, unless
 `GNOME_DESKTOP_SESSION_ID` is set — `uwsm/env-hyprland.d/ergon-keyring` sets
-it, **empty** — and the keyring it then uses must already be unlocked, which the
-`pam_gnome_keyring` lines provisioning adds to `/etc/pam.d/greetd` do at login
-(and the one in `/etc/pam.d/passwd` keeps it on your password).
+it, **empty**. ERGON-123: the keyring it then uses must never need unlocking.
+Provisioning makes `Default_keyring`, which has no password, and points the
+`default` alias at it before any app can ask gnome-keyring to make one (that
+request is itself a password dialog). Nobody types a login password at boot,
+so nothing could unlock a password-protected one.
 
     systemctl --user show-environment | grep GNOME_DESKTOP_SESSION_ID  # present, empty
-    grep pam_gnome_keyring /etc/pam.d/greetd /etc/pam.d/passwd  # auth, session ... auto_start, password
-    journalctl -b | grep gkr-pam                   # "unlocked login keyring"
-    cat ~/.local/share/keyrings/default            # login, or no such file
+    cat ~/.local/share/keyrings/default            # Default_keyring
+    ls ~/.local/share/keyrings/                    # Default_keyring.keyring, no login.keyring
+    grep pam_gnome_keyring /etc/pam.d/greetd /etc/pam.d/passwd  # nothing (see below)
+    ergon doctor | grep keyring                    # unlocked
     <app> --enable-logging=stderr --vmodule=key_storage_util_linux=1 2>&1 \
       | grep 'Password storage detected desktop environment'   # GNOME, not (unknown)
     #   for code add --verbose, or this prints nothing, fixed or not
@@ -196,22 +199,62 @@ Find the key by `application`, not by label: every one of them is labelled
   decide this is GNOME, and `xdg-open <dir>` then fails. And not in
   `environment.d`, whose generator drops an empty assignment with a line in the
   journal and nothing else.
-- **The dialog comes anyway, and `default` names another keyring.** An app made
-  that one the default before this fix; apps still store there, and PAM
-  unlocks only `login`. Point the alias at login, then log in again; the other
-  keyring keeps what it holds, behind its own password:
-  `busctl --user call org.freedesktop.secrets /org/freedesktop/secrets org.freedesktop.Secret.Service SetAlias so default /org/freedesktop/secrets/collection/login`
-- **The dialog comes anyway, and `default` is login or absent.** Its password
-  is not your login password: made by hand, set with `sudo passwd` (root
-  cannot re-key it), or changed before provisioning gave `passwd` its keyring
-  line. Move `~/.local/share/keyrings/login.keyring` aside — its secrets go
-  with it — and log in again; PAM makes a new one with your password.
-- **The first login after an install**, or after that, creates the keyring,
-  and gnome-keyring does not serve it over D-Bus until the next login: apps
-  cannot encrypt for that one session.
+- **`default` names `login`.** A machine installed before ERGON-123 that still
+  logs in at the greeter (`AUTOLOGIN=0`) keeps its login keyring, and
+  provisioning keeps ERGON-64's `pam_gnome_keyring` lines in
+  `/etc/pam.d/greetd` and `passwd` to unlock it with your password. If that
+  machine turns `AUTOLOGIN=1` on, nothing unlocks login any more: re-run
+  provisioning (it makes Default_keyring the default), then move
+  `~/.local/share/keyrings/login.keyring` aside once its secrets are no longer
+  needed.
+- **The dialog asks to create a keyring.** There was no default when an app
+  asked. Re-run `bin/provision-arch.sh`, or by hand: an unencrypted keyring
+  file `~/.local/share/keyrings/Default_keyring.keyring` and `Default_keyring`
+  in `~/.local/share/keyrings/default`, then log out and in.
 
 Side effect, by design: with the variable set, Chromium takes its proxy from
 gsettings `org.gnome.system.proxy` and ignores `http_proxy` and `https_proxy`.
+
+## The boot: one passphrase, then the desktop
+
+Installs from ERGON-123 on: systemd-boot on the unencrypted ESP starts a UKI
+(`/efi/EFI/ergon/linux.efi`), Plymouth draws the passphrase prompt from the
+initramfs, sd-encrypt unlocks the root, and greetd's `initial_session` starts
+Hyprland through uwsm with no greeter. Logging out lands on tuigreet. Older
+installs boot GRUB, with `/boot` inside LUKS (ERGON-125 migrates them). An
+install with `ENCRYPT=0` (`/etc/ergon/install.env`) has no sd-encrypt hook and
+no `rd.luks` on the cmdline: `root=UUID=...` is the btrfs filesystem itself,
+and Plymouth shows the splash with no prompt.
+
+    bootctl status                                 # systemd-boot, the entry booted
+    ergon-boot-entries list                        # the menu: ergonOS, snapshots, linux-lts
+    cat /etc/kernel/cmdline                        # the cmdline every UKI carries
+    ergon-plymouth status                          # the splash palette
+    sed -n '/initial_session/,$p' /etc/greetd/config.toml   # automatic login
+    ergon doctor | grep -E 'bootloader|snapshot-menu|boot-splash|autologin'
+
+- **A kernel parameter does not take.** It goes in `/etc/kernel/cmdline`, then
+  `sudo mkinitcpio -P`: the UKI carries the cmdline, so editing loader entries
+  does nothing for the main entry.
+- **No splash, kernel text instead.** `splash` is missing from the cmdline, or
+  the `plymouth` hook from `HOOKS` in `/etc/mkinitcpio.conf` (it goes right
+  after `systemd`). On NVIDIA, Plymouth needs the driver's modules early
+  (`ergon-gpu`); without them it falls back to text, and the prompt still works.
+- **The splash is in the wrong palette.** It follows `ergon theme` only where
+  sudo needs no password; otherwise at the next `ergon sync`, or now:
+  `ergon-plymouth install`.
+- **A snapshot is not in the menu.** The path unit (ergon-boot-entries.path) should be active;
+  `sudo ergon-boot-entries sync` writes them by hand. Only the newest eight get
+  entries, plus the boot guard's known-good one, so the ESP cannot fill.
+- **You want the password prompt back.** `AUTOLOGIN=0` in
+  `hosts/<host>/host.env`, then `ergon sync`. On an unencrypted root that was
+  not installed with `ENCRYPT=0`, `ergon doctor` warns about automatic login.
+- **Rolling back an unencrypted install.** `ergon-rollback` finds the root
+  partition itself from a snapshot boot; from the Arch ISO name it:
+  `ergon-rollback --device /dev/nvme0n1p2 --list`.
+- **The menu does not show.** It shows for two seconds (`timeout` in
+  `/efi/loader/loader.conf`); press any key while it shows to stop the
+  countdown.
 
 ## git over SSH asks for the key passphrase every time
 
@@ -309,7 +352,10 @@ declared conflicts first; use it rather than bare `makepkg -si`.
 ## Recovering a machine that will not boot
 
 `ergon-rollback` swaps the `@` subvolume for a snapshot. It **refuses to run
-from `@`** — boot the Arch ISO, unlock the disk, and run it from there.
+from `@`** — boot the snapshot from the boot menu (or the Arch ISO, then
+`cryptsetup open /dev/<disk>p2 cryptroot`), and run it from there. After two
+boots that never reach the desktop the boot guard starts the last known-good
+snapshot by itself (`ergon-boot-guard status`).
 `snapper rollback` does not work on this layout and is not the tool.
 
 ## Suspend drains the battery, or the machine does not come back

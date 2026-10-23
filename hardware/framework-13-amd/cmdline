@@ -1,4 +1,4 @@
-# Kernel parameters, one per line, added to GRUB's default cmdline.
+# Kernel parameters, one per line, added to the default cmdline (/etc/kernel/cmdline, or GRUB's on older installs).
 #
 # Framework's own Linux notes for the Ryzen AI 300 boards (FrameworkComputer/
 # linux-docs, framework13/Ryzen-AI-300-Series.md) give this for "system lag or
