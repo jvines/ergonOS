@@ -12,9 +12,9 @@
 # arch-chroot block before running it (see the sed below). Everything inside
 # that block is therefore untested here --
 #
-#     mkinitcpio / the initramfs hooks     grub-install and GRUB_ENABLE_CRYPTODISK
+#     mkinitcpio / the initramfs hooks     bootctl install and the UKIs
 #     the kernel cmdline and resume=       snapper create-config
-#     user creation and passwords          grub-btrfs snapshot menu
+#     user creation and passwords          the snapshot boot entries
 #
 # -- because none of it can work against a loopback file in a container: there
 # is no firmware to install a bootloader into and no system bus for snapper.
@@ -100,7 +100,10 @@ chk 'swapfile sized right'     'test \$(stat -c%s /mnt/swap/swapfile) -eq \$((10
 chk 'pacstrap put a kernel in' 'test -f /mnt/boot/vmlinuz-linux'
 chk 'lts kernel present too'   'test -f /mnt/boot/vmlinuz-linux-lts'
 chk 'snapper installed'        'test -x /mnt/usr/bin/snapper'
-chk 'grub-btrfs installed'     'test -d /mnt/usr/share/grub-btrfs -o -f /mnt/usr/lib/systemd/system/grub-btrfsd.service'
+chk 'plymouth installed'       'test -x /mnt/usr/bin/plymouthd'
+chk 'no GRUB (ERGON-123)'      '! test -e /mnt/usr/bin/grub-install'
+chk 'ESP is 2 GiB'             'test \$(blockdev --getsize64 \${LOOP}p1) -eq \$((2*1024*1024*1024))'
+chk 'LUKS key is Argon2id'     'grep -q argon2id <<<\"\$(cryptsetup luksDump \${LOOP}p2)\"'
 chk 'inetutils (hostname)'     'test -x /mnt/usr/bin/hostname'
 
 echo

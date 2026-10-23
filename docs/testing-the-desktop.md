@@ -7,7 +7,7 @@ Framework arrives. Everything below runs in a VM on checo.
 
 ```sh
 ./bin/test-arch-vm.sh --keep    # ~7 min, once.  Installs Arch from the real
-                                # ISO under OVMF: LUKS, btrfs subvolumes, GRUB,
+                                # ISO under OVMF: LUKS, btrfs, systemd-boot, Plymouth,
                                 # snapper. Keeps the install, plus a fresh
                                 # overlay to boot and provision.
 

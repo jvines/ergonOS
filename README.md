@@ -32,7 +32,7 @@ keys and no checkout, so the clone has to be one a stranger could run:
 ```sh
 pacman -Sy --noconfirm git
 git clone https://github.com/jvines/ergonOS.git
-./ergonOS/bin/arch-bootstrap.sh /dev/nvme0n1   # LUKS, btrfs subvolumes, GRUB, snapshots
+./ergonOS/bin/arch-bootstrap.sh /dev/nvme0n1   # LUKS, btrfs, systemd-boot + UKIs, Plymouth, snapshots
 ```
 
 `arch-bootstrap.sh` copies the checkout it is running from into the installed
@@ -44,6 +44,13 @@ the tree that installed it:
 ~/ergonOS/bin/provision-arch.sh          # packages, desktop, hardware quirks, bundles
 ~/ergonOS/install.sh                     # link the desktop into $HOME
 ```
+
+The disk passphrase is the one password at boot: systemd-boot starts a
+unified kernel image from the unencrypted ESP, Plymouth asks for the
+passphrase, and greetd logs you straight into Hyprland. The installer asks
+whether to log in automatically (default yes; `AUTOLOGIN=0` for the
+password greeter, now or later in `hosts/<host>/host.env`). Machines installed
+before this keep GRUB with `/boot` inside LUKS.
 
 Installing somewhere with no usable network is a different problem: `pacstrap`
 has to reach a mirror regardless. Copy the repo onto the USB alongside the ISO
@@ -66,8 +73,9 @@ Recorded in `hosts/<host>/host.env`, so re-provisioning reproduces the machine.
 ## What makes it different
 
 - **It un-breaks its own boot.** btrfs subvolumes and `snap-pac` snapshot every
-  pacman transaction; after two boots that never reach the default target, GRUB
-  boots the last known-good snapshot by itself — using that snapshot's own
+  pacman transaction, and each recent one is an entry in the boot menu; after
+  two boots that never reach the default target, systemd-boot starts the last
+  known-good snapshot by itself — using that snapshot's own
   kernel, which is what makes a bad kernel update survivable.
 - **Provenance by default.** Every figure records the script, the commit and the
   environment that made it. Every long run is journalled.

@@ -14,7 +14,7 @@ echo "--- booted system assertions ---"
 echo "   cmdline: $(cat /proc/cmdline)"
 echo "   default subvol: $(btrfs subvolume get-default / 2>/dev/null)"
 
-# It booted at all, which means: GRUB installed, a UEFI boot entry exists, the
+# It booted at all, which means: systemd-boot installed, a UEFI boot entry exists, the
 # initramfs unlocked LUKS with the typed passphrase, and root mounted.
 check "root is the LUKS mapper"      'findmnt -no SOURCE / | grep -q "/dev/mapper/cryptroot"'
 check "root is btrfs"                '[ "$(findmnt -no FSTYPE /)" = btrfs ]'
@@ -33,7 +33,7 @@ check "/home still pins its subvol"    'grep -E "^[^#].*[[:space:]]/home[[:space
 # @, and a kernel that ignored rootflags would otherwise land somewhere else.
 check "default subvolume is @"      'btrfs subvolume get-default / | grep -q "path @$"'
 # rootflags=subvol=@ IS expected, and is load-bearing under the ergon-rollback
-# design: GRUB always emits it, and ergon-rollback restores by replacing the
+# design: /etc/kernel/cmdline carries it, and ergon-rollback restores by replacing the
 # CONTENT of @ rather than by repointing the default. What must never happen
 # is root being pinned to something that is not @ -- a leftover snapshot pin
 # would mean a rollback boots the wrong tree.
@@ -61,14 +61,44 @@ check "no legacy resume hook"        '[ -r /etc/mkinitcpio.conf ] && ! grep -E "
 # Snapshots: the reason this machine is btrfs at all.
 check "snapper root config exists"   '[ -f /etc/snapper/configs/root ]'
 check "snapper can list"             'snapper -c root list'
-# NOT a content check. At install time there are zero snapshots, so grub-btrfs
-# writes a header-only (or absent) file and asserting it is non-empty fails for
-# the wrong reason. What matters here is that the generator ran and the daemon
-# that regenerates it is armed; whether the menu actually lists a snapshot is
-# proven by the rollback rehearsal, which creates one.
-check "grub-btrfsd is enabled"       'systemctl is-enabled grub-btrfsd'
-check "grub-btrfs hook is present"   '[ -x /etc/grub.d/41_snapshots-btrfs ]'
 check "snap-pac installed"           'pacman -Q snap-pac'
+
+# --- the boot chain (ERGON-123) ---------------------------------------------
+# systemd-boot on an unencrypted ESP, a UKI per kernel, Plymouth asking for the
+# passphrase from the initramfs, once. GRUB is not installed at all.
+ESP=$(findmnt -no TARGET /efi 2>/dev/null)
+check "the ESP is mounted at /efi"            '[ "$(findmnt -no FSTYPE /efi)" = vfat ]'
+check "the ESP is not encrypted (a plain partition)" '! lsblk -no TYPE "$(findmnt -no SOURCE /efi)" | grep -q crypt'
+check "systemd-boot is installed on the ESP"  'bootctl is-installed'
+check "booted by systemd-boot"                'bootctl status 2>/dev/null | grep -q "Product: systemd-boot"'
+check "no GRUB package"                       '! pacman -Q grub'
+check "UEFI boot entry is systemd-boot"       'efibootmgr | grep -qi "Linux Boot Manager"'
+for k in linux linux-lts; do
+  check "UKI for $k on the ESP"               "[ -s $ESP/EFI/ergon/$k.efi ]"
+  check "  and an entry for it"               "ls $ESP/loader/entries/ergon-$k.conf $ESP/loader/entries/ergon-$k+*.conf 2>/dev/null | grep -q ."
+done
+check "this boot came from a UKI (stub set LoaderImageIdentifier/StubInfo)" '[ -n "$(ls /sys/firmware/efi/efivars/StubInfo-* 2>/dev/null)" ]'
+check "the cmdline is /etc/kernel/cmdline"    '[ "$(tr -s " " < /etc/kernel/cmdline | sed "s/ $//")" = "$(tr -s " " < /proc/cmdline | sed "s/ $//")" ]'
+check "the UKI carries that cmdline"          'objdump -s -j .cmdline $ESP/EFI/ergon/linux.efi >/dev/null 2>&1 || grep -aq "rd.luks.name=" $ESP/EFI/ergon/linux.efi'
+check "Plymouth is in the initramfs"          'lsinitcpio /boot/initramfs-linux.img | grep -q "usr/bin/plymouthd"'
+check "  with the ergon theme"                'lsinitcpio /boot/initramfs-linux.img | grep -q "plymouth/themes/ergon/ergon.script"'
+check "  and splash on the cmdline"           'grep -qw splash /proc/cmdline'
+check "Plymouth ran in this boot"             'journalctl -b -o cat | grep -q "plymouth"'
+check "the passphrase went through Plymouth"  'journalctl -b -o cat | grep -qi "Forward Password Requests to Plymouth"'
+check "the boot splash is the ergon theme"    'grep -qx "Theme=ergon" /etc/plymouth/plymouthd.conf'
+# Asked once: nothing before the kernel decrypts (the ESP is plain), there is
+# no keyfile for a second unlock, and the volume has one keyslot.
+check "no keyfile in /etc/cryptsetup-keys.d"  '[ -z "$(ls /etc/cryptsetup-keys.d 2>/dev/null)" ]'
+check "no keyfile in the initramfs"           '! lsinitcpio /boot/initramfs-linux.img | grep -q cryptsetup-keys'
+check "one LUKS keyslot (the passphrase)"     '[ "$(cryptsetup luksDump "$(cryptsetup status cryptroot | awk "\$1 == \"device:\" { print \$2 }")" | grep -cE "^  [0-9]+: luks2")" = 1 ]'
+check "the LUKS key is Argon2id"              'cryptsetup luksDump "$(cryptsetup status cryptroot | awk "\$1 == \"device:\" { print \$2 }")" | grep -q "PBKDF:.*argon2id"'
+# Snapshot entries: written by ergon-boot-entries whenever /.snapshots changes.
+# No snapshots exist yet at install; that the menu lists one and that it boots
+# is proven by the rollback rehearsal, which makes one and boots it.
+check "ergon-boot-entries.path is enabled"    'systemctl is-enabled ergon-boot-entries.path'
+check "  and watching"                        'systemctl is-active ergon-boot-entries.path'
+check "systemd-boot-update keeps the loader current" 'systemctl is-enabled systemd-boot-update.service'
+check "the installer recorded AUTOLOGIN"      'grep -qx "AUTOLOGIN=[01]" /etc/ergon/install.env'
 
 # Both kernels, so a bad one is a menu selection rather than a live USB.
 check "linux kernel present"         '[ -f /boot/vmlinuz-linux ]'
@@ -80,7 +110,7 @@ check "linux-lts kernel present"     '[ -f /boot/vmlinuz-linux-lts ]'
 # A stub can only answer from a fixture; whether the path is the one pacman
 # owns on a real Arch install is a question only this VM can settle.
 check "pacman owns the running kernel's modules" 'pacman -Qo "/usr/lib/modules/$(uname -r)/vmlinuz"'
-check "UEFI boot entry exists"       'efibootmgr | grep -qi grub'
+
 check "booted in UEFI mode"          '[ -d /sys/firmware/efi ]'
 
 # The repo has to BE here, because provisioning is the next thing that runs and

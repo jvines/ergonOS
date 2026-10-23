@@ -122,7 +122,9 @@ source /w/lib.exp
 # it finds, landed on the framebuffer, and every dmabuf import failed -- a
 # desktop that draws perfectly and composites nothing, with no error naming a
 # cause. Removing the default leaves the real GPU as card0.
-spawn qemu-system-x86_64 \
+proc boot_vm {} {
+  global spawn_id
+  spawn qemu-system-x86_64 \
   -accel kvm -cpu host -m $VM_RAM_MB -smp $VM_CPUS \
   -vga none \
   -global PIIX4_PM.disable_s3=1 \
@@ -135,6 +137,8 @@ spawn qemu-system-x86_64 \
   -virtfs local,path=/w/out,mount_tag=out,security_model=none \
   -nic user,model=virtio-net-pci \
   $GPU_CONSOLE -no-reboot
+}
+boot_vm
 
 unlock_and_login "$PASSPHRASE" "$VMHOST" "$USERNAME" "$USERPASS"
 
@@ -177,6 +181,72 @@ expect {
   timeout { puts "\n!! the desktop test went quiet for 1800s"; exit 1 }
 }
 
+
+# --- ERGON-123: the unlock screen, and straight into Hyprland ---------------
+# One more boot, of a one-shot entry that draws Plymouth's prompt on the
+# display (guest-autologin-arm.sh). The passphrase is typed on the emulated
+# keyboard through qemu's monitor, which the serial console multiplexes:
+# Ctrl-A c switches between them. Two screenshots come out of the monitor,
+# the unlock screen and the first desktop, into the writable out share.
+send "echo '$USERPASS' | sudo -S bash /mnt/test/arch-vm/guest-autologin-arm.sh\r"
+expect {
+  timeout { puts "\n!! could not arm the screenshot boot"; exit 1 }
+  "SHOT_ARMED=no" { puts "\n!! could not arm the screenshot boot"; exit 1 }
+  "SHOT_ARMED=yes" {}
+}
+send "echo '$USERPASS' | sudo -S poweroff\r"
+expect eof
+
+proc monitor {cmd} {
+  send "\001c"
+  expect {
+    timeout { puts "\n!! no qemu monitor" }
+    "(qemu)" {}
+  }
+  send "\$cmd\r"
+  expect {
+    timeout {}
+    "(qemu)" {}
+  }
+  send "\001c"
+  sleep 1
+}
+
+boot_vm
+set graphical 1
+expect {
+  timeout { puts "\n!! the screenshot boot never started cryptsetup"; exit 1 }
+  -nocase "passphrase" { set graphical 0 }
+  -re {Cryptography Setup for|cryptsetup@} {}
+}
+if {\$graphical} {
+  # Plymouth draws the prompt a moment after cryptsetup asks.
+  sleep 8
+  monitor "screendump -f png /w/out/e123-plymouth-prompt.png"
+  foreach c [split "$PASSPHRASE" ""] { monitor "sendkey \$c" }
+  sleep 2
+  monitor "screendump -f png /w/out/e123-plymouth-unlock.png"
+  monitor "sendkey ret"
+  puts "\n-- passphrase typed once, at the graphical prompt"
+} else {
+  puts "\n!! Plymouth asked on the serial line, not the display; typing it there"
+  send "$PASSPHRASE\r"
+}
+serial_shell "$VMHOST" "$USERNAME" "$USERPASS"
+send "echo '$USERPASS' | sudo -S mount -t 9p -o trans=virtio,version=9p2000.L,ro ergon /mnt && echo SHARE''_OK\r"
+expect {
+  timeout { puts "\n!! share failed on the screenshot boot"; exit 1 }
+  "SHARE_OK" {}
+}
+send "echo '$USERPASS' | sudo -S bash /mnt/test/arch-vm/guest-autologin.sh\r"
+expect {
+  timeout { puts "\n!! the autologin check timed out"; exit 1 }
+  "SHOT_NOW" {
+    monitor "screendump -f png /w/out/e123-first-desktop.png"
+    exp_continue
+  }
+  -re {AUTOLOGIN_RESULT=[0-9]+} {}
+}
 send "echo '$USERPASS' | sudo -S poweroff\r"
 expect eof
 EXPECT
@@ -194,7 +264,7 @@ EXPECT
 "${DOCKER[@]}" run --rm --device /dev/kvm $GPU_DOCKER \
   -v "$WORK:/w" -v "$ERGON:/ergon:ro" \
   "$IMAGE" expect -f /w/session.exp 2>&1 | tee "$WORK/session.log" \
-  | grep -E '^(   ok|   FAIL|   --   |   \.\.   |--- |!! )' || true
+  | grep -E '^(   ok|   FAIL|   --   |   \.\.   |--- |!! |-- passphrase)' || true
 
 say "result"
 if ! grep -q 'DESKTOP_RESULT=' "$WORK/session.log"; then
@@ -207,4 +277,14 @@ if [ "$n" -eq 0 ]; then
 else
   echo "   $n check(s) failed — see $WORK/session.log"
 fi
+# ERGON-123: the screenshot boot, after the desktop suite.
+if ! a=$(grep -ao 'AUTOLOGIN_RESULT=[0-9]*' "$WORK/session.log" | tail -1 | cut -d= -f2) || [ -z "$a" ]; then
+  echo "   FAIL the autologin boot never reported — see $WORK/session.log"; a=1
+elif [ "$a" -eq 0 ]; then
+  echo "   ok   one passphrase at Plymouth, then straight into Hyprland, no keyring prompt"
+else
+  echo "   $a autologin check(s) failed — see $WORK/session.log"
+fi
+ls "$WORK"/out/e123-*.png 2>/dev/null | sed 's/^/   screenshot: /' || true
+n=$(( n + a ))
 exit $(( n > 0 ))

@@ -1,24 +1,35 @@
 #!/usr/bin/env bash
 # Runs INSIDE the freshly installed system, from the ISO, before the first boot.
 #
-# Added by the test harness, never by arch-bootstrap.sh. GRUB renders to the EFI
-# console and the installed kernel logs to tty0, so without this a headless
-# second boot is completely silent: no menu, no kernel log, no login prompt, and
-# no way to tell a failed LUKS unlock from a hung kernel.
+# Added by the test harness, never by arch-bootstrap.sh. The boot menu renders
+# to the EFI console and the installed kernel logs to tty0, so without this a
+# headless second boot is completely silent: no menu, no kernel log, no login
+# prompt, and no way to tell a failed LUKS unlock from a hung kernel.
 #
 # A real laptop must NOT carry this — it pins a console that does not exist and
 # slows every boot waiting on it.
 set -euo pipefail
 
-sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="|GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0,115200n8 |' /etc/default/grub
-cat >> /etc/default/grub <<'EOF'
+if [ -f /etc/kernel/cmdline ]; then
+  # systemd-boot (ERGON-123). The cmdline is baked into the UKIs, so they are
+  # rebuilt. console=ttyS0 also makes Plymouth show its passphrase prompt on
+  # the serial line and read the answer from it. quiet goes, so systemd's
+  # status lines reach the console and the harness can see the boot progress;
+  # splash stays, so Plymouth is what asks.
+  _c=$(sed 's/\<quiet\>//; s/  */ /g; s/ $//' /etc/kernel/cmdline)
+  echo "$_c console=ttyS0,115200n8" > /etc/kernel/cmdline
+  cat /etc/kernel/cmdline
+  mkinitcpio -P >/dev/null
+else
+  sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="|GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0,115200n8 |' /etc/default/grub
+  cat >> /etc/default/grub <<'EOF2'
 
 # added by test/arch-vm — serial console for the headless VM test
 GRUB_TERMINAL="console serial"
 GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"
-EOF
-
-grub-mkconfig -o /boot/grub/grub.cfg
+EOF2
+  grub-mkconfig -o /boot/grub/grub.cfg
+fi
 systemctl enable serial-getty@ttyS0.service
 
 # Autologin on the serial console.

@@ -10,13 +10,14 @@ ones, generated from what is actually installed and bound right now.
 
 `snap-pac` hooks `pacman` directly, so every transaction — not just ones run
 through `ergon update` — gets a btrfs snapshot first, and two boots in a row
-that never reach the default target make GRUB boot the last snapshot that did,
-on its own. That fallback is not sticky: the next boot that reaches the
+that never reach the default target make the boot loader start the last
+snapshot that did, on its own. That fallback is not sticky: the next boot that reaches the
 desktop clears it again, so it buys you one boot to fix things in, not a
 standing rollback. `sudo ergon rollback N` makes one permanent, replacing `@`
 outright — `sudo ergon rollback --list` shows the candidates — but it refuses
-to run FROM `@` itself; boot the snapshot from the GRUB submenu, or the Arch
-ISO, first.
+to run FROM `@` itself; boot the snapshot from the boot menu (systemd-boot
+shows it for two seconds; older installs: the GRUB submenu), or the Arch ISO,
+first.
 
 That protects you from an update, not from the disk. A snapshot lives on the
 same device as the data it is a snapshot of, so a dead SSD takes all of them
@@ -26,6 +27,18 @@ deduplicated, restorable file by file — but it does nothing at all until
 sit inert until then. The one thing it cannot protect is its own key:
 `ergon backup key` prints it whenever you ask, and keeping the only copy on
 this laptop defeats the entire point.
+
+## One passphrase at boot, then the desktop
+
+The disk passphrase is the only thing typed at boot: Plymouth asks for it in
+the palette you use, and greetd then starts Hyprland for you (`AUTOLOGIN=1` in
+`hosts/<host>/host.env`, the installer's default). Logging out lands on the
+password greeter; the lock screen and `sudo` still ask for your password. The
+keyring Electron apps keep their secrets in has no password of its own, since
+nothing would type one: the disk encryption is what protects it. The boot menu
+(systemd-boot, two seconds) lists the recent snapshots and linux-lts.
+`ergon explain security` says what the unencrypted ESP holds; `ergon explain
+troubleshooting` how to change any of it.
 
 ## Bundles are what you asked for, and nothing you didn't
 

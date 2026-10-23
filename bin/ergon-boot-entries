@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# ergon:summary=Write the systemd-boot entries, one per recent snapshot
+# ergon:group=system
+# ergon:args=sync | list | install
+# ergon:help=native
+#
+# systemd-boot reads plain files on the ESP, and the ESP is the only thing it
+# can read: the root, and every snapshot in it, is inside LUKS. So a snapshot
+# is bootable only once its own kernel and initramfs are copied out to the ESP
+# and an entry names them. This is the part grub-btrfs did on GRUB machines.
+#
+#   sync      write the entries: the UKI ones, one per recent snapshot, and the
+#             boot guard's fallback; prune what no entry uses any more
+#   list      the entries on the ESP
+#   install   the path unit that runs sync whenever /.snapshots changes
+#
+# A snapshot boots its OWN kernel and initramfs: after a kernel update the
+# running kernel's modules are not in an older snapshot. Identical pairs are
+# stored once (EFI/ergon/snap/<key>/), since most snapshots share a kernel.
+# Only the newest ERGON_BOOT_SNAPSHOTS (8) get entries, so the ESP cannot fill.
+#
+# GRUB machines (installed before ERGON-123) are left alone: grub-btrfs does
+# this job there, and every command here says so and exits 0.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# shellcheck source=../lib/bootloader.sh
+. "$ERGON/lib/bootloader.sh"
+
+KEEP="${ERGON_BOOT_SNAPSHOTS:-8}"
+SNAPDIR="${ERGON_GUARD_SNAPDIR:-/.snapshots}"
+KERNEL=linux    # the snapshot entries boot the main kernel; lts has its own UKI
+
+ok()   { printf '   ok   %s\n' "$*"; }
+warn() { printf '   !!   %s\n' "$*" >&2; }
+die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
+
+case "${1:-}" in -h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+if [ "$(ergon_boot_layout)" != systemd-boot ]; then
+  echo "   this machine boots with GRUB; grub-btrfs keeps its snapshot entries"
+  exit 0
+fi
+
+ESP=$(ergon_esp) || die "no EFI partition mounted (looked at /efi, /boot/efi, /boot)"
+ENT="$ESP/loader/entries"
+STORE="$ESP/EFI/ergon/snap"
+GOOD="$ESP/EFI/ergon/known-good"     # the boot guard's last known-good snapshot
+
+# The entry file for an id, whatever boot counter its name carries
+# (ergon-linux+1-1.conf is still ergon-linux).
+entry_file() {
+  local f
+  for f in "$ENT/$1.conf" "$ENT/$1"+*.conf; do
+    [ -e "$f" ] && { printf '%s\n' "$f"; return 0; }
+  done
+  printf '%s/%s.conf\n' "$ENT" "$1"
+}
+
+# Write only when the content differs, so an unchanged sync does not touch FAT.
+put() {  # put <path> < content
+  local new; new=$(cat)
+  [ -f "$1" ] && [ "$(cat "$1")" = "$new" ] && return 0
+  printf '%s\n' "$new" > "$1.tmp" && mv -f "$1.tmp" "$1"
+}
+
+# The cmdline a snapshot boots with: this machine's, with root pinned to the
+# snapshot instead of @.
+snap_cmdline() {  # snap_cmdline <n>
+  local a out=()
+  for a in $(ergon_cmdline_get); do
+    case "$a" in rootflags=*) ;; *) out+=("$a") ;; esac
+  done
+  printf '%s rootflags=subvol=@snapshots/%s/snapshot\n' "${out[*]}" "$1"
+}
+
+info_field() {  # info_field <n> <tag>
+  sed -n "s:.*<$2>\(.*\)</$2>.*:\1:p" "$SNAPDIR/$1/info.xml" 2>/dev/null | head -1
+}
+
+# Copy a snapshot's kernel and initramfs to the ESP once per distinct pair.
+# Keyed on size and mtime: snapshots share these files by reflink and keep the
+# timestamps, so equal stats mean the same build. Prints the store dir name.
+stage() {  # stage <n>
+  local b="$SNAPDIR/$1/snapshot/boot" key need free
+  [ -f "$b/vmlinuz-$KERNEL" ] && [ -f "$b/initramfs-$KERNEL.img" ] || return 1
+  key=$(stat -c '%s-%Y' "$b/vmlinuz-$KERNEL" "$b/initramfs-$KERNEL.img" | md5sum | cut -c1-12)
+  if [ ! -f "$STORE/$key/initramfs.img" ]; then
+    need=$(( $(stat -c %s "$b/vmlinuz-$KERNEL") + $(stat -c %s "$b/initramfs-$KERNEL.img") ))
+    free=$(( $(stat -f -c '%a * %S' "$ESP") ))
+    # Leave room for a kernel update to rebuild both UKIs.
+    [ "$free" -gt $(( need + 256 * 1024 * 1024 )) ] || { warn "ESP too full for snapshot $1's kernel"; return 1; }
+    mkdir -p "$STORE/$key"
+    cp "$b/vmlinuz-$KERNEL" "$STORE/$key/vmlinuz.tmp" && mv "$STORE/$key/vmlinuz.tmp" "$STORE/$key/vmlinuz"
+    cp "$b/initramfs-$KERNEL.img" "$STORE/$key/initramfs.tmp" && mv "$STORE/$key/initramfs.tmp" "$STORE/$key/initramfs.img"
+  fi
+  printf '%s\n' "$key"
+}
+
+snapshots_newest_first() {
+  local d n
+  for d in "$SNAPDIR"/*/; do
+    n=${d%/}; n=${n##*/}
+    case $n in ''|*[!0-9]*) continue ;; esac
+    [ -d "$SNAPDIR/$n/snapshot" ] && printf '%s\n' "$n"
+  done | sort -rn
+}
+
+sync_once() {
+  mkdir -p "$ENT" "$STORE"
+  local f n key used=() wanted=() title date desc good=""
+
+  # The UKI entries. mkinitcpio writes the UKIs; their names never change, so
+  # a kernel update needs nothing here. sort-key orders the menu, and the
+  # first entry that is not marked bad is the default: linux, then the boot
+  # guard's fallback, then the snapshots, then linux-lts.
+  for k in linux linux-lts; do
+    [ -f "$ESP/EFI/ergon/$k.efi" ] || continue
+    if [ "$k" = linux ]; then title="ergonOS"; sk=ergon-1
+    else title="ergonOS (linux-lts, emergency kernel)"; sk=ergon-9; fi
+    put "$(entry_file "ergon-$k")" <<EOF
+title    $title
+sort-key $sk
+uki      /EFI/ergon/$k.efi
+EOF
+  done
+
+  # Snapshot entries, newest first.
+  [ -f "$GOOD" ] && good=$(tr -dc '0-9' < "$GOOD")
+  while read -r n; do
+    [ "${#wanted[@]}" -lt "$KEEP" ] || break
+    key=$(stage "$n") || continue
+    wanted+=("ergon-snapshot-$n.conf"); used+=("$key")
+    date=$(info_field "$n" date); desc=$(info_field "$n" description)
+    put "$ENT/ergon-snapshot-$n.conf" <<EOF
+title    ergonOS snapshot $n${date:+, $date}${desc:+ ($desc)}
+sort-key ergon-5
+version  $n
+linux    /EFI/ergon/snap/$key/vmlinuz
+initrd   /EFI/ergon/snap/$key/initramfs.img
+options  $(snap_cmdline "$n")
+EOF
+  done < <(snapshots_newest_first)
+
+  # The boot guard's fallback: the last known-good snapshot, whatever its age.
+  f=$(entry_file ergon-fallback)
+  if [ -n "$good" ] && key=$(stage "$good"); then
+    used+=("$key")
+    put "$f" <<EOF
+title    ergonOS, last known-good snapshot $good (automatic rollback)
+sort-key ergon-2
+linux    /EFI/ergon/snap/$key/vmlinuz
+initrd   /EFI/ergon/snap/$key/initramfs.img
+options  $(snap_cmdline "$good")
+EOF
+  else
+    rm -f "$f"
+  fi
+
+  # Prune entries for snapshots that are gone or too old, then kernels no
+  # entry uses.
+  for f in "$ENT"/ergon-snapshot-*.conf; do
+    [ -e "$f" ] || continue
+    case " ${wanted[*]} " in *" ${f##*/} "*) ;; *) rm -f "$f" ;; esac
+  done
+  for f in "$STORE"/*/; do
+    [ -d "$f" ] || continue
+    f=${f%/}
+    case " ${used[*]} " in *" ${f##*/} "*) ;; *) rm -rf "$f" ;; esac
+  done
+}
+
+case "${1:-list}" in
+sync)
+  ergon_esp_access || exec sudo "$0" "$@"
+  # snapper makes the directory first and fills it a moment later, and the
+  # path unit fires on the directory. Settle, then go again if /.snapshots
+  # moved while this ran.
+  [ "${2:-}" = --settle ] && sleep 3
+  for _ in 1 2 3; do
+    before=$(ls "$SNAPDIR" 2>/dev/null | tr '\n' ' ')
+    sync_once
+    [ "$(ls "$SNAPDIR" 2>/dev/null | tr '\n' ' ')" = "$before" ] && break
+    sleep 2
+  done
+  ok "boot entries: $(find "$ENT" -maxdepth 1 -name 'ergon-snapshot-*.conf' | wc -l) snapshot(s), $(find "$STORE" -mindepth 1 -maxdepth 1 -type d | wc -l) kernel(s) on the ESP"
+  ;;
+
+list)
+  ergon_esp_access || exec sudo "$0" "$@"   # the ESP is root-only (umask 0077)
+  for f in "$ENT"/*.conf; do
+    [ -e "$f" ] || continue
+    printf '   %-34s %s\n' "${f##*/}" "$(sed -n 's/^title *//p' "$f")"
+  done
+  ;;
+
+install)
+  ergon_esp_access || exec sudo "$0" "$@"
+  install -Dm644 /dev/stdin /etc/systemd/system/ergon-boot-entries.service <<EOF
+# Written by ergon-boot-entries.
+[Unit]
+Description=Write systemd-boot entries for the snapper snapshots
+ConditionPathIsDirectory=$SNAPDIR
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ergon-boot-entries sync --settle
+EOF
+  install -Dm644 /dev/stdin /etc/systemd/system/ergon-boot-entries.path <<EOF
+# Written by ergon-boot-entries. snapper and snap-pac create and delete
+# snapshots here; each change rewrites the boot menu.
+[Unit]
+Description=Watch the snapshots for the boot menu
+
+[Path]
+PathChanged=$SNAPDIR
+Unit=ergon-boot-entries.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  [ -e /usr/local/bin/ergon-boot-entries ] || ln -sfn "$ERGON/bin/ergon-boot-entries" /usr/local/bin/ergon-boot-entries
+  # The offline form, so this also works in arch-chroot.
+  systemctl enable ergon-boot-entries.path >/dev/null 2>&1 || die "could not enable ergon-boot-entries.path"
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload && systemctl restart ergon-boot-entries.path
+  fi
+  "$0" sync
+  ;;
+
+-h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) die "unknown command '$1' (sync|list|install)" ;;
+esac

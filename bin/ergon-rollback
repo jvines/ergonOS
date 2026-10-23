@@ -9,11 +9,11 @@
 # snapper rollback works by repointing the btrfs DEFAULT SUBVOLUME. That does
 # not work on this machine, and cannot be made to:
 #
-#   * grub-mkconfig's 10_linux detects root on a named subvolume and PREPENDS
-#     rootflags=subvol=@ to the kernel command line. Nothing in
-#     /etc/default/grub turns that off, and mounting via the default subvolume
-#     does not help -- grub-mkrelpath reports the subvolume's real path either
-#     way. So the kernel mounts @ no matter what the default points at.
+#   * the kernel command line pins rootflags=subvol=@. On systemd-boot
+#     installs arch-bootstrap.sh writes it into /etc/kernel/cmdline; on GRUB
+#     installs grub-mkconfig's 10_linux PREPENDS it by itself, and nothing in
+#     /etc/default/grub turns that off. Either way the kernel mounts @ no
+#     matter what the default points at.
 #   * even with the default set to @ and verified, snapper still refuses with
 #     "Cannot detect ambit since default subvolume is unknown".
 #
@@ -25,7 +25,7 @@
 # because @ becomes the restored content.
 #
 # This CANNOT run from @ itself -- you cannot replace the subvolume you are
-# running from. Boot a snapshot from the grub-btrfs submenu first, or boot the
+# running from. Boot a snapshot from the boot menu first, or boot the
 # Arch ISO. It refuses rather than half-finishing.
 set -euo pipefail
 
@@ -80,7 +80,7 @@ SNAP="$TOP/@snapshots/$TARGET/snapshot"
 # On the Arch ISO / is the archiso overlay, so this correctly allows the run.
 running_subvol=$(findmnt -no FSROOT / 2>/dev/null || echo unknown)
 if [ "$running_subvol" = "/@" ]; then
-  die "you are running FROM @ -- it cannot replace itself. Boot a snapshot from the grub-btrfs submenu, or the Arch ISO, then re-run."
+  die "you are running FROM @ -- it cannot replace itself. Boot a snapshot from the boot menu, or the Arch ISO, then re-run."
 fi
 
 STAMP=$(date -u +%Y%m%d-%H%M%S)

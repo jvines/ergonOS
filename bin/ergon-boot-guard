@@ -4,32 +4,40 @@
 # ergon:args=install | ok | status | disable
 # ergon:help=native
 #
-# Snapshots are bootable already (grub-btrfs) and ergon-rollback can make one
-# permanent. Both need someone who knows that, at a GRUB menu, on a machine that
-# has just failed to boot. This closes the gap: two boots that never reach the
-# default target, and the third boots the last snapshot that did.
+# Snapshots are bootable already (the boot menu lists them) and ergon-rollback
+# can make one permanent. Both need someone who knows that, at a boot menu, on
+# a machine that has just failed to boot. This closes the gap: two boots that
+# never reach the default target, and the third boots the last snapshot that
+# did.
 #
-#   install   put the counter on the EFI partition, the snippet in /etc/grub.d,
-#             the success unit in systemd, and rebuild grub.cfg
+#   install   arm the counter, the fallback entry and the success unit
 #   ok        run by ergon-boot-ok.service once the default target is reached:
-#             clears the counter and records the newest snapshot as known-good
+#             re-arms the counter and records the newest snapshot as known-good
 #   status    the counter, the known-good snapshot, what / is mounted from
 #   disable   remove all of it
 #
-# The counter lives in a grubenv ON THE EFI PARTITION because GRUB has to write
-# it before the kernel runs. /boot here is inside LUKS, where GRUB writing is
-# undocumented even upstream; FAT it writes without question.
+# Two layouts (lib/bootloader.sh):
 #
-# The GRUB side is two files, and the numbers matter: grub/09_ergon_boot_counter
-# runs the counter BEFORE the normal entries, and grub/99_ergon_boot_fallback
-# adds the fallback entry AFTER them. In one file the entry came out first, which
-# makes it entry 0 -- the one GRUB boots by default, every time.
+#   systemd-boot  (installs from ERGON-123) the counter is systemd-boot's own
+#                 boot counting: the main entry is ergon-linux+2.conf, the
+#                 loader renames it +1-1, then +0-2, and an entry with no tries
+#                 left sorts last, so the fallback entry (sort-key ergon-2,
+#                 written by ergon-boot-entries) becomes the default. The
+#                 known-good number is EFI/ergon/known-good on the ESP.
+#                 systemd-bless-boot is masked: it would mark a boot good long
+#                 before the default target, and drop the counter for good.
+#   grub          (older installs) a counter in a grubenv on the EFI partition,
+#                 written by grub/09_ergon_boot_counter, and a fallback entry
+#                 from grub/99_ergon_boot_fallback. Two files because in one the
+#                 entry came out first, which makes it the default every time.
 #
-# Falling back is never sticky: a successful boot of the snapshot clears the
+# Falling back is never sticky: a successful boot of the snapshot re-arms the
 # counter too, and says how to keep it or how to go back.
 set -euo pipefail
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# shellcheck source=../lib/bootloader.sh
+. "$ERGON/lib/bootloader.sh"
 COUNTER_SRC="$ERGON/grub/09_ergon_boot_counter"
 FALLBACK_SRC="$ERGON/grub/99_ergon_boot_fallback"
 COUNTER=/etc/grub.d/09_ergon_boot_counter
@@ -41,19 +49,12 @@ OLD_SNIPPET=/etc/grub.d/09_ergon_boot_guard
 UNIT=/etc/systemd/system/ergon-boot-ok.service
 TRIES="${ERGON_GUARD_TRIES:-2}"
 SNAPDIR="${ERGON_GUARD_SNAPDIR:-/.snapshots}"
+LAYOUT=$(ergon_boot_layout)
 
 ok()   { printf '   ok   %s\n' "$*"; }
 warn() { printf '   !!   %s\n' "$*" >&2; }
 die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
 
-_esp() {
-  local m
-  for m in /efi /boot/efi /boot; do
-    [ "$(findmnt -no FSTYPE "$m" 2>/dev/null)" = vfat ] || continue
-    printf '%s\n' "$m"; return 0
-  done
-  return 1
-}
 _envfile() { printf '%s/EFI/ergon/grubenv\n' "$1"; }
 _fsroot()  { findmnt -no FSROOT / 2>/dev/null; }
 _on_snapshot() { case "$(_fsroot)" in /@snapshots/*) return 0 ;; *) return 1 ;; esac; }
@@ -76,15 +77,87 @@ _get() {  # _get <envfile> <key>
   grub-editenv "$1" list 2>/dev/null | sed -n "s/^$2=//p" | head -1
 }
 
+# --- systemd-boot ------------------------------------------------------------
+# The main entry, whatever counter its name carries.
+_sd_main() {
+  local f
+  for f in "$ESP/loader/entries/ergon-linux.conf" "$ESP/loader/entries/ergon-linux"+*.conf; do
+    [ -e "$f" ] && { printf '%s\n' "$f"; return 0; }
+  done
+  return 1
+}
+_sd_tries() {  # tries left, from the name; "off" when it carries no counter
+  local f; f=$(_sd_main) || { echo none; return; }
+  case "${f##*/}" in
+    ergon-linux+*.conf) f=${f##*+}; f=${f%.conf}; echo "${f%%-*}" ;;
+    *) echo off ;;
+  esac
+}
+_sd_arm() {  # rename the main entry to carry a fresh counter
+  local f new
+  f=$(_sd_main) || die "no ergon-linux entry on the ESP (ergon-boot-entries sync)"
+  new="$ESP/loader/entries/ergon-linux+$TRIES.conf"
+  [ "$f" = "$new" ] || sudo mv "$f" "$new"
+}
+_sd_good() { tr -dc '0-9' < "$ESP/EFI/ergon/known-good" 2>/dev/null || true; }
+_sd_record() {  # _sd_record <snapshot>
+  printf '%s\n' "$1" | sudo tee "$ESP/EFI/ergon/known-good" >/dev/null
+  sudo "$ERGON/bin/ergon-boot-entries" sync >/dev/null
+}
+
+_write_unit() {  # _write_unit <condition path>
+  sudo install -Dm644 /dev/stdin "$UNIT" <<UNITF
+# Written by ergon-boot-guard. Marks this boot good once the machine reaches the
+# target it boots to, which is what re-arms the boot counter.
+[Unit]
+Description=Mark this boot as good (ergon boot guard)
+After=default.target
+ConditionPathExists=$1
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$ERGON/bin/ergon-boot-guard ok
+
+[Install]
+WantedBy=default.target
+UNITF
+  sudo systemctl daemon-reload
+  sudo systemctl enable ergon-boot-ok.service >/dev/null
+}
+
+case "${1:-status}" in -h|--help|help) ;; *)
+  [ "$LAYOUT" != none ] || { echo "   no systemd-boot or GRUB configuration here; the boot guard does not apply"; exit 0; }
+  # The ESP is root-only on systemd-boot installs (umask 0077): even reading
+  # the counter in an entry's name needs root.
+  if [ "$LAYOUT" = systemd-boot ] && ! ergon_esp_access; then exec sudo "$0" "$@"; fi ;;
+esac
+
 case "${1:-status}" in
 
 install)
-  for f in "$COUNTER_SRC" "$FALLBACK_SRC"; do [ -f "$f" ] || die "missing $f"; done
-  ESP=$(_esp) || die "no EFI partition mounted (looked at /efi, /boot/efi, /boot)"
-  ESPUUID=$(findmnt -no UUID "$ESP")
-  [ -n "$ESPUUID" ] || die "could not read $ESP's UUID"
+  ESP=$(ergon_esp) || die "no EFI partition mounted (looked at /efi, /boot/efi, /boot)"
   [ "$(findmnt -no FSTYPE /)" = btrfs ] || die "/ is not btrfs; this needs the snapshot layout"
   [ -d "$SNAPDIR" ] || die "no $SNAPDIR; this needs snapper's layout"
+
+  if [ "$LAYOUT" = systemd-boot ]; then
+    sudo "$ERGON/bin/ergon-boot-entries" sync >/dev/null
+    _sd_arm
+    # It would bless the boot at boot-complete.target, before the default
+    # target is known to be up, and take the counter off the entry.
+    sudo systemctl mask systemd-bless-boot.service >/dev/null 2>&1 || true
+    _write_unit "$ESP/loader/entries"
+    if [ -z "$(_sd_good)" ] && ! _on_snapshot && snap=$(_newest_snapshot); then
+      _sd_record "$snap"
+    fi
+    [ "$(_sd_tries)" = "$TRIES" ] || die "the main entry does not carry the counter"
+    ok "boot guard: after $TRIES failed boots, the last known-good snapshot boots instead"
+    exit 0
+  fi
+
+  for f in "$COUNTER_SRC" "$FALLBACK_SRC"; do [ -f "$f" ] || die "missing $f"; done
+  ESPUUID=$(findmnt -no UUID "$ESP")
+  [ -n "$ESPUUID" ] || die "could not read $ESP's UUID"
   command -v grub-editenv >/dev/null || die "grub-editenv is not installed"
 
   ENVF=$(_envfile "$ESP")
@@ -97,24 +170,7 @@ install)
   sudo rm -f "$OLD_SNIPPET"
   sudo install -Dm755 "$COUNTER_SRC" "$COUNTER"
   sudo install -Dm755 "$FALLBACK_SRC" "$FALLBACK"
-  sudo install -Dm644 /dev/stdin "$UNIT" <<UNITF
-# Written by ergon-boot-guard. Marks this boot good once the machine reaches the
-# target it boots to, which is what clears the counter GRUB decremented.
-[Unit]
-Description=Mark this boot as good (ergon boot guard)
-After=default.target
-ConditionPathExists=$COUNTER
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=$ERGON/bin/ergon-boot-guard ok
-
-[Install]
-WantedBy=default.target
-UNITF
-  sudo systemctl daemon-reload
-  sudo systemctl enable ergon-boot-ok.service >/dev/null
+  _write_unit "$COUNTER"
   sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 \
     || die "grub-mkconfig failed; the snippets are in place but grub.cfg was not rebuilt"
   # The whole mechanism is this entry existing. Assert it rather than trusting
@@ -124,9 +180,13 @@ UNITF
   ;;
 
 ok)
-  ESP=$(_esp) || exit 0
-  ENVF=$(_envfile "$ESP")
-  [ -f "$ENVF" ] || exit 0
+  ESP=$(ergon_esp) || exit 0
+  if [ "$LAYOUT" = systemd-boot ]; then
+    _sd_main >/dev/null || exit 0
+  else
+    ENVF=$(_envfile "$ESP")
+    [ -f "$ENVF" ] || exit 0
+  fi
 
   # systemd running this unit does NOT mean the boot worked. `After=` only
   # orders it: when the default target fails, its job fails but this one still
@@ -147,27 +207,69 @@ ok)
     exit 0
   fi
 
-  sudo grub-editenv "$ENVF" set ergon_tries="$TRIES"
-  sudo grub-editenv "$ENVF" unset ergon_fell_back 2>/dev/null || true
+  if [ "$LAYOUT" = systemd-boot ]; then
+    _sd_arm
+  else
+    sudo grub-editenv "$ENVF" set ergon_tries="$TRIES"
+    sudo grub-editenv "$ENVF" unset ergon_fell_back 2>/dev/null || true
+  fi
   if _on_snapshot; then
-    # This boot came FROM the fallback. Clear the counter so the machine is not
-    # stuck here, but leave the known-good marker alone: a snapshot booted in
-    # anger is the old good state, not a new one.
+    # This boot came FROM the fallback. Re-arm the counter so the machine is
+    # not stuck here, but leave the known-good marker alone: a snapshot booted
+    # in anger is the old good state, not a new one.
     warn "this is the last known-good snapshot (number $(_snapnum)), booted automatically after failed boots"
     warn "keep it:      sudo ergon-rollback $(_snapnum)"
     warn "or reboot to try the normal system again"
     exit 0
   fi
   snap=$(_newest_snapshot || true)
-  [ -z "${snap:-}" ] || sudo grub-editenv "$ENVF" set ergon_good_snapshot="$snap"
+  [ -n "${snap:-}" ] || exit 0
+  if [ "$LAYOUT" = systemd-boot ]; then
+    _sd_record "$snap"
+  else
+    sudo grub-editenv "$ENVF" set ergon_good_snapshot="$snap"
+  fi
+  ;;
+
+# record <n>: set the known-good snapshot and re-arm the counter, without the
+# health check ok makes. For bin/test-boot-guard.sh, which arms its test on a
+# boot that may have inherited a break.
+record)
+  [ -n "${2:-}" ] || die "usage: ergon-boot-guard record <snapshot>"
+  ESP=$(ergon_esp) || die "no EFI partition mounted"
+  if [ "$LAYOUT" = systemd-boot ]; then
+    _sd_record "$2"; _sd_arm
+  else
+    ENVF=$(_envfile "$ESP")
+    sudo grub-editenv "$ENVF" set ergon_good_snapshot="$2"
+    sudo grub-editenv "$ENVF" set ergon_tries="$TRIES"
+  fi
+  ;;
+
+# get tries|good: one value, for scripts.
+get)
+  ESP=$(ergon_esp) || die "no EFI partition mounted"
+  case "${2:-}" in
+    tries) if [ "$LAYOUT" = systemd-boot ]; then _sd_tries; else _get "$(_envfile "$ESP")" ergon_tries; fi ;;
+    good)  if [ "$LAYOUT" = systemd-boot ]; then _sd_good; else _get "$(_envfile "$ESP")" ergon_good_snapshot; fi ;;
+    *) die "usage: ergon-boot-guard get tries|good" ;;
+  esac
   ;;
 
 status)
-  ESP=$(_esp) || die "no EFI partition mounted"
-  ENVF=$(_envfile "$ESP")
-  { [ -f "$COUNTER" ] && [ -f "$FALLBACK" ] && [ -f "$ENVF" ]; } || die "boot guard is not installed (ergon-boot-guard install)"
-  printf '   tries left before fallback:  %s\n' "$(_get "$ENVF" ergon_tries)"
-  printf '   known-good snapshot:         %s\n' "$(_get "$ENVF" ergon_good_snapshot)"
+  ESP=$(ergon_esp) || die "no EFI partition mounted"
+  if [ "$LAYOUT" = systemd-boot ]; then
+    [ -f "$UNIT" ] || die "boot guard is not installed (ergon-boot-guard install)"
+    printf '   bootloader:                  systemd-boot\n'
+    printf '   tries left before fallback:  %s\n' "$(_sd_tries)"
+    printf '   known-good snapshot:         %s\n' "$(_sd_good)"
+  else
+    ENVF=$(_envfile "$ESP")
+    { [ -f "$COUNTER" ] && [ -f "$FALLBACK" ] && [ -f "$ENVF" ]; } || die "boot guard is not installed (ergon-boot-guard install)"
+    printf '   bootloader:                  GRUB\n'
+    printf '   tries left before fallback:  %s\n' "$(_get "$ENVF" ergon_tries)"
+    printf '   known-good snapshot:         %s\n' "$(_get "$ENVF" ergon_good_snapshot)"
+  fi
   printf '   / is mounted from:           %s\n' "$(_fsroot)"
   if _on_snapshot; then
     warn "running the fallback snapshot: ergon-rollback $(_snapnum) keeps it, a reboot retries the normal system"
@@ -177,20 +279,38 @@ status)
   if systemctl is-enabled ergon-boot-ok.service >/dev/null 2>&1; then
     ok "ergon-boot-ok.service is enabled"
   else
-    warn "ergon-boot-ok.service is not enabled, so nothing clears the counter"
+    warn "ergon-boot-ok.service is not enabled, so nothing re-arms the counter"
   fi
-  grep -q 'ergon-fallback' /boot/grub/grub.cfg 2>/dev/null \
-    && ok "the fallback entry is in grub.cfg" || warn "no fallback entry in grub.cfg (grub-mkconfig?)"
+  if [ "$LAYOUT" = systemd-boot ]; then
+    [ -f "$ESP/loader/entries/ergon-fallback.conf" ] \
+      && ok "the fallback entry is on the ESP" || warn "no fallback entry on the ESP yet (no known-good snapshot)"
+  else
+    grep -q 'ergon-fallback' /boot/grub/grub.cfg 2>/dev/null \
+      && ok "the fallback entry is in grub.cfg" || warn "no fallback entry in grub.cfg (grub-mkconfig?)"
+  fi
   ;;
 
 disable)
   sudo systemctl disable --now ergon-boot-ok.service >/dev/null 2>&1 || true
-  sudo rm -f "$COUNTER" "$FALLBACK" "$OLD_SNIPPET" "$UNIT"
-  sudo systemctl daemon-reload 2>/dev/null || true
-  sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || warn "grub-mkconfig failed"
-  ok "boot guard removed (the grubenv on the EFI partition is left alone)"
+  sudo rm -f "$UNIT"
+  if [ "$LAYOUT" = systemd-boot ]; then
+    ESP=$(ergon_esp) || die "no EFI partition mounted"
+    if f=$(_sd_main) && [ "$f" != "$ESP/loader/entries/ergon-linux.conf" ]; then
+      sudo mv "$f" "$ESP/loader/entries/ergon-linux.conf"
+    fi
+    sudo rm -f "$ESP/EFI/ergon/known-good"
+    sudo systemctl unmask systemd-bless-boot.service >/dev/null 2>&1 || true
+    sudo "$ERGON/bin/ergon-boot-entries" sync >/dev/null || true
+    sudo systemctl daemon-reload 2>/dev/null || true
+    ok "boot guard removed"
+  else
+    sudo rm -f "$COUNTER" "$FALLBACK" "$OLD_SNIPPET"
+    sudo systemctl daemon-reload 2>/dev/null || true
+    sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || warn "grub-mkconfig failed"
+    ok "boot guard removed (the grubenv on the EFI partition is left alone)"
+  fi
   ;;
 
--h|--help|help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' ;;
-*) die "unknown command '$1' (install|ok|status|disable)" ;;
+-h|--help|help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) die "unknown command '$1' (install|ok|record|get|status|disable)" ;;
 esac
