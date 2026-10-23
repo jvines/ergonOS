@@ -5,8 +5,9 @@
 #
 # A background is EITHER an image file or a generated gradient, and both are
 # first-class. The generated one is derived from the active palette -- the same
-# ramp as every plot this machine makes -- and is what a fresh install shows,
-# because it needs no image and is correct at any resolution.
+# ramp as every plot this machine makes -- and is the fallback: it needs no image
+# and is correct at any resolution. A fresh install shows the approved
+# background flame-0 instead (ERGON-127) whenever that image exists.
 #
 # Images are looked for in, first match wins per directory, all of them merged:
 #
@@ -196,8 +197,23 @@ if [ -d "$_hypr_walls" ]; then
   done < <(find -L "$_hypr_walls" -maxdepth 1 -type f -iname 'wall*.png' 2>/dev/null | sort)
 fi
 
+# What a machine shows before anyone has chosen (ERGON-127): the approved
+# background flame-0, in this palette, when its image exists -- and the
+# gradient only when it does not (offline install, field not fetched yet). No
+# state file is the whole test for "before anyone has chosen".
+DEFAULT_BG=flame-0
+default_bg() {
+  local _k
+  for _k in "${CANDIDATES[@]}"; do
+    [ "$_k" = "$GENERATED" ] && continue
+    [ "${_k##*/}" = "$DEFAULT_BG.png" ] && { printf '%s\n' "$_k"; return; }
+  done
+  printf '%s\n' "$GENERATED"
+}
+current_bg() { if [ -f "$BG_STATE" ]; then cat "$BG_STATE"; else default_bg; fi; }
+
 if [ "$ACTION" = list ]; then
-  _cur=$( [ -f "$BG_STATE" ] && cat "$BG_STATE" || echo "$GENERATED" )
+  _cur=$(current_bg)
   for _c in "${CANDIDATES[@]}"; do
     _label=$( [ "$_c" = "$GENERATED" ] && echo "generated (from $_pal_name)" || echo "$_c" )
     [ "$_c" = "$_cur" ] && printf '   * %s\n' "$_label" || printf '     %s\n' "$_label"
@@ -217,7 +233,8 @@ if command -v flock >/dev/null 2>&1; then
 fi
 
 # What is wanted, before it is checked for existence.
-_cur=$( [ -f "$BG_STATE" ] && cat "$BG_STATE" || echo "$GENERATED" )
+_cur=$(current_bg)
+KEEP_CHOICE=0       # 1: show the gradient for now but do not forget the choice
 case "$ACTION" in
   set)       WANT="$SETFILE"
              [ -f "$WANT" ] || { echo "no such file: $WANT" >&2; exit 1; } ;;
@@ -273,12 +290,34 @@ case "$ACTION" in
           [ "${_k##*/}" = "$_base" ] && { WANT="$_k"; break; }
         done
       fi
-      [ -n "$WANT" ] || WANT="$GENERATED"
+      if [ -z "$WANT" ]; then
+        WANT="$GENERATED"
+        # The choice was a background that is not coloured for THIS palette YET.
+        # ergon-theme starts the recolour and calls us at once, so the image
+        # does not exist for the first second or so. Forgetting the choice here
+        # is what turned "switch palette" into "lose my background": the
+        # recolour that follows read the state file, found the gradient, and
+        # had nothing to put back. Keep it when a prepared field says the
+        # recolour is coming; a deleted image has none and still falls back.
+        _stem=${_cur##*/}; _stem=${_stem%.*}
+        if [ "$_cur" != "$GENERATED" ] && \
+           [ -s "${XDG_DATA_HOME:-$HOME/.local/share}/ergon/prepared/$_stem.npz" ]; then
+          KEEP_CHOICE=1
+        fi
+      fi
     fi ;;
 esac
 
+# Not written when the gradient is only standing in: either nobody has chosen
+# yet and flame-0 is not here (the choice then stays open, so the first login
+# after the fetch lands on flame-0), or the chosen image is being recoloured.
+# Anything chosen, or defaulted to for real, is written so it sticks.
 mkdir -p "$(dirname "$BG_STATE")"
-printf '%s\n' "$WANT" > "$BG_STATE"
+if [ "$KEEP_CHOICE" = 1 ] || { [ ! -f "$BG_STATE" ] && [ "$ACTION" = show ] && [ "$WANT" = "$GENERATED" ]; }; then
+  :
+else
+  printf '%s\n' "$WANT" > "$BG_STATE"
+fi
 
 # The chosen image stays the SOURCE of record here -- the state file names it,
 # not a scaled copy. What hyprpaper is actually handed is decided further down,
@@ -477,6 +516,31 @@ if [ "$ACTIVE" != "$OUT" ] && command -v magick >/dev/null 2>&1; then
       SHOWN="$ACTIVE"
     fi
   fi
+fi
+
+# The lock screen shows the wallpaper (ERGON-127), BLURRED, from this image and
+# never from a screenshot of the desktop. hyprlock reads a fixed path
+# (hypr/hyprlock.conf.in), and this keeps that path pointing at whatever is on
+# screen now, so the lock screen follows both a wallpaper change and a palette
+# switch. A symlink to the panel-sized file when that is a PNG; hyprlock picks
+# its decoder by extension, so anything else is converted once.
+LOCK_IMG="$(dirname "$OUT")/lock-background.png"
+case "$SHOWN" in
+  *.png|*.PNG) ln -sfn "$SHOWN" "$LOCK_IMG.new.$$" && mv -Tf "$LOCK_IMG.new.$$" "$LOCK_IMG" ;;
+  *) if command -v magick >/dev/null 2>&1 \
+        && magick "$SHOWN" "${LOCK_IMG%.png}.new.$$.png" 2>/dev/null; then
+       mv -f "${LOCK_IMG%.png}.new.$$.png" "$LOCK_IMG"
+     else
+       rm -f "${LOCK_IMG%.png}.new.$$.png"
+       echo "  could not point the lock screen at $SHOWN" >&2
+     fi ;;
+esac
+
+# Install time has no compositor to draw on. The choice (state file) and the
+# lock-screen image are settled by now; drawing is the session's job.
+if [ "${ERGON_WALLPAPER_NO_APPLY:-0}" = 1 ]; then
+  echo "  chosen: $SHOWN (drawn at the next session)"
+  exit 0
 fi
 
 # A config with ABSOLUTE paths, written next to the image, and hyprpaper started

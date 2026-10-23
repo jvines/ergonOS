@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Compute wallpapers from simulations, in the active palette
 # ergon:group=theme
-# ergon:args=[--list | --all | --recolour | --fetch | GENERATOR [SEED]]
+# ergon:args=[--list | --all | --recolour | --fetch | --ensure | --current | GENERATOR [SEED]]
 #
 # Wallpapers this machine computes for itself, rather than photographs it is
 # not licensed to redistribute.
@@ -117,9 +117,28 @@ elif command -v hyprctl >/dev/null 2>&1 \
   fi
   echo "  panel ${_panel}, rendering at $SIZE for downsampling"
 else
-  # No compositor to ask -- provisioning over ssh, or a first run before the
-  # session exists. 16:10, because that is what this OS's reference machine is.
-  SIZE="${LONG_EDGE}x$(( LONG_EDGE * 10 / 16 ))"
+  # No compositor to ask -- provisioning over ssh, install.sh before the first
+  # login. The connected output's preferred mode, from the kernel (ERGON-127):
+  # install time now colours the backgrounds, and a prepared cache baked at a
+  # guessed 4K would make every later palette switch colour 9.2M pixels to show
+  # a laptop's 3.4M. ERGON_DRM_DIR is for tests.
+  _panel=""
+  for _c in "${ERGON_DRM_DIR:-/sys/class/drm}"/*/; do
+    [ "$(cat "${_c}status" 2>/dev/null)" = connected ] || continue
+    _m=$(head -1 "${_c}modes" 2>/dev/null || true)
+    case "$_m" in [0-9]*x[0-9]*) ;; *) continue ;; esac
+    _m=${_m%%[!0-9x]*}
+    if [ -z "$_panel" ] || [ $(( ${_m%x*} * ${_m#*x} )) -gt $(( ${_panel%x*} * ${_panel#*x} )) ]; then _panel=$_m; fi
+  done
+  if [ -n "$_panel" ]; then
+    PANEL="$_panel"
+    _pw=${_panel%x*}; _ph=${_panel#*x}
+    if [ "$_pw" -ge "$LONG_EDGE" ]; then SIZE="$_panel"; else SIZE="${LONG_EDGE}x$(( LONG_EDGE * _ph / _pw ))"; fi
+  else
+    # Nothing to ask at all. 16:10, because that is what this OS's reference
+    # machine is.
+    SIZE="${LONG_EDGE}x$(( LONG_EDGE * 10 / 16 ))"
+  fi
 fi
 
 _render() {
@@ -341,6 +360,13 @@ _recolour_once() {
      && command -v ergon-wallpaper >/dev/null 2>&1; then
     ergon-wallpaper --set "$OUTDIR/$prev" >/dev/null 2>&1 || true
   fi
+
+  # Nobody has chosen a background yet and flame-0 has just been coloured: this
+  # is the moment the first-boot default (ERGON-127) becomes showable.
+  if [ ! -f "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/background" ] && [ -s "$OUTDIR/flame-0.png" ] \
+     && _is_on_screen_palette && command -v ergon-wallpaper >/dev/null 2>&1; then
+    ergon-wallpaper >/dev/null 2>&1 || true
+  fi
 }
 
 # The APPROVED backgrounds, fetched as fields (ERGON-74).
@@ -391,12 +417,62 @@ _fetch() {
     fi
   done < "$MANIFEST"
   echo "  approved backgrounds: $got fetched, $have already here, $bad failed"
-  if [ -n "$PANEL" ]; then
-    _recolour
-  elif [ "$got" -gt 0 ]; then
-    echo "  coloured at the next login, at the panel's size"
+  # Colour for the ACTIVE palette now, so the PNGs exist before the first login
+  # (ERGON-127). The panel is the compositor's when there is one and the
+  # kernel's connected output when there is not (see PANEL above).
+  _recolour
+  if [ "$bad" -ne 0 ]; then
+    echo "  !! $bad of the approved backgrounds are MISSING: the network or the release failed." >&2
+    echo "  !! the desktop works without them; the next login (or: ergon-wallpaper-gen --fetch) retries." >&2
+    return 1
   fi
-  [ "$bad" -eq 0 ]
+  return 0
+}
+
+# Which of the approved fields are not here (by name; the sha256 is --fetch's
+# job). A login-time question, so it reads no file.
+_missing_fields() {
+  local file _rest stem n=0
+  [ -f "$MANIFEST" ] || { echo 0; return; }
+  while IFS=$'\t' read -r file _rest; do
+    case "$file" in ''|'#'*) continue ;; esac
+    stem=${file%-*}
+    if [ -n "${ERGON_BACKGROUNDS_ONLY:-}" ]; then
+      case " $ERGON_BACKGROUNDS_ONLY " in *" $stem "*) ;; *) continue ;; esac
+    fi
+    [ -s "$FIELDDIR/$file" ] || n=$((n + 1))
+  done < "$MANIFEST"
+  echo "$n"
+}
+
+# Login: fetch what an offline install could not (blocking nothing -- autostart
+# runs this detached), then recolour. Quiet and cheap when everything is here.
+_ensure() {
+  local m
+  m=$(_missing_fields)
+  if [ "$m" -gt 0 ]; then
+    echo "  $m approved field(s) missing; fetching"
+    _fetch
+  else
+    _recolour
+  fi
+}
+
+# ONLY the background on screen, in the active palette, with no lock: what a
+# palette switch needs before it redraws, so the switch lands on the SAME
+# background in the new palette instead of the gradient while the full pass
+# runs. Needs the prepared field (baked by any earlier recolour).
+_recolour_current() {
+  local want
+  want=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/background" 2>/dev/null || true)
+  case "$want" in */*) want=$(basename "$want" .png) ;; *) return 0 ;; esac
+  local prep="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/prepared"
+  [ -s "$prep/$want.npz" ] || return 0
+  mkdir -p "$OUTDIR"
+  "$PY" "$GENDIR/recolour.py" --palette "$PALETTE" --cache "$prep" --out "$OUTDIR" \
+    --only "$want" >/dev/null 2>&1 || true
+  [ -s "$OUTDIR/$want.png" ] && echo "  $OUTDIR/$want.png"
+  return 0
 }
 
 case "${1:---list}" in
@@ -405,6 +481,12 @@ case "${1:---list}" in
     ;;
   --fetch)
     _fetch
+    ;;
+  --ensure)
+    _ensure
+    ;;
+  --current)
+    _recolour_current
     ;;
   --list)
     echo "  generators (palette: $PAL_NAME, size: $SIZE)"

@@ -32,8 +32,8 @@ U=$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)
 H=$(getent passwd "$U" | cut -d: -f6)
 # The one approved background install.sh fetches here (ERGON-74). The whole set
 # is about a gigabyte, and this proves the path -- manifest, release, sha256,
-# the session's recolour -- not GitHub's bandwidth. julia-1: the smallest.
-BG_PROBE=julia-1
+# the session's recolour -- not GitHub's bandwidth. flame-0: the first-boot default (ERGON-127), so the first session can be asserted to show it.
+BG_PROBE=flame-0
 
 # A WRITABLE copy of the repo. The 9p share is read-only, and provision-arch.sh
 # writes into $ERGON -- it scaffolds hosts/<hostname>/ from the template. On a
@@ -2275,6 +2275,51 @@ done
 W="$(getent passwd "$(awk -F: '$3 == 1000 { print $1; exit }' /etc/passwd)" | cut -d: -f6)/.local/share/ergon/wallpaper.png"
 [ -s "$W" ] && ok "wallpaper generated ($(du -h "$W" | cut -f1))" \
             || bad "no wallpaper at $W — hyprpaper will exit and the desktop falls back to a flat colour"
+
+# --- what the desktop DISPLAYS (ERGON-127) --------------------------------
+# Behaviour, not strings: which file the wallpaper process was handed, whether
+# it is the approved flame-0 coloured for the active palette, and whether the
+# lock screen's configured image resolves to that same file.
+bgstate() { cat "$H/.local/state/ergon/background" 2>/dev/null; }
+bgapplied() { cat "$H/.local/state/ergon/background.applied" 2>/dev/null; }
+daemon_has() {
+  pgrep -a swaybg 2>/dev/null | grep -qF -- " $1 " && return 0
+  pgrep -a swaybg 2>/dev/null | grep -qF -- " $1" && return 0
+  hq hyprpaper listactive 2>/dev/null | grep -qF -- "$1"
+}
+lock_image() {
+  local p; p=$(sed -n 's/^ *path = //p' "$H/.config/hypr/hyprlock.conf" 2>/dev/null | head -1)
+  p=${p/#\~/$H}; readlink -f "$p" 2>/dev/null
+}
+# $1 palette, $2 what to call the moment
+assert_flame() {
+  local pal=$1 what=$2 want="$H/.local/share/ergon/backgrounds/$1/flame-0.png" i
+  for i in $(seq 40); do [ "$(bgapplied)" = "$want" ] && break; sleep 1; done
+  [ "$(bgstate)" = "$want" ] \
+    && ok "$what: the chosen background is flame-0 for $pal" \
+    || bad "$what: the chosen background is '$(bgstate)', not $want"
+  [ "$(bgapplied)" = "$want" ] && daemon_has "$want" \
+    && ok "  and that file is what the wallpaper process is showing" \
+    || bad "  the wallpaper process is not showing $want (applied: '$(bgapplied)'; $(pgrep -a 'swaybg|hyprpaper' | tr '\n' ';'))"
+  [ -s "$want" ] && [ "$(lock_image)" = "$(readlink -f "$want")" ] \
+    && ok "  and hyprlock's configured image resolves to the same file" \
+    || bad "  hyprlock's image resolves to '$(lock_image)', not $want"
+}
+# Best-effort screenshot into the writable out share (grim cannot capture where
+# the VM has no dmabuf path, which is a note, never a failure).
+shot() {
+  mountpoint -q /out 2>/dev/null || { mkdir -p /out; mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; } || true
+  mountpoint -q /out 2>/dev/null || { note "no out share: no $1 screenshot"; return 0; }
+  local mon; mon=$(hq monitors -j 2>/dev/null | jq -r '.[0].name // empty')
+  if timeout 20 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -o '$mon' /out/$1.png" >/dev/null 2>&1; then
+    chmod 666 "/out/$1.png" 2>/dev/null || true; note "screenshot /out/$1.png"
+  else
+    note "no $1 screenshot: grim cannot capture here (no dmabuf path in the VM)"
+  fi
+}
+assert_flame cool "the first session"
+shot first-desktop
+
 # The file existing is not the point; hyprpaper actually putting a surface on
 # the background layer is. A file that hyprpaper cannot read looks identical
 # from the outside to one that is not there.
@@ -2364,9 +2409,9 @@ else
 fi
 
 # --- the approved backgrounds (ERGON-74) -----------------------------------
-# install.sh fetched one field (BG_PROBE, at the top) and could not colour it:
-# no compositor, so no panel size. The session's autostart does that, niced,
-# so this polls. The size is the claim as much as the file: a field shipped at
+# install.sh fetched one field (BG_PROBE, at the top) and coloured it (ERGON-127);
+# with no compositor, sized from the kernel's connected output. The session
+# only has to agree. The size is the claim as much as the file: a field shipped at
 # 3840x2400 and coloured at that size on a smaller panel is a palette switch
 # that colours 9.2M pixels per image, which is what lib.fit_field ended.
 echo "--- the approved backgrounds ---"
@@ -2390,6 +2435,17 @@ elif [ "$(png_size "$_png")" = "$_panel" ]; then
 else
   bad "$BG_PROBE was coloured at $(png_size "$_png"), not the panel's $_panel"
 fi
+# The PNG must already be there when the session STARTS (ERGON-127): install.sh
+# colours it, at the size the kernel reports for the connected output. The
+# compositor's runtime directory is created when it starts, so a file older
+# than that was not made by the session.
+if [ -s "$_png" ] && [ "$_png" -ot "/run/user/1000/hypr/$SIG" ]; then
+  ok "  it was coloured at install time, before the session started"
+else
+  bad "  $BG_PROBE's PNG was not there before the session started (made by autostart, or missing)"
+  grep -iE 'approved backgrounds|wallpaper-gen' /tmp/install.log | tail -3 | sed 's/^/     /'
+fi
+
 
 # --- a runaway job must not take the session with it (ERGON-19) ------------
 # The acceptance no parser and no stub can reach: allocate until the machine is
@@ -2871,6 +2927,8 @@ hq layers | grep -q waybar \
   && ok "  and mapped its layer surface again" \
   || bad "the restarted waybar never mapped a layer surface — the desktop has no bar"
 
+assert_flame gruvbox "after a palette switch"
+
 # Back to the shipped palette, which is also the switch nobody tests: the one
 # that has to undo the first.
 usr "ergon-theme cool" > /tmp/palette-restore.log 2>&1
@@ -2884,6 +2942,7 @@ else
   # same from there.
   tail -25 /tmp/palette-restore.log 2>/dev/null | sed 's/^/     /'
 fi
+assert_flame cool "after switching back"
 
 # --- a projector is mirrored, and stays mirrored (ERGON-37) -----------------
 # The VM has one output, so the projector is a headless one the compositor
@@ -4060,6 +4119,29 @@ if [ -n "$_mgr" ]; then
 else
   note "ERGON-70: no user manager for $U to probe"
 fi
+
+# --- the lock screen (ERGON-127) -------------------------------------------
+# Lock for real, look, unlock. hyprlock draws the blurred wallpaper image; the
+# assertion is that it started and stayed up on that config. SIGUSR1 is its
+# documented unlock. Last in the file because a session left locked would
+# take everything after it with it.
+echo "--- the lock screen ---"
+usr "hyprlock" >/tmp/hyprlock.log 2>&1 </dev/null &
+sleep 6
+if pgrep -x hyprlock >/dev/null; then
+  ok "hyprlock runs on the shipped config, with the wallpaper image as its background"
+  shot lock-screen
+  pkill -USR1 -x hyprlock; sleep 2
+  pgrep -x hyprlock >/dev/null && { pkill -USR1 -x hyprlock; sleep 2; }
+  pgrep -x hyprlock >/dev/null && bad "hyprlock did not unlock" || ok "  and unlocks"
+elif ! compgen -G "/dev/dri/renderD*" >/dev/null; then
+  note "hyprlock cannot draw here: no render node in the VM (as for hyprpaper)"
+else
+  bad "hyprlock did not stay up"; sed "s/^/     /" /tmp/hyprlock.log | tail -8
+fi
+grep -qiE "cannot load|failed to load|no such file" /tmp/hyprlock.log 2>/dev/null \
+  && bad "  hyprlock could not load its background: $(grep -iE 'cannot load|failed to load|no such file' /tmp/hyprlock.log | head -1)" \
+  || ok "  and reported no failure loading the image"
 
 [ "$F" -gt 0 ] && dump_log
 finish

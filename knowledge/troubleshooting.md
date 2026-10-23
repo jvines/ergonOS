@@ -427,3 +427,16 @@ pressed" — which looks exactly like cause 1 and is not.
 
 **`hyprctl keyword` does not work on a Lua config.** It answers "keyword can't
 work with non-legacy parsers"; use `hyprctl eval 'hl.config({ ... })'`.
+
+## The first desktop is a gradient, not flame-0
+
+The approved backgrounds are fetched and coloured by `install.sh` (ERGON-127). If
+that could not reach the network it printed a warning block, and the desktop shows
+the gradient until the fields arrive. Login retries in the background
+(`ergon-wallpaper-gen --ensure`); to do it now:
+
+    ergon-wallpaper-gen --fetch
+
+then `ergon-wallpaper` (no state file means flame-0; if you have chosen a
+background since, it stays chosen). The lock screen follows: it reads
+`~/.local/share/ergon/lock-background.png`, a link `ergon-wallpaper` keeps current.

@@ -403,7 +403,7 @@ check "  and never land under the real name"              test ! -e "$FIELDS/$B"
 check "  nor as a partial a bake could pick up"           test -z "$(find "$FIELDS" -name '.*part')"
 check "the one that matched landed, byte for byte"        cmp -s "$REL/$A" "$FIELDS/$A"
 check "  and the run counts both"                         grep -q "1 fetched, 0 already here, 1 failed" <<<"$_out"
-check "  without colouring, having no panel to size for"  grep -q "next login" <<<"$_out"
+check "  and a failure is said out loud"                  grep -q "MISSING" <<<"$_out"
 printf 'field b\n' > "$REL/$B"
 _out=$(fetch); _rc=$?
 check "a second run fetches only what is missing"         grep -q "1 fetched, 1 already here, 0 failed" <<<"$_out"
@@ -418,6 +418,127 @@ _out=$(fetch ERGON_BACKGROUNDS_ONLY=alpha-0)
 check "ERGON_BACKGROUNDS_ONLY takes only the ones named"  test ! -e "$FIELDS/$B"
 check "  and counts only those"                           grep -q "0 fetched, 1 already here, 0 failed" <<<"$_out"
 rm -f "$FIELDS/$A" "$FIELDS/$B"
+
+# --- the first background is the approved flame-0 (ERGON-127) -------------------
+# Before this a machine with no remembered choice showed the gradient, so the
+# 69 approved backgrounds were something you had to go and find. No state file
+# now means flame-0 in the active palette when its image exists; the gradient
+# only when it does not.
+echo
+echo "== first boot: flame-0, and the choice sticks"
+F0=$T/data/ergon/backgrounds
+rm -rf "$F0"; mkdir -p "$F0/cool" "$F0/gruvbox"
+printf 'PNGSTUB\n' > "$F0/cool/clifford.png"
+printf 'PNGSTUB\n' > "$F0/cool/flame-0.png"
+printf 'PNGSTUB\n' > "$F0/gruvbox/flame-0.png"
+rm -f "$T/state/ergon/background"
+pal cool; run
+check "no state file and flame-0 present: flame-0 for this palette" test "$(bgst)" = "$F0/cool/flame-0.png"
+run
+check "  and it is remembered (a second run keeps it)"            test "$(bgst)" = "$F0/cool/flame-0.png"
+run --next
+check "  --next walks on from flame-0, it is a member of the cycle" test "$(bgst)" != "$F0/cool/flame-0.png"
+run --generated
+run
+check "  an explicit choice of the gradient is respected"          test "$(bgst)" = ":generated:"
+
+echo
+echo "== first boot without flame-0: the gradient, and the choice stays open"
+rm -f "$T/state/ergon/background" "$F0/cool/flame-0.png"
+pal cool; _n=$(runs); run
+check "the gradient is drawn"                                       test "$(runs)" -ge "$_n"
+check "  and not written down as a choice"                          test ! -e "$T/state/ergon/background"
+printf 'PNGSTUB\n' > "$F0/cool/flame-0.png"; run
+check "  so flame-0 wins as soon as it exists"                      test "$(bgst)" = "$F0/cool/flame-0.png"
+
+echo
+echo "== a palette switch keeps the current background"
+pal cool; printf '%s\n' "$F0/cool/flame-0.png" > "$T/state/ergon/background"
+pal gruvbox; run
+check "flame-0 in cool becomes flame-0 in gruvbox"                  test "$(bgst)" = "$F0/gruvbox/flame-0.png"
+# The new palette's image does not exist yet (the recolour is still running),
+# but a prepared field says it is coming: the choice must not be forgotten.
+rm -f "$F0/gruvbox/flame-0.png"; mkdir -p "$T/data/ergon/prepared"
+echo cached > "$T/data/ergon/prepared/flame-0.npz"
+printf '%s\n' "$F0/cool/flame-0.png" > "$T/state/ergon/background"
+pal gruvbox; run
+check "image not coloured yet: the choice is kept, not reset to the gradient" \
+  test "$(bgst)" = "$F0/cool/flame-0.png"
+printf 'PNGSTUB\n' > "$F0/gruvbox/flame-0.png"; run
+check "  and lands on gruvbox's flame-0 when it appears"            test "$(bgst)" = "$F0/gruvbox/flame-0.png"
+rm -f "$T/data/ergon/prepared/flame-0.npz"
+
+# ergon-wallpaper-gen --current is what ergon-theme runs first, so the redraw
+# finds the image. A stand-in python records what it was asked to colour.
+cat > "$T/data/pyfleet/bin/python" <<'PYEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/py"
+out=""; only=""
+while [ $# -gt 0 ]; do case "$1" in --out) out=$2; shift 2 ;; --only) only=$2; shift 2 ;; *) shift ;; esac; done
+[ -n "$only" ] && [ -d "$out" ] && printf 'PNGSTUB\n' > "$out/$only.png"
+exit 0
+PYEOF
+chmod +x "$T/data/pyfleet/bin/python"
+mkdir -p "$T/data/ergon/prepared"; echo cached > "$T/data/ergon/prepared/flame-0.npz"
+rm -f "$F0/gruvbox/flame-0.png" "$T/log/py"
+printf '%s\n' "$F0/cool/flame-0.png" > "$T/state/ergon/background"
+pal gruvbox
+ERGON="$E" "$E/bin/ergon-wallpaper-gen" --current >/dev/null 2>&1
+check "--current colours the displayed background for the new palette" test -s "$F0/gruvbox/flame-0.png"
+check "  and only that one"            grep -q -- '--only flame-0' "$T/log/py"
+run
+check "  after which the redraw shows it" test "$(bgst)" = "$F0/gruvbox/flame-0.png"
+rm -f "$T/data/ergon/prepared/flame-0.npz"
+
+echo
+echo "== the lock screen shows what the desktop shows"
+LK=$T/home/.local/share/ergon/lock-background.png
+pal cool; printf '%s\n' "$F0/cool/flame-0.png" > "$T/state/ergon/background"; run
+check "the lock image is the displayed wallpaper"   test "$(readlink -f "$LK")" = "$(readlink -f "$F0/cool/flame-0.png")"
+check "  and a symlink, never a copy of a screenshot" test -L "$LK"
+pal gruvbox; run
+check "  it follows a palette switch"                test "$(readlink -f "$LK")" = "$(readlink -f "$F0/gruvbox/flame-0.png")"
+run --generated
+check "  and the gradient when that is chosen"        test "$(readlink -f "$LK")" = "$(readlink -f "$T/home/.local/share/ergon/wallpaper.png")"
+check "hyprlock is configured with that very path" \
+  grep -q '^ *path = ~/.local/share/ergon/lock-background.png' "$REPO/hypr/hyprlock.conf.in"
+check "  blurred"          grep -qE '^ *blur_passes = [1-9]' "$REPO/hypr/hyprlock.conf.in"
+check "  and never a screenshot" test -z "$(grep -E '^ *(path|screenshot_)' "$REPO/hypr/hyprlock.conf.in" | grep screenshot)"
+
+echo
+echo "== install time: chosen and linked, nothing drawn"
+rm -f "$T/state/ergon/background"; pal cool; _h=$(grep -c hyprpaper "$T/log/hyprctl" 2>/dev/null || echo 0)
+_sg=$(wc -l < "$T/log/swaybg" 2>/dev/null || echo 0)
+ERGON_WALLPAPER_NO_APPLY=1 ERGON="$E" "$E/bin/ergon-wallpaper" >/dev/null 2>&1
+check "the first-boot choice is written"          test "$(bgst)" = "$F0/cool/flame-0.png"
+check "  nothing was sent to a compositor"        test "$(grep -c hyprpaper "$T/log/hyprctl" 2>/dev/null || echo 0)" -eq "$_h"
+check "  and no wallpaper process started"        test "$(wc -l < "$T/log/swaybg" 2>/dev/null || echo 0)" -eq "$_sg"
+
+echo
+echo "== no compositor: the panel is the connected output's"
+mkdir -p "$T/drm/card0-eDP-1" "$T/drm/card0-DP-2"
+printf 'connected\n' > "$T/drm/card0-eDP-1/status"; printf '1920x1200\n1280x800\n' > "$T/drm/card0-eDP-1/modes"
+printf 'disconnected\n' > "$T/drm/card0-DP-2/status"; printf '3840x2160\n' > "$T/drm/card0-DP-2/modes"
+rm -rf "$T/data/ergon/prepared" "$T/log/py"; mkdir -p "$FIELDS" "$E/wallpaper"
+printf 'def generate():\n    pass\n' > "$E/wallpaper/flame.py"
+: > "$FIELDS/flame-0-3840x2400.npz"
+ERGON="$E" ERGON_DRM_DIR="$T/drm" "$E/bin/ergon-wallpaper-gen" --recolour >/dev/null 2>&1
+check "colouring is sized for the connected output (not a guessed 4K)" grep -q -- '--size 1920x1200' "$T/log/py"
+rm -f "$FIELDS/flame-0-3840x2400.npz" "$E/wallpaper/flame.py"
+
+echo
+echo "== login fetches what install could not, and only that"
+A=alpha-0-3840x2400.npz
+printf 'field a\n' > "$REL/$A"
+{ printf '%s\t%s\t8\n' "$A" "$(sha256sum < "$REL/$A" | cut -d' ' -f1)"; } > "$E/wallpaper/shipped.tsv"
+rm -f "$FIELDS/$A"
+ens() { env -u ERGON_PALETTE ERGON="$E" ERGON_BACKGROUNDS_URL="file://$REL" "$E/bin/ergon-wallpaper-gen" --ensure 2>&1; }
+_out=$(ens)
+check "a missing field is fetched"            cmp -s "$REL/$A" "$FIELDS/$A"
+check "  and said so"                          grep -q "missing; fetching" <<<"$_out"
+_out=$(ens)
+check "all present: nothing is fetched"       test -z "$(grep -c 'missing; fetching' <<<"$_out" | grep -v '^0$')"
+rm -f "$FIELDS/$A"
 
 echo
 echo "== no render node: swaybg, not hyprpaper (ERGON-121)"

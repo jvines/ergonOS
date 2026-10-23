@@ -3,10 +3,14 @@
 # Lock screen. hyprlang, not Lua: only Hyprland itself moved to Lua at 0.55, the
 # satellite daemons (hyprlock, hypridle, hyprpaper) still parse hyprlang.
 #
-# No blur, no screenshot background. A blurred snapshot of the desktop is a
-# readable snapshot of the desktop — window titles and terminal text survive a
-# blur far better than people assume, and this machine has cluster credentials
-# and unpublished data on screen. Solid colour instead.
+# The desktop wallpaper, blurred. Never a screenshot (`path = screenshot`): a
+# blurred snapshot of the desktop is a readable snapshot of the desktop --
+# window titles and terminal text survive a blur far better than people assume,
+# and this machine has cluster credentials and unpublished data on screen. The
+# wallpaper is just an image: nothing about what is open is in it, so blurring
+# it leaks nothing. ergon-wallpaper keeps this path pointing at the image on
+# screen, so the lock screen follows wallpaper and palette changes (ERGON-127);
+# the colour is what hyprlock draws if the file is missing.
 
 general {
     hide_cursor = true
@@ -39,7 +43,9 @@ animations {
 background {
     monitor =
     color = rgb(@COOL_BG0:raw@)
-    blur_passes = 0
+    path = ~/.local/share/ergon/lock-background.png
+    blur_passes = 3
+    blur_size = 8
 }
 
 # Clock. Large, because the most common reason to look at a locked laptop is to

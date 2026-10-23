@@ -74,12 +74,26 @@ anything.
 
 The backgrounds are computed, not photographs: each is a field from a
 simulation in `wallpaper/`, coloured by whichever palette is active, so a
-palette switch recolours them too. The approved set arrives with the install
-and is coloured at your first login, at your panel's size. `SUPER + SHIFT + B`
-and `SUPER + CTRL + B` step through them. `ergon-wallpaper-gen --fetch` gets
-any that are missing, which the install does on every run anyway, and
-`ergon-wallpaper-gen GENERATOR SEED` computes a new one from scratch. Your own
-images go in `~/.config/ergon/backgrounds/`.
+palette switch recolours them too. All 69 approved backgrounds arrive with the
+install: `install.sh` fetches their fields (about 0.6 GB, sha256-checked) and
+colours them for the active palette at your panel's size, so the images exist
+before the first login. The first background you see is the approved
+**flame-0**; the gradient only appears when flame-0 is not there yet (offline
+install), and the next login fetches what is missing in the background. A
+failed fetch is printed as a warning block, never swallowed.
+
+Switching palette redraws the SAME background in the new palette. The lock
+screen shows the current wallpaper, blurred (never a screenshot, which would
+leak what is on screen); it follows wallpaper and palette changes through
+`~/.local/share/ergon/lock-background.png`, which `ergon-wallpaper` keeps
+pointing at the image on screen.
+
+`SUPER + SHIFT + B` and `SUPER + CTRL + B` step through them.
+`ergon-wallpaper-gen --fetch` gets any that are missing and recolours;
+`--ensure` is the cheap login-time version; `ergon-wallpaper-gen GENERATOR SEED`
+computes a new one from scratch. Your own images go in
+`~/.config/ergon/backgrounds/`. `ERGON_BACKGROUNDS=0` skips the install-time
+fetch.
 
 ## Accents: hold the key
 

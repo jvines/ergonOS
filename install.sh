@@ -651,18 +651,26 @@ if [ "$CHECK" != 1 ]; then
     warn "could not generate the wallpaper — run: ergon wallpaper"
   fi
 
-  # The approved backgrounds (ERGON-74): their fields, from the release the
-  # manifest names, checked against its sha256s. Coloured at the next login,
-  # once a compositor can say the panel's size. Not fatal: without the network
-  # the desktop still has the gradient and every generator, and the next run --
-  # every `ergon sync` is one -- fetches only what is still missing.
+  # The approved backgrounds (ERGON-74, ERGON-127): ALL of them come with the
+  # install. Their fields are fetched from the release the manifest names,
+  # checked against its sha256s, and coloured here for the active palette at
+  # the connected panel's size (ergon-wallpaper-gen reads it from the kernel
+  # when there is no compositor), so the PNGs exist before the first login and
+  # the first desktop is the approved flame-0 rather than the gradient.
+  # Not fatal: without the network the desktop still has the gradient and every
+  # generator, login retries the fetch in the background, and every `ergon sync`
+  # is another run -- it fetches only what is still missing. A failure is
+  # printed as a block, not a one-line warning.
   # ERGON_BACKGROUNDS=0 skips it.
   if [ "${ERGON_BACKGROUNDS:-1}" != 0 ]; then
     _bglog=$(mktemp)
-    if "$ERGON/bin/ergon-wallpaper-gen" --fetch >"$_bglog" 2>&1; then
+    if ERGON_WALLPAPER_NO_APPLY=$([ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && echo 0 || echo 1) \
+       "$ERGON/bin/ergon-wallpaper-gen" --fetch >"$_bglog" 2>&1; then
       ok "$(grep -m1 'approved backgrounds' "$_bglog" | sed 's/^ *//')"
     else
-      warn "$(grep -m1 'approved backgrounds\|no manifest\|no python' "$_bglog" | sed 's/^ *//') — run: ergon-wallpaper-gen --fetch"
+      warn "approved backgrounds are NOT all installed: $(grep -m1 'approved backgrounds\|no manifest\|no python' "$_bglog" | sed 's/^ *//')"
+      sed 's/^/       /' "$_bglog" | tail -8 >&2
+      warn "the desktop falls back to the gradient until they are: run ergon-wallpaper-gen --fetch (login also retries)"
     fi
     rm -f "$_bglog"
   fi

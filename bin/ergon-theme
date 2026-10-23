@@ -545,6 +545,14 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
     ( setsid ergon-wallpaper-gen --recolour >/dev/null 2>&1 9>&- & ) || true
   fi
   sync_gsettings
+  # The background on screen, recoloured NOW and in the foreground (about half
+  # a second from the prepared cache), so the redraw below lands on the SAME
+  # background in the new palette. Without this the redraw ran before the
+  # detached full pass had written anything, found no such image under the new
+  # palette, and showed the gradient until the pass reached it (ERGON-127).
+  if command -v ergon-wallpaper-gen >/dev/null 2>&1; then
+    ergon-wallpaper-gen --current >/dev/null 2>&1 9>&- || true
+  fi
   "$ERGON/bin/ergon-wallpaper" --force >/dev/null 2>&1 || true
   hyprctl reload >/dev/null 2>&1 || true
   # waybar and swayosd both parse everything they draw exactly once, at
