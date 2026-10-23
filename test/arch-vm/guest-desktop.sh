@@ -2568,6 +2568,8 @@ case "$hist" in
     bad "the run was not recorded as an OOM kill — nothing contained it, or the kill was not attributed"
     printf '%s\n' "$hist" | tail -20 | sed 's/^/     /'
     tail -10 /tmp/oomprobe.log | sed 's/^/     /'
+    journalctl -b -u systemd-oomd --no-pager -n 15 2>&1 | sed "s/^/     oomd: /"
+    swapon --show 2>&1 | sed "s/^/     swap: /"; grep -E "^(MemTotal|SwapTotal|SwapFree)" /proc/meminfo | sed "s/^/     /"
     oom_diag ;;
 esac
 case "$rc" in

@@ -214,14 +214,18 @@ proc monitor {cmd} {
 
 boot_vm
 set graphical 1
+# Plymouth takes over the console once its splash is up (TIOCCONS), so the
+# serial line goes quiet from "Show Plymouth Boot Screen" until the unlock:
+# that line is the last sign, and the prompt follows within seconds.
+set timeout 300
 expect {
-  timeout { puts "\n!! the screenshot boot never started cryptsetup"; exit 1 }
+  timeout { puts "\n!! the screenshot boot never started Plymouth"; exit 1 }
   -nocase "passphrase" { set graphical 0 }
-  -re {Cryptography Setup for|cryptsetup@} {}
+  -re {Show Plymouth Boot Screen|plymouth-start} {}
 }
+set timeout 1800
 if {\$graphical} {
-  # Plymouth draws the prompt a moment after cryptsetup asks.
-  sleep 8
+  sleep 15
   monitor "screendump -f png /w/out/e123-plymouth-prompt.png"
   foreach c [split "$PASSPHRASE" ""] { monitor "sendkey \$c" }
   sleep 2
