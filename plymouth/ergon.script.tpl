@@ -1,6 +1,7 @@
 # ergon boot splash: the wordmark, and the disk passphrase prompt under it.
 # Rendered by bin/ergon-plymouth from the active palette (the colour tokens become
-# "r, g, b" in 0..1). Not yet approved on screen; iterate here.
+# "r, g, b" in 0..1). Not yet approved on screen; iterate here. ASCII only:
+# the label plugin draws boxes for anything else (VM screenshot, 2026-10-23).
 
 Window.SetBackgroundTopColor(@COOL_BG0@);
 Window.SetBackgroundBottomColor(@COOL_BG0@);
@@ -11,7 +12,7 @@ global.font_dots = "JetBrainsMono Nerd Font 20";
 
 mark.image = Image.Text("ergon", @COOL_FG0@, 1, global.font_mark);
 mark.sprite = Sprite(mark.image);
-rule.image = Image.Text("────", @COOL_ACCENT@, 1, global.font_text);
+rule.image = Image.Text("____", @COOL_ACCENT@, 1, global.font_text);
 rule.sprite = Sprite(rule.image);
 
 prompt.sprite = Sprite();
@@ -58,7 +59,7 @@ fun display_password_callback(text, bullets) {
   if (n > 24) n = 24;
   s = "";
   for (i = 0; i < n; i++) {
-    s = s + "• ";
+    s = s + "* ";
   }
   s = s + "_";
   dots.image = Image.Text(s, @COOL_ACCENT@, 1, global.font_dots);
