@@ -515,7 +515,9 @@ echo "\$CMDLINE" > /etc/kernel/cmdline
 # the boot guard uses (ergon-boot-guard); and a snapshot entry is a text file
 # that ergon-boot-entries writes. systemd-boot-update keeps the copy on the
 # ESP in step with the systemd package.
-bootctl install --esp-path=/efi
+# --variables=yes: in a chroot bootctl leaves the EFI variables alone by
+# default, and the firmware then finds only the removable-media fallback path.
+bootctl install --esp-path=/efi --variables=yes
 cat > /efi/loader/loader.conf <<LOADER
 # Written by arch-bootstrap.sh. Two seconds to pick a snapshot or linux-lts;
 # the default is the first entry that is not marked bad (see ergon-boot-guard).

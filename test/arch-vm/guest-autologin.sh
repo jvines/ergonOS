@@ -26,7 +26,7 @@ if [ -n "$sid" ]; then
 else
   bad "no wayland session for $U"; loginctl list-sessions --no-legend | sed 's/^/     /'
 fi
-asu systemctl --user list-units --no-legend 'wayland-wm@*' 2>/dev/null | grep -q 'wayland-wm@hyprland.desktop.service.*running' \
+grep -q 'wayland-wm@hyprland.desktop.service.*running' <<<"$(asu systemctl --user list-units --no-legend 'wayland-wm@*' 2>/dev/null)" \
   && ok "  started through uwsm (wayland-wm@hyprland.desktop.service)" \
   || bad "  not under uwsm: $(asu systemctl --user list-units --no-legend 'wayland-wm*' 2>&1 | head -2)"
 pgrep -x tuigreet >/dev/null && bad "tuigreet is running too" || ok "no greeter was shown"

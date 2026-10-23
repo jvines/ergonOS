@@ -70,26 +70,27 @@ ESP=$(findmnt -no TARGET /efi 2>/dev/null)
 check "the ESP is mounted at /efi"            '[ "$(findmnt -no FSTYPE /efi)" = vfat ]'
 check "the ESP is not encrypted (a plain partition)" '! lsblk -no TYPE "$(findmnt -no SOURCE /efi)" | grep -q crypt'
 check "systemd-boot is installed on the ESP"  'bootctl is-installed'
-check "booted by systemd-boot"                'bootctl status 2>/dev/null | grep -q "Product: systemd-boot"'
+check "booted by systemd-boot"                'grep -q "Product: systemd-boot" <<<"$(bootctl status 2>/dev/null)"'
 check "no GRUB package"                       '! pacman -Q grub'
-check "UEFI boot entry is systemd-boot"       'efibootmgr | grep -qi "Linux Boot Manager"'
+echo "   efibootmgr: $(efibootmgr 2>&1 | grep -E "^Boot(Current|Order|0)" | tr "\n" " ")"
+check "UEFI boot entry is systemd-boot"       'grep -qi "Linux Boot Manager" <<<"$(efibootmgr)"'
 for k in linux linux-lts; do
   check "UKI for $k on the ESP"               "[ -s $ESP/EFI/ergon/$k.efi ]"
-  check "  and an entry for it"               "ls $ESP/loader/entries/ergon-$k.conf $ESP/loader/entries/ergon-$k+*.conf 2>/dev/null | grep -q ."
+  check "  and an entry for it"               "[ -n \"\$(ls $ESP/loader/entries/ergon-$k.conf $ESP/loader/entries/ergon-$k+*.conf 2>/dev/null)\" ]"
 done
 check "this boot came from a UKI (stub set LoaderImageIdentifier/StubInfo)" '[ -n "$(ls /sys/firmware/efi/efivars/StubInfo-* 2>/dev/null)" ]'
 check "the cmdline is /etc/kernel/cmdline"    '[ "$(tr -s " " < /etc/kernel/cmdline | sed "s/ $//")" = "$(tr -s " " < /proc/cmdline | sed "s/ $//")" ]'
 check "the UKI carries that cmdline"          'objdump -s -j .cmdline $ESP/EFI/ergon/linux.efi >/dev/null 2>&1 || grep -aq "rd.luks.name=" $ESP/EFI/ergon/linux.efi'
-check "Plymouth is in the initramfs"          'lsinitcpio /boot/initramfs-linux.img | grep -q "usr/bin/plymouthd"'
-check "  with the ergon theme"                'lsinitcpio /boot/initramfs-linux.img | grep -q "plymouth/themes/ergon/ergon.script"'
+check "Plymouth is in the initramfs"          'grep -q "usr/bin/plymouthd" <<<"$(lsinitcpio /boot/initramfs-linux.img)"'
+check "  with the ergon theme"                'grep -q "plymouth/themes/ergon/ergon.script" <<<"$(lsinitcpio /boot/initramfs-linux.img)"'
 check "  and splash on the cmdline"           'grep -qw splash /proc/cmdline'
-check "Plymouth ran in this boot"             'journalctl -b -o cat | grep -q "plymouth"'
-check "the passphrase went through Plymouth"  'journalctl -b -o cat | grep -qi "Forward Password Requests to Plymouth"'
+check "Plymouth ran in this boot"             '[ -n "$(journalctl -b -u plymouth-start.service -o cat --no-pager 2>/dev/null)" ]'
+check "the passphrase went through Plymouth"  'grep -qi "Forward Password Requests to Plymouth" <<<"$(journalctl -b -o cat --no-pager)"'
 check "the boot splash is the ergon theme"    'grep -qx "Theme=ergon" /etc/plymouth/plymouthd.conf'
 # Asked once: nothing before the kernel decrypts (the ESP is plain), there is
 # no keyfile for a second unlock, and the volume has one keyslot.
 check "no keyfile in /etc/cryptsetup-keys.d"  '[ -z "$(ls /etc/cryptsetup-keys.d 2>/dev/null)" ]'
-check "no keyfile in the initramfs"           '! lsinitcpio /boot/initramfs-linux.img | grep -q cryptsetup-keys'
+check "no keyfile in the initramfs"           '! grep -q cryptsetup-keys <<<"$(lsinitcpio /boot/initramfs-linux.img)"'
 check "one LUKS keyslot (the passphrase)"     '[ "$(cryptsetup luksDump "$(cryptsetup status cryptroot | awk "\$1 == \"device:\" { print \$2 }")" | grep -cE "^  [0-9]+: luks2")" = 1 ]'
 check "the LUKS key is Argon2id"              'cryptsetup luksDump "$(cryptsetup status cryptroot | awk "\$1 == \"device:\" { print \$2 }")" | grep -q "PBKDF:.*argon2id"'
 # Snapshot entries: written by ergon-boot-entries whenever /.snapshots changes.
