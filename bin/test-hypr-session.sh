@@ -226,10 +226,10 @@ expect {
 set timeout 1800
 if {\$graphical} {
   sleep 15
-  monitor "screendump -f png /w/out/e123-plymouth-prompt.png"
+  monitor "screendump /w/out/e123-plymouth-prompt.ppm"
   foreach c [split "$PASSPHRASE" ""] { monitor "sendkey \$c" }
   sleep 2
-  monitor "screendump -f png /w/out/e123-plymouth-unlock.png"
+  monitor "screendump /w/out/e123-plymouth-unlock.ppm"
   monitor "sendkey ret"
   puts "\n-- passphrase typed once, at the graphical prompt"
 } else {
@@ -246,7 +246,7 @@ send "echo '$USERPASS' | sudo -S bash /mnt/test/arch-vm/guest-autologin.sh\r"
 expect {
   timeout { puts "\n!! the autologin check timed out"; exit 1 }
   "SHOT_NOW" {
-    monitor "screendump -f png /w/out/e123-first-desktop.png"
+    monitor "screendump /w/out/e123-first-desktop.ppm"
     exp_continue
   }
   -re {AUTOLOGIN_RESULT=[0-9]+} {}
@@ -289,6 +289,6 @@ elif [ "$a" -eq 0 ]; then
 else
   echo "   $a autologin check(s) failed — see $WORK/session.log"
 fi
-ls "$WORK"/out/e123-*.png 2>/dev/null | sed 's/^/   screenshot: /' || true
+ls "$WORK"/out/e123-*.ppm 2>/dev/null | sed 's/^/   screenshot: /' || true
 n=$(( n + a ))
 exit $(( n > 0 ))

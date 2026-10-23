@@ -62,7 +62,7 @@ without it:
 | a synthetic click changes workspace | the only thing that proves the pointer path works end to end |
 | `ergon-launch-tui` opens a window | covers PATH, terminal fallback and window rules in one |
 | the greetd command matches the packaged `hyprland-uwsm.desktop` | greetd authenticated and then ran `uwsm start -S hyprland-uwsm.desktop`, which is uwsm asked to start uwsm, with a flag that does not exist |
-| after the suite, one more boot: the passphrase typed once at Plymouth's graphical prompt, then Hyprland under uwsm from greetd's `initial_session`, and a secret stored with no keyring prompt (ERGON-123) | the boot chain itself; every other boot in the harness types the passphrase on the serial console. It leaves `e123-plymouth-*.png` and `e123-first-desktop.png` in `$WORK/out` |
+| after the suite, one more boot: the passphrase typed once at Plymouth's graphical prompt, then Hyprland under uwsm from greetd's `initial_session`, and a secret stored with no keyring prompt (ERGON-123) | the boot chain itself; every other boot in the harness types the passphrase on the serial console. It leaves `e123-plymouth-*.ppm` and `e123-first-desktop.ppm` in `$WORK/out` |
 
 Clicks are injected with `ydotool` through `/dev/uinput`, so the compositor sees
 a real input device and takes the real path: libinput → cursor → surface → GTK.

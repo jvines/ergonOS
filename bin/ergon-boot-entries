@@ -97,6 +97,17 @@ stage() {  # stage <n>
   printf '%s\n' "$key"
 }
 
+# One word per snapshot directory, and whether snapper has finished it.
+snap_state() {
+  local d n
+  for d in "$SNAPDIR"/*/; do
+    n=${d%/}; n=${n##*/}
+    case $n in ''|*[!0-9]*) continue ;; esac
+    if [ -d "$SNAPDIR/$n/snapshot" ] && [ -f "$SNAPDIR/$n/info.xml" ]; then printf '%s ' "$n"
+    else printf '%s:incomplete ' "$n"; fi
+  done
+}
+
 snapshots_newest_first() {
   local d n
   for d in "$SNAPDIR"/*/; do
@@ -174,13 +185,14 @@ case "${1:-list}" in
 sync)
   ergon_esp_access || exec sudo "$0" "$@"
   # snapper makes the directory first and fills it a moment later, and the
-  # path unit fires on the directory. Settle, then go again if /.snapshots
-  # moved while this ran.
+  # path unit fires on the directory only: a snapshot still being written when
+  # this runs would never get its entry. So settle, and go again while any
+  # snapshot is half made or /.snapshots moved during the run.
   [ "${2:-}" = --settle ] && sleep 3
-  for _ in 1 2 3; do
-    before=$(ls "$SNAPDIR" 2>/dev/null | tr '\n' ' ')
+  for _ in $(seq 15); do
+    before=$(snap_state)
     sync_once
-    [ "$(ls "$SNAPDIR" 2>/dev/null | tr '\n' ' ')" = "$before" ] && break
+    [ "$(snap_state)" = "$before" ] && ! grep -q incomplete <<<"$before" && break
     sleep 2
   done
   ok "boot entries: $(find "$ENT" -maxdepth 1 -name 'ergon-snapshot-*.conf' | wc -l) snapshot(s), $(find "$STORE" -mindepth 1 -maxdepth 1 -type d | wc -l) kernel(s) on the ESP"

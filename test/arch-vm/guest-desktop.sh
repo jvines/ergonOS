@@ -862,6 +862,9 @@ else
 fi
 _newest=$(snapper -c root list --columns number 2>/dev/null | grep -Eo '^ *[0-9]+' | tr -d ' ' | sort -n | tail -1)
 _e=/efi/loader/entries/ergon-snapshot-$_newest.conf
+# The path unit settles for 3 s before it writes; a snapshot just taken may
+# not have its entry yet.
+for _ in $(seq 30); do [ -f "$_e" ] && break; sleep 1; done
 if [ -f "$_e" ] && grep -q "rootflags=subvol=@snapshots/$_newest/snapshot" "$_e" \
    && [ -s "/efi$(sed -n 's/^linux *//p' "$_e")" ] && [ -s "/efi$(sed -n 's/^initrd *//p' "$_e")" ]; then
   ok "  the newest snapshot ($_newest) has one, with its own kernel and initramfs on the ESP"
@@ -2635,7 +2638,9 @@ if usr "pgrep -x mako" >/dev/null 2>&1; then
     *"was killed for memory"*) bad "ergon watch's own kill was announced a second time, by ergon-oom-notify" ;;
     *) ok "ergon watch's own kill was announced once, by ergon watch" ;;
   esac
-  usr "timeout 120 systemd-run --user --quiet --wait --unit=ergon-vm-oom-bare --slice=app.slice \
+  # 300 s, as the watched run above gets: on a loaded host oomd took longer
+  # than 120 s to act on this one (ERGON-123 VM run 4, load average 43).
+  usr "timeout 300 systemd-run --user --quiet --wait --unit=ergon-vm-oom-bare --slice=app.slice \
        -p MemoryHigh=256M -- python3 /tmp/eat-memory.py" >/dev/null 2>&1
   usr "systemctl --user stop ergon-vm-oom-bare.service; systemctl --user reset-failed ergon-vm-oom-bare.service" >/dev/null 2>&1
   sleep 2
