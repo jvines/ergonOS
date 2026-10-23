@@ -14,7 +14,7 @@ set -euo pipefail
 ESP=/efi
 [ -s "$ESP/EFI/ergon/linux.efi" ] || { echo "SHOT_ARMED=no (no UKI)"; exit 1; }
 opts="$(cat /etc/kernel/cmdline) plymouth.ignore-serial-consoles systemd.show_status=1"
-printf 'title    ergonOS (VM screenshot boot)\nsort-key ergon-0\nuki      /EFI/ergon/linux.efi\noptions  %s\n' "$opts" \
+printf 'title    ergonOS (VM screenshot boot)\nsort-key ergon-zz\nuki      /EFI/ergon/linux.efi\noptions  %s\n' "$opts" \
   > "$ESP/loader/entries/ergon-shot.conf"
 bootctl set-oneshot ergon-shot.conf
 # The session test stopped greetd to have the display to itself; it must run
