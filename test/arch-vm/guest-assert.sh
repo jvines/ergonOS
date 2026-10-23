@@ -73,7 +73,7 @@ check "systemd-boot is installed on the ESP"  'bootctl is-installed'
 check "booted by systemd-boot"                'grep -q "Product: systemd-boot" <<<"$(bootctl status 2>/dev/null)"'
 check "no GRUB package"                       '! pacman -Q grub'
 echo "   efibootmgr: $(efibootmgr 2>&1 | grep -E "^Boot(Current|Order|0)" | tr "\n" " ")"
-check "UEFI boot entry is systemd-boot"       'grep -qi "Linux Boot Manager" <<<"$(efibootmgr)"'
+check "the firmware booted the Linux Boot Manager entry" '_e=$(efibootmgr); _c=$(sed -n "s/^BootCurrent: //p" <<<"$_e"); grep -qiE "^Boot$_c\\* Linux Boot Manager.*HD\\(1,GPT,[0-9a-f]{8}-" <<<"$_e"'
 for k in linux linux-lts; do
   check "UKI for $k on the ESP"               "[ -s $ESP/EFI/ergon/$k.efi ]"
   check "  and an entry for it"               "[ -n \"\$(ls $ESP/loader/entries/ergon-$k.conf $ESP/loader/entries/ergon-$k+*.conf 2>/dev/null)\" ]"

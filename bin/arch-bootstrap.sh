@@ -515,11 +515,18 @@ echo "\$CMDLINE" > /etc/kernel/cmdline
 # the boot guard uses (ergon-boot-guard); and a snapshot entry is a text file
 # that ergon-boot-entries writes. systemd-boot-update keeps the copy on the
 # ESP in step with the systemd package.
-# --variables=yes: in a chroot bootctl leaves the EFI variables alone by
-# default, and the firmware then finds only the removable-media fallback path.
-bootctl install --esp-path=/efi --variables=yes
-grep -qi 'Linux Boot Manager' <<<"\$(efibootmgr 2>/dev/null)" \
-  || echo "!! no Linux Boot Manager entry in the firmware; it will fall back to EFI/BOOT/BOOTX64.EFI" >&2
+#
+# The firmware boot entry comes from efibootmgr, not bootctl. In a chroot
+# bootctl cannot read the ESP's partition UUID (no udev), and with
+# --variables=yes it wrote an entry pointing at HD(0,GPT,0000...) that no
+# firmware can follow (VM run, 2026-10-23); without it, none at all, and the
+# firmware falls back to EFI/BOOT/BOOTX64.EFI by PCI path, which moves when the
+# hardware does. efibootmgr reads the GPT itself, as grub-install's did.
+bootctl install --esp-path=/efi --variables=no
+efibootmgr --create --disk "$DISK" --part 1 --label "Linux Boot Manager" \
+  --loader '\EFI\systemd\systemd-bootx64.efi' >/dev/null
+grep -qiE 'Linux Boot Manager.*HD\(1,GPT,[0-9a-f]{8}-' <<<"\$(efibootmgr 2>/dev/null)" \
+  || echo "!! the firmware boot entry for systemd-boot did not take; it will fall back to EFI/BOOT/BOOTX64.EFI" >&2
 cat > /efi/loader/loader.conf <<LOADER
 # Written by arch-bootstrap.sh. Two seconds to pick a snapshot or linux-lts;
 # the default is the first entry that is not marked bad (see ergon-boot-guard).
