@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Restore the root subvolume from a snapper snapshot
 # ergon:group=system
-# ergon:args=--list | <snapshot-number> [--device /dev/mapper/cryptroot]
+# ergon:args=--list | <snapshot-number> [--device /dev/mapper/cryptroot | /dev/nvme0n1p2]
 # ergon:help=native
 #
 # WHY THIS EXISTS, rather than `snapper rollback`:
@@ -29,7 +29,16 @@
 # Arch ISO. It refuses rather than half-finishing.
 set -euo pipefail
 
-DEV="${ERGON_ROLLBACK_DEV:-/dev/mapper/cryptroot}"
+# The btrfs device: the encrypted root's mapper when there is one, else the
+# device the running root is mounted from (an ENCRYPT=0 install, ERGON-123).
+# From the Arch ISO neither answers; --device names it.
+if [ -n "${ERGON_ROLLBACK_DEV:-}" ]; then
+  DEV=$ERGON_ROLLBACK_DEV
+elif [ -b /dev/mapper/cryptroot ]; then
+  DEV=/dev/mapper/cryptroot
+else
+  DEV=$(findmnt -no SOURCE -t btrfs / 2>/dev/null | sed 's/\[.*//') || DEV=""
+fi
 KEEP_PREFIX="@.broken"
 
 die() { printf '   FAIL %s\n' "$*" >&2; exit 1; }
@@ -44,6 +53,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+[ -n "$DEV" ] || die "no btrfs root to roll back here; pass --device (the LUKS mapper, or the root partition)"
 [ -b "$DEV" ] || die "$DEV is not a block device (is the LUKS volume open?)"
 
 TOP=$(mktemp -d)

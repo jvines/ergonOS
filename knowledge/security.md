@@ -226,9 +226,17 @@ which this machine does not set up yet.
 **Automatic login.** With `AUTOLOGIN=1` (the installer's default), greetd
 starts the session after the unlock without asking for a password, so the disk
 passphrase is the only one at boot. The lock screen still asks for your
-password on resume and after idle, and `sudo` still does. A machine whose root
-is not encrypted should keep `AUTOLOGIN=0`; `ergon doctor` warns if it does
-not.
+password on resume and after idle, and `sudo` still does.
+
+**Installing without encryption.** The installer asks whether to encrypt the
+disk (`ENCRYPT`, default yes). `ENCRYPT=0` puts btrfs straight on the
+partition: no passphrase, a splash with no prompt, and with automatic login
+the machine goes from power button to desktop asking nothing. Whoever holds
+the laptop then holds everything on it, `/home` and the hibernation image
+included; the lock screen guards only a machine that is already on. It is
+recorded in `/etc/ergon/install.env` and cannot be changed without
+reinstalling. `ergon doctor` warns about automatic login on an unencrypted
+root only when that was not the installer's answer.
 
 **The keyring has no password.** Nobody types a login password for PAM to
 unlock a keyring with, so the default keyring (`Default_keyring`) is stored

@@ -49,8 +49,10 @@ The disk passphrase is the one password at boot: systemd-boot starts a
 unified kernel image from the unencrypted ESP, Plymouth asks for the
 passphrase, and greetd logs you straight into Hyprland. The installer asks
 whether to log in automatically (default yes; `AUTOLOGIN=0` for the
-password greeter, now or later in `hosts/<host>/host.env`). Machines installed
-before this keep GRUB with `/boot` inside LUKS.
+password greeter, now or later in `hosts/<host>/host.env`). It asks first
+whether to encrypt the disk (default yes; `ENCRYPT=0` installs btrfs with no
+LUKS, so the machine boots to the desktop with no prompt at all). Machines
+installed before this keep GRUB with `/boot` inside LUKS.
 
 Installing somewhere with no usable network is a different problem: `pacstrap`
 has to reach a mirror regardless. Copy the repo onto the USB alongside the ISO

@@ -785,7 +785,7 @@ _session="uwsm start -e -D Hyprland hyprland.desktop"
 } | sudo install -Dm644 /dev/stdin /etc/greetd/config.toml
 sudo systemctl enable greetd >/dev/null 2>&1 || true
 if [ "$AUTOLOGIN" = 1 ]; then
-  ok "greetd: $(id -un) logged in automatically after the disk unlock; tuigreet on vt1 after logout"
+  ok "greetd: $(id -un) logged in automatically at boot$([ -e /dev/mapper/cryptroot ] && echo ", after the disk unlock"); tuigreet on vt1 after logout"
 else
   ok "greetd + tuigreet on vt1 (AUTOLOGIN=0)"
 fi

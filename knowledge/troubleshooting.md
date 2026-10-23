@@ -221,7 +221,10 @@ Installs from ERGON-123 on: systemd-boot on the unencrypted ESP starts a UKI
 (`/efi/EFI/ergon/linux.efi`), Plymouth draws the passphrase prompt from the
 initramfs, sd-encrypt unlocks the root, and greetd's `initial_session` starts
 Hyprland through uwsm with no greeter. Logging out lands on tuigreet. Older
-installs boot GRUB, with `/boot` inside LUKS (ERGON-125 migrates them).
+installs boot GRUB, with `/boot` inside LUKS (ERGON-125 migrates them). An
+install with `ENCRYPT=0` (`/etc/ergon/install.env`) has no sd-encrypt hook and
+no `rd.luks` on the cmdline: `root=UUID=...` is the btrfs filesystem itself,
+and Plymouth shows the splash with no prompt.
 
     bootctl status                                 # systemd-boot, the entry booted
     ergon-boot-entries list                        # the menu: ergonOS, snapshots, linux-lts
@@ -244,8 +247,11 @@ installs boot GRUB, with `/boot` inside LUKS (ERGON-125 migrates them).
   `sudo ergon-boot-entries sync` writes them by hand. Only the newest eight get
   entries, plus the boot guard's known-good one, so the ESP cannot fill.
 - **You want the password prompt back.** `AUTOLOGIN=0` in
-  `hosts/<host>/host.env`, then `ergon sync`. Automatic login is only offered
-  with an encrypted root; `ergon doctor` warns otherwise.
+  `hosts/<host>/host.env`, then `ergon sync`. On an unencrypted root that was
+  not installed with `ENCRYPT=0`, `ergon doctor` warns about automatic login.
+- **Rolling back an unencrypted install.** `ergon-rollback` finds the root
+  partition itself from a snapshot boot; from the Arch ISO name it:
+  `ergon-rollback --device /dev/nvme0n1p2 --list`.
 - **The menu does not show.** It shows for two seconds (`timeout` in
   `/efi/loader/loader.conf`); press any key while it shows to stop the
   countdown.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Partition, encrypt and pacstrap a new Arch box, from the live ISO.
+# Partition, encrypt (unless ENCRYPT=0) and pacstrap a new Arch box, from the live ISO.
 #
 #   ./arch-bootstrap.sh /dev/nvme0n1
 #
@@ -21,7 +21,8 @@
 # The boot chain (ERGON-123): systemd-boot on an unencrypted ESP starts a
 # unified kernel image (UKI); Plymouth draws the LUKS prompt from the
 # initramfs; greetd logs the user straight into Hyprland. One passphrase, typed
-# once. Installs before ERGON-123 have /boot inside LUKS and GRUB; they keep it.
+# once. ENCRYPT=0 skips LUKS: the splash, then the desktop, with no password
+# at all. Installs before ERGON-123 have /boot inside LUKS and GRUB; they keep it.
 set -euo pipefail
 
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -87,6 +88,14 @@ USERNAME="${USERNAME_NEW:-}"
 # AUTOLOGIN, where it can be changed later.
 AUTOLOGIN="${AUTOLOGIN:-}"
 
+# Encrypt the root (ERGON-123), asked like AUTOLOGIN; default yes. 1 is LUKS2
+# with Plymouth's passphrase prompt. 0 puts btrfs straight on the partition: no
+# sd-encrypt hook, no rd.luks on the cmdline, a splash with no prompt, and the
+# autologin goes straight to the desktop -- anyone who powers the machine on is
+# in, which is the choice being made. Recorded in /etc/ergon/install.env. It
+# cannot be changed later without reinstalling.
+ENCRYPT="${ENCRYPT:-}"
+
 # The wifi regulatory domain. Not a preference: transmit power and which
 # channels exist are legally determined by where the machine is, and getting it
 # wrong can pin you to 2.4 GHz. Derived from the timezone when not given, since
@@ -117,7 +126,8 @@ KERNELS="linux linux-lts"
 #
 #   ARCH_BOOTSTRAP_UNATTENDED=1
 #       Take every answer from the environment instead of prompting
-#       (HOSTNAME_NEW, USERNAME_NEW, LUKS_PASSPHRASE, USER_PASSWORD) and skip
+#       (HOSTNAME_NEW, USERNAME_NEW, LUKS_PASSPHRASE, USER_PASSWORD, and
+#       ENCRYPT and AUTOLOGIN, both 1 when unset) and skip
 #       the type-the-disk-name confirmation. Says nothing about where it is
 #       running.
 #
@@ -197,11 +207,21 @@ fi
 if [ "$UNATTENDED" != 1 ]; then
   printf 'locale   [%s]: ' "$LOCALE";   read -r _a; [ -n "$_a" ] && LOCALE="$_a"
   printf 'keymap   [%s]: ' "$KEYMAP";   read -r _a; [ -n "$_a" ] && KEYMAP="$_a"
+  if [ -z "$ENCRYPT" ]; then
+    printf 'encrypt the disk (a passphrase at every boot)? [Y/n]: '; read -r _a
+    case "$_a" in [nN]*) ENCRYPT=0 ;; *) ENCRYPT=1 ;; esac
+  fi
   if [ -z "$AUTOLOGIN" ]; then
-    printf 'log in automatically after the disk passphrase? [Y/n]: '; read -r _a
+    if [ "$ENCRYPT" = 0 ]; then
+      printf 'log in automatically at boot? [Y/n]: '
+    else
+      printf 'log in automatically after the disk passphrase? [Y/n]: '
+    fi
+    read -r _a
     case "$_a" in [nN]*) AUTOLOGIN=0 ;; *) AUTOLOGIN=1 ;; esac
   fi
 fi
+case "${ENCRYPT:-1}" in 0) ENCRYPT=0 ;; *) ENCRYPT=1 ;; esac
 case "${AUTOLOGIN:-1}" in 0) AUTOLOGIN=0 ;; *) AUTOLOGIN=1 ;; esac
 [ -f "/usr/share/zoneinfo/$TIMEZONE" ] || { echo "no such timezone: $TIMEZONE" >&2; exit 1; }
 
@@ -221,6 +241,7 @@ if [ "$BOOTKEYMAP" != "$KEYMAP" ]; then
   echo "keymap $KEYMAP does not type Latin letters, so the disk passphrase prompt at boot uses $BOOTKEYMAP; the desktop keeps $KEYMAP" >&2
 fi
 ok "timezone $TIMEZONE, locale $LOCALE, keymap $KEYMAP, wifi regdom $REGDOM"
+ok "encrypt=$ENCRYPT autologin=$AUTOLOGIN"
 
 # ---------------------------------------------------------------------------
 # Partition. ESP is 2 GiB and unencrypted: systemd-boot, a UKI per kernel
@@ -230,7 +251,12 @@ ok "timezone $TIMEZONE, locale $LOCALE, keymap $KEYMAP, wifi regdom $REGDOM"
 say "partitioning $DISK"
 sgdisk --zap-all "$DISK"
 sgdisk -n1:0:+2G   -t1:ef00 -c1:EFI  "$DISK"
-sgdisk -n2:0:0     -t2:8309 -c2:LUKS "$DISK"
+# 8309 is "Linux LUKS"; 8304 is "Linux x86-64 root", for ENCRYPT=0.
+if [ "$ENCRYPT" = 1 ]; then
+  sgdisk -n2:0:0   -t2:8309 -c2:LUKS "$DISK"
+else
+  sgdisk -n2:0:0   -t2:8304 -c2:arch "$DISK"
+fi
 partprobe "$DISK"; sleep 2
 
 # nvme0n1 -> nvme0n1p1 ; sda -> sda1. loop devices take the p-suffix too, which
@@ -239,7 +265,7 @@ case "$DISK" in
   *nvme*|*mmcblk*|*loop*) P1="${DISK}p1"; P2="${DISK}p2" ;;
   *)                      P1="${DISK}1";  P2="${DISK}2"  ;;
 esac
-ok "esp=$P1 luks=$P2"
+ok "esp=$P1 root=$P2"
 
 # ---------------------------------------------------------------------------
 # LUKS2. Passphrase only, deliberately.
@@ -255,20 +281,26 @@ ok "esp=$P1 luks=$P2"
 # --persistent puts the TRIM flag in the header, so every opener, the rescue
 # ISO's included, passes discards (ERGON-34).
 # ---------------------------------------------------------------------------
-say "encrypting $P2"
-if [ -n "${LUKS_PASSPHRASE:-}" ]; then
-  # Only the test harness sets this. A real install types it, so the passphrase
-  # never exists in a process list or a shell history.
-  printf '%s' "$LUKS_PASSPHRASE" | cryptsetup luksFormat --type luks2 --pbkdf argon2id --batch-mode "$P2" -
-  printf '%s' "$LUKS_PASSPHRASE" | cryptsetup open --allow-discards --persistent "$P2" "$CRYPTNAME" -
+if [ "$ENCRYPT" = 1 ]; then
+  say "encrypting $P2"
+  if [ -n "${LUKS_PASSPHRASE:-}" ]; then
+    # Only the test harness sets this. A real install types it, so the passphrase
+    # never exists in a process list or a shell history.
+    printf '%s' "$LUKS_PASSPHRASE" | cryptsetup luksFormat --type luks2 --pbkdf argon2id --batch-mode "$P2" -
+    printf '%s' "$LUKS_PASSPHRASE" | cryptsetup open --allow-discards --persistent "$P2" "$CRYPTNAME" -
+  else
+    cryptsetup luksFormat --type luks2 --pbkdf argon2id "$P2"
+    cryptsetup open --allow-discards --persistent "$P2" "$CRYPTNAME"
+  fi
+  ok "opened as /dev/mapper/$CRYPTNAME"
+  ROOTDEV=/dev/mapper/$CRYPTNAME
 else
-  cryptsetup luksFormat --type luks2 --pbkdf argon2id "$P2"
-  cryptsetup open --allow-discards --persistent "$P2" "$CRYPTNAME"
+  warn "ENCRYPT=0: the root is not encrypted; whoever holds the disk can read it"
+  ROOTDEV=$P2
 fi
-ok "opened as /dev/mapper/$CRYPTNAME"
 
 mkfs.fat -F32 -n EFI "$P1" >/dev/null
-mkfs.btrfs -f -L arch /dev/mapper/$CRYPTNAME >/dev/null
+mkfs.btrfs -f -L arch "$ROOTDEV" >/dev/null
 ok "filesystems created"
 
 # ---------------------------------------------------------------------------
@@ -286,7 +318,7 @@ ok "filesystems created"
 #                    disagrees with what is actually installed
 # ---------------------------------------------------------------------------
 say "creating subvolumes"
-mount /dev/mapper/$CRYPTNAME /mnt
+mount "$ROOTDEV" /mnt
 for sv in @ @home @snapshots @var_log @var_cache_pacman_pkg @var_lib_docker @swap; do
   btrfs subvolume create "/mnt/$sv" >/dev/null
   ok "$sv"
@@ -326,14 +358,14 @@ OPTS="noatime,compress=zstd:1,ssd,space_cache=v2"
 # command line on its own. That pins root exactly as hard as a subvol= in fstab,
 # and no setting in /etc/default/grub turns it off. Mounting the default instead
 # makes grub see no explicit subvolume and emit no rootflags at all.
-mount -o "$OPTS" /dev/mapper/$CRYPTNAME /mnt
+mount -o "$OPTS" "$ROOTDEV" /mnt
 mkdir -p /mnt/{efi,home,.snapshots,var/log,var/cache/pacman/pkg,var/lib/docker,swap}
-mount -o "$OPTS,subvol=@home"                /dev/mapper/$CRYPTNAME /mnt/home
-mount -o "$OPTS,subvol=@snapshots"           /dev/mapper/$CRYPTNAME /mnt/.snapshots
-mount -o "$OPTS,subvol=@var_log"             /dev/mapper/$CRYPTNAME /mnt/var/log
-mount -o "$OPTS,subvol=@var_cache_pacman_pkg" /dev/mapper/$CRYPTNAME /mnt/var/cache/pacman/pkg
-mount -o "$OPTS,subvol=@var_lib_docker"      /dev/mapper/$CRYPTNAME /mnt/var/lib/docker
-mount -o "nodatacow,subvol=@swap"            /dev/mapper/$CRYPTNAME /mnt/swap
+mount -o "$OPTS,subvol=@home"                "$ROOTDEV" /mnt/home
+mount -o "$OPTS,subvol=@snapshots"           "$ROOTDEV" /mnt/.snapshots
+mount -o "$OPTS,subvol=@var_log"             "$ROOTDEV" /mnt/var/log
+mount -o "$OPTS,subvol=@var_cache_pacman_pkg" "$ROOTDEV" /mnt/var/cache/pacman/pkg
+mount -o "$OPTS,subvol=@var_lib_docker"      "$ROOTDEV" /mnt/var/lib/docker
+mount -o "nodatacow,subvol=@swap"            "$ROOTDEV" /mnt/swap
 mount -o umask=0077 "$P1" /mnt/efi
 ok "mounted"
 
@@ -445,6 +477,8 @@ ok "fstab written (root entry free of subvol=, rollback can repoint the default)
 
 # ---------------------------------------------------------------------------
 say "chroot configuration"
+# The initramfs hook that opens the root; none for ENCRYPT=0.
+if [ "$ENCRYPT" = 1 ]; then CRYPTHOOK=" sd-encrypt"; else CRYPTHOOK=""; fi
 arch-chroot /mnt /bin/bash -euo pipefail <<CHROOT
 ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
 hwclock --systohc
@@ -468,7 +502,10 @@ HOSTS
 # prompt. NOTE there is deliberately no 'resume' hook: the systemd hook
 # supersedes base/udev/resume and pulls in systemd-hibernate-resume itself.
 # Listing both is the classic silent hibernation failure.
-sed -i 's/^HOOKS=.*/HOOKS=(base systemd plymouth autodetect microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems fsck)/' /etc/mkinitcpio.conf
+#
+# ENCRYPT=0 drops sd-encrypt and nothing else: Plymouth still draws the
+# splash, there is simply no prompt for it to draw.
+sed -i "s/^HOOKS=.*/HOOKS=(base systemd plymouth autodetect microcode modconf kms keyboard sd-vconsole block$CRYPTHOOK filesystems fsck)/" /etc/mkinitcpio.conf
 sed -i 's|^FILES=.*|FILES=()|' /etc/mkinitcpio.conf
 
 # One UKI per kernel on the ESP, plus the plain initramfs in /boot. The UKI is
@@ -501,11 +538,21 @@ done
 #
 # quiet splash: Plymouth shows the splash and the passphrase prompt instead of
 # kernel messages.
-LUKS_UUID=\$(blkid -s UUID -o value "$P2")
-CMDLINE="rd.luks.name=\$LUKS_UUID=cryptroot rd.luks.options=discard root=/dev/mapper/cryptroot rootflags=subvol=@ rw quiet splash"
+#
+# ENCRYPT=0: no rd.luks at all, and the root and the resume device are the
+# btrfs filesystem's own UUID. The discard question does not arise: btrfs on
+# the partition sees the SSD's discard support directly.
+if [ "$ENCRYPT" = 1 ]; then
+  LUKS_UUID=\$(blkid -s UUID -o value "$P2")
+  ROOTARG=/dev/mapper/cryptroot
+  CMDLINE="rd.luks.name=\$LUKS_UUID=cryptroot rd.luks.options=discard root=\$ROOTARG rootflags=subvol=@ rw quiet splash"
+else
+  ROOTARG=UUID=\$(blkid -s UUID -o value "$P2")
+  CMDLINE="root=\$ROOTARG rootflags=subvol=@ rw quiet splash"
+fi
 if [ "$HIBERNATE" = 1 ]; then
   RESUME_OFFSET=\$(btrfs inspect-internal map-swapfile -r /swap/swapfile)
-  CMDLINE="\$CMDLINE resume=/dev/mapper/cryptroot resume_offset=\$RESUME_OFFSET"
+  CMDLINE="\$CMDLINE resume=\$ROOTARG resume_offset=\$RESUME_OFFSET"
 fi
 echo "\$CMDLINE" > /etc/kernel/cmdline
 
@@ -565,7 +612,7 @@ systemctl enable snapper-timeline.timer snapper-cleanup.timer NetworkManager >/d
 # What the installer was told, for provisioning to read (AUTOLOGIN into
 # host.env).
 mkdir -p /etc/ergon
-printf 'AUTOLOGIN=%s\n' "$AUTOLOGIN" > /etc/ergon/install.env
+printf 'AUTOLOGIN=%s\nENCRYPT=%s\n' "$AUTOLOGIN" "$ENCRYPT" > /etc/ergon/install.env
 
 useradd -m -G wheel -s /bin/zsh "$USERNAME"
 echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/10-wheel
@@ -660,7 +707,7 @@ cat <<'EOF'
 
     # Pick that snapshot in the boot menu (it shows for two seconds) to get
     # a shell, OR boot the Arch ISO and run:
-    #   cryptsetup open /dev/nvme0n1p2 cryptroot
+    #   cryptsetup open /dev/nvme0n1p2 cryptroot   (encrypted installs)
     # then:
     ergon-rollback --list
     ergon-rollback <number>

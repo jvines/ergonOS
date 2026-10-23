@@ -5,7 +5,8 @@
 # ergon:help=native
 #
 # systemd-boot reads plain files on the ESP, and the ESP is the only thing it
-# can read: the root, and every snapshot in it, is inside LUKS. So a snapshot
+# can read: the root, and every snapshot in it, is inside LUKS (or, on an
+# ENCRYPT=0 install, on btrfs, which it cannot read either). So a snapshot
 # is bootable only once its own kernel and initramfs are copied out to the ESP
 # and an entry names them. This is the part grub-btrfs did on GRUB machines.
 #

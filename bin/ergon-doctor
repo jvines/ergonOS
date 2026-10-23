@@ -481,7 +481,8 @@ fi
 
 # --- boot chain --------------------------------------------------------------
 # ERGON-123. Installs from then on boot systemd-boot -> a UKI on the ESP ->
-# Plymouth's passphrase prompt -> greetd's automatic login. Older installs keep
+# Plymouth's passphrase prompt (none with ENCRYPT=0) -> greetd's automatic
+# login. Older installs keep
 # GRUB with /boot inside LUKS until ERGON-125 migrates them; both are healthy,
 # and the rows say which one this is. The ESP is root-only (umask 0077), so the
 # file checks need sudo, as the snapshot count above does.
@@ -528,6 +529,10 @@ if [ -r /etc/greetd/config.toml ]; then
     who=$(sed -n '/^\[initial_session\]/,/^\[/ s/^user *= *"\(.*\)"/\1/p' /etc/greetd/config.toml | head -1)
     if [ -e "${ERGON_SYSROOT:-}/dev/mapper/cryptroot" ]; then
       rec ok "autologin" "$who is logged in after the disk passphrase (AUTOLOGIN=1); tuigreet after logout"
+    elif grep -qx 'ENCRYPT=0' "${ERGON_SYSROOT:-}/etc/ergon/install.env" 2>/dev/null; then
+      # ERGON-123: installed without encryption on purpose, so straight to the
+      # desktop is what was asked for, not an oversight to warn about.
+      rec ok "autologin" "$who is logged in at boot; the disk was installed unencrypted (ENCRYPT=0); tuigreet after logout"
     else
       rec warn "autologin" "$who is logged in automatically but the root is not encrypted: anyone who powers this on is in. AUTOLOGIN=0 in host.env"
     fi

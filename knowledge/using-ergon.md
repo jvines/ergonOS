@@ -37,7 +37,9 @@ password greeter; the lock screen and `sudo` still ask for your password. The
 keyring Electron apps keep their secrets in has no password of its own, since
 nothing would type one: the disk encryption is what protects it. The boot menu
 (systemd-boot, two seconds) lists the recent snapshots and linux-lts.
-`ergon explain security` says what the unencrypted ESP holds; `ergon explain
+A disk installed with `ENCRYPT=0` asks nothing at all: the splash, then the
+desktop. `ergon explain security` says what the unencrypted ESP holds, and
+what an unencrypted disk gives away; `ergon explain
 troubleshooting` how to change any of it.
 
 ## Bundles are what you asked for, and nothing you didn't
