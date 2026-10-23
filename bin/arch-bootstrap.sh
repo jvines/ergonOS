@@ -518,6 +518,8 @@ echo "\$CMDLINE" > /etc/kernel/cmdline
 # --variables=yes: in a chroot bootctl leaves the EFI variables alone by
 # default, and the firmware then finds only the removable-media fallback path.
 bootctl install --esp-path=/efi --variables=yes
+grep -qi 'Linux Boot Manager' <<<"\$(efibootmgr 2>/dev/null)" \
+  || echo "!! no Linux Boot Manager entry in the firmware; it will fall back to EFI/BOOT/BOOTX64.EFI" >&2
 cat > /efi/loader/loader.conf <<LOADER
 # Written by arch-bootstrap.sh. Two seconds to pick a snapshot or linux-lts;
 # the default is the first entry that is not marked bad (see ergon-boot-guard).
