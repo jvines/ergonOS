@@ -1251,12 +1251,13 @@ say "out-of-memory containment"
 # started straight from a keybind, which put them and everything they ran in
 # exactly that unit.
 #
-# Four files, each answering a different half:
+# Five files, each answering a different half:
 #
 #   oomd.conf.d   act on memory PRESSURE. The kernel OOM killer only fires when
 #                 an allocation actually fails, which on a machine with swap is
 #                 minutes after it stopped being usable.
 #   app.slice.d   where systemd-oomd is allowed to act.
+#   app-.slice.d  never "kill" a slice that has emptied (it holds only cache).
 #   tmux-spawn-   put every tmux pane there too, wherever its server started.
 #   wayland-wm@   the kernel killing something that IS still in the compositor's
 #                 unit must not end the session.
@@ -1268,7 +1269,8 @@ say "out-of-memory containment"
 # each uwsm-app launch in its own scope under app-graphical.slice, which is a
 # child of app.slice -- so monitoring app.slice reaches each app's scope
 # individually, two levels down, and can never kill app-graphical.slice as a
-# whole because a slice with children is not a leaf. app.slice also covers the
+# whole because a slice with children is not a leaf (one WITHOUT children is,
+# which app-.slice.d below answers). app.slice also covers the
 # transient scope `ergon watch` puts each run in; app-graphical.slice would not,
 # since `systemd-run --user` defaults to the ROOT slice (ergon-watch asks for
 # --slice=app.slice for that reason). The compositor is in session.slice, which
@@ -1306,6 +1308,24 @@ if _changed /etc/systemd/user/app.slice.d/10-ergon-oomd.conf <<'OOMAPP'
 [Slice]
 ManagedOOMMemoryPressure=kill
 OOMAPP
+then _user_reload=1; fi
+
+if _changed /etc/systemd/user/app-.slice.d/10-ergon-oomd.conf <<'OOMSLICES'
+# Written by provision-arch.sh. ERGON-123.
+#
+# A slice never holds a process, only child cgroups. Once its last app exits,
+# app-graphical.slice is a LEAF under app.slice -- and oomd's candidates are
+# leaves -- still charged with the page cache its apps left behind, which the
+# kernel moves up to it when their scopes go. Measured in the VM: 358M of it,
+# no process, and the biggest candidate under app.slice. When a runaway has
+# filled swap, every candidate's reclaim rate is zero, size decides, and oomd
+# "killed" that empty slice every 15 s while the runaway kept the machine
+# stalled. omit takes such a slice out of the choice; it changes nothing for
+# the app scopes inside one, which are candidates in their own right (the
+# xattr this sets is not inherited by child cgroups).
+[Slice]
+ManagedOOMPreference=omit
+OOMSLICES
 then _user_reload=1; fi
 
 if _changed /etc/systemd/user/tmux-spawn-.scope.d/10-ergon-oomd.conf <<'OOMTMUX'

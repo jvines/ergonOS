@@ -2439,6 +2439,7 @@ oom_diag() {
   oom_diag_shown=1
   echo "     --- out-of-memory diagnosis ---"
   for f in /etc/systemd/user/app.slice.d/10-ergon-oomd.conf \
+           /etc/systemd/user/app-.slice.d/10-ergon-oomd.conf \
            /etc/systemd/user/tmux-spawn-.scope.d/10-ergon-oomd.conf \
            /etc/systemd/user/wayland-wm@.service.d/10-ergon-oom.conf \
            /etc/systemd/oomd.conf.d/10-ergon.conf; do
