@@ -2384,6 +2384,7 @@ elif pgrep -x swaybg >/dev/null; then
     && ok "  swaybg shows the applied image ($(basename "$_want"))" \
     || bad "  swaybg shows '$(_sb_img)', the applied image is '$_want'"
   # A change of wallpaper has to reach the fallback.
+  _bg_keep=$(bgstate)
   _sw=/tmp/ergon121-probe.png
   magick -size 64x64 xc:'#336699' $_sw
   chmod 644 $_sw
@@ -2397,7 +2398,7 @@ elif pgrep -x swaybg >/dev/null; then
   [ "$(pgrep -cx swaybg)" = 1 ] && ! pgrep -x hyprpaper >/dev/null \
     && ok "  and still exactly one wallpaper process" || bad "  wallpaper processes after the change: $(pgrep -a 'swaybg|hyprpaper' | tr '\n' ';')"
   # Put the previous one back so later checks see what they expect.
-  usr "timeout 60 ergon-wallpaper --generated" >/dev/null 2>&1 </dev/null
+  usr "timeout 60 ergon-wallpaper --set $_bg_keep" >/dev/null 2>&1 </dev/null
 elif grep -q "createImageFromDmaBufs failed" /run/user/1000/hypr/*/hyprland.log 2>/dev/null; then
   # Same VM limitation that stops grim capturing, and for the same reason:
   # QEMU's virtio-gpu has no working dmabuf path, so EGL refuses the import
