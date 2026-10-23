@@ -87,6 +87,10 @@ jobs:
       - name: Hardware
         run: cd "$CI_DIR" && ./bin/test-hardware.sh
 
+      # ERGON-123: systemd-boot entries per snapshot, and the boot counter.
+      - name: Boot entries
+        run: cd "$CI_DIR" && ./bin/test-boot-entries.sh
+
       - name: Report scrubber
         run: cd "$CI_DIR" && ./bin/test-report.sh
 

@@ -189,20 +189,39 @@ fi
 # paccache keeps the last 3 versions. That cache lives on its own subvolume
 # precisely so a rollback can still reach the packages needed to fix itself.
 sudo systemctl enable --now snapper-timeline.timer snapper-cleanup.timer \
-                            paccache.timer grub-btrfsd >/dev/null 2>&1 || true
+                            paccache.timer >/dev/null 2>&1 || true
 sudo install -Dm644 /dev/stdin /etc/conf.d/pacman-contrib <<'EOF'
 PACCACHE_ARGS='-rk3'
 EOF
 ok "snapshot + cache timers"
 
+# Snapshots in the boot menu. GRUB installs: grub-btrfsd regenerates its
+# submenu. systemd-boot installs (ERGON-123): ergon-boot-entries copies each
+# recent snapshot's kernel to the ESP and writes its entry, from a path unit
+# on /.snapshots (lib/bootloader.sh says which layout this is).
+# shellcheck source=../lib/bootloader.sh
+. "$ERGON/lib/bootloader.sh"
+case "$(ergon_boot_layout)" in
+  systemd-boot)
+    sudo "$ERGON/bin/ergon-boot-entries" install || warn "snapshot boot entries not installed (see above)" ;;
+  grub)
+    sudo systemctl enable --now grub-btrfsd >/dev/null 2>&1 \
+      && ok "grub-btrfsd (snapshots in the GRUB menu)" || warn "grub-btrfsd would not enable" ;;
+  *) skip "no systemd-boot or GRUB configuration; snapshots are not in a boot menu" ;;
+esac
+
 # Snapshots being bootable is worth little if recovering from a broken update
-# needs someone who knows to pick one at the GRUB menu, on a machine that just
+# needs someone who knows to pick one at the boot menu, on a machine that just
 # failed to boot. The guard makes the machine do it: two boots that never reach
 # the default target and the third boots the last one that did. It needs the
-# EFI partition (its counter lives there, because GRUB must write it before the
-# kernel runs) and snapper's layout, and says so and skips when either is
-# missing -- a desktop installed some other way is unaffected.
+# EFI partition (the counter lives there: systemd-boot's in the entry's name,
+# GRUB's in a grubenv) and snapper's layout, and says so and skips when either
+# is missing -- a desktop installed some other way is unaffected.
 "$ERGON/bin/ergon-boot-guard" install || warn "boot guard not installed (see the message above)"
+
+# The boot splash and passphrase prompt, in the palette the desktop uses
+# (ERGON-123). The initramfs is rebuilt once, below, with the floppy blacklist.
+"$ERGON/bin/ergon-plymouth" install --no-rebuild || warn "boot splash not installed (see above)"
 
 # Snapshots live on the disk they protect. The backup timers go in now; they do
 # nothing until `ergon backup init REPO` says where, and ergon doctor warns
@@ -268,23 +287,28 @@ EOF
 #
 # modprobe.blacklist= on the kernel command line applies from the first module
 # load, initramfs included. That is what actually removes the drive.
-_g=/etc/default/grub
-if [ -f "$_g" ]; then
-  _cur=$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"$/\1/p' "$_g")
-  case " $_cur " in
-    *" modprobe.blacklist=floppy "*) ok "floppy already blacklisted on the cmdline" ;;
-    *)
-      sudo sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${_cur:+$_cur }modprobe.blacklist=floppy\"|" "$_g"
-      sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 \
-        && ok "floppy blacklisted on the kernel cmdline" \
-        || warn "cmdline written but grub-mkconfig failed"
-      ;;
-  esac
-else
-  warn "no /etc/default/grub; the floppy will come back on the next boot"
-fi
+#
+# /etc/kernel/cmdline on systemd-boot installs, /etc/default/grub on GRUB ones
+# (lib/bootloader.sh).
+_rc=0; ergon_cmdline_add "" modprobe.blacklist=floppy >/dev/null || _rc=$?
+case $_rc in
+  2) ok "floppy already blacklisted on the cmdline" ;;
+  0) if [ "$(ergon_boot_layout)" = grub ]; then
+       sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 \
+         && ok "floppy blacklisted on the kernel cmdline" || warn "cmdline written but grub-mkconfig failed"
+     else
+       ok "floppy blacklisted on the kernel cmdline (the UKIs are rebuilt below)"
+     fi ;;
+  *) warn "no kernel cmdline to edit ($(ergon_boot_layout)); the floppy will come back on the next boot" ;;
+esac
 # Rebuild the initramfs too, so its copy of modprobe.d carries the blacklist.
-sudo mkinitcpio -P >/dev/null 2>&1 || warn "mkinitcpio failed; the cmdline still covers this"
+# On systemd-boot this is also what puts the cmdline and the splash into the
+# UKIs, and the snapshot entries copy the cmdline after it.
+if sudo mkinitcpio -P >/dev/null 2>&1; then
+  [ "$(ergon_boot_layout)" != systemd-boot ] || sudo "$ERGON/bin/ergon-boot-entries" sync >/dev/null 2>&1 || true
+else
+  warn "mkinitcpio failed; the cmdline still covers this"
+fi
 # And take it away on THIS boot, so the prompt stops now rather than after a
 # reboot. This is the convenience, not the fix.
 sudo rmmod floppy 2>/dev/null || true
@@ -725,56 +749,112 @@ say "desktop session"
 #     -o -n, and errors on anything else.
 #
 # This line now matches, exactly, what the packaged hyprland-uwsm.desktop runs.
-sudo install -Dm644 /dev/stdin /etc/greetd/config.toml <<'EOF'
-[terminal]
-vt = 1
-
-[default_session]
-command = "tuigreet --time --remember --remember-user-session --asterisks --cmd 'uwsm start -e -D Hyprland hyprland.desktop'"
-user = "greeter"
-EOF
-sudo systemctl enable greetd >/dev/null 2>&1 || true
-ok "greetd + tuigreet on vt1"
-
-# ERGON-64: unlock the login keyring with the login password. uwsm/env-hyprland.d
-# sends Electron apps' keys there, and with it locked -- or never created -- the
-# first one D-Bus-activates gcr-prompter and waits behind "Unlock Login
-# Keyring"; cancelling leaves what it stored undecryptable. greetd's PAM file
-# (greetd -> system-local-login) has no pam_gnome_keyring. The measured spots:
-# auth after the include, where the password has been checked, and session
-# after it, where pam_systemd has made the runtime dir the daemon listens in.
-# Fingerprint never passes here (hyprlock asks fprintd over D-Bus), so a greetd
-# login always carries a password. And passwd, after its include: without it an
-# ordinary `passwd` leaves the keyring on the old password, and every later
-# login reads "the password for the login keyring was invalid" -- locked again.
 #
+# ERGON-123: AUTOLOGIN=1 adds an initial_session, which greetd runs once, at
+# boot, as the user and with no password: the disk passphrase Plymouth just
+# took is the one password. Logging out, or the session ending, lands on the
+# tuigreet greeter as before; the lock screen on resume is unchanged.
+#
+# Where the answer comes from, first that answers: AUTOLOGIN in host.env, then
+# ERGON_AUTOLOGIN, then what arch-bootstrap.sh was told (/etc/ergon/install.env).
+# Without any of them it is on only for an encrypted root on the systemd-boot
+# layout: a GRUB install keeps the greeter it has, and an unencrypted disk
+# never logs anyone in unasked.
+_host=$(hostname -s 2>/dev/null || cat /etc/hostname)
+_autologin() {
+  local v
+  v=$(sed -n 's/^AUTOLOGIN=\([01]\).*/\1/p' "$ERGON/hosts/$_host/host.env" 2>/dev/null | tail -1)
+  [ -n "$v" ] || v=${ERGON_AUTOLOGIN:-}
+  [ -n "$v" ] || v=$(sed -n 's/^AUTOLOGIN=\([01]\).*/\1/p' /etc/ergon/install.env 2>/dev/null | tail -1)
+  if [ -z "$v" ]; then
+    if [ "$(ergon_boot_layout)" = systemd-boot ] && [ -e /dev/mapper/cryptroot ]; then v=1; else v=0; fi
+  fi
+  [ "$v" = 1 ] && echo 1 || echo 0
+}
+AUTOLOGIN=$(_autologin)
+_session="uwsm start -e -D Hyprland hyprland.desktop"
+{
+  printf '%s\n' "# Written by provision-arch.sh." "[terminal]" "vt = 1" ""
+  printf '%s\n' "[default_session]" \
+    "command = \"tuigreet --time --remember --remember-user-session --asterisks --cmd '$_session'\"" \
+    'user = "greeter"'
+  if [ "$AUTOLOGIN" = 1 ]; then
+    printf '%s\n' "" "# AUTOLOGIN=1 in hosts/$_host/host.env: straight into Hyprland after the" \
+      "# disk passphrase, once per boot." "[initial_session]" "command = \"$_session\"" "user = \"$(id -un)\""
+  fi
+} | sudo install -Dm644 /dev/stdin /etc/greetd/config.toml
+sudo systemctl enable greetd >/dev/null 2>&1 || true
+if [ "$AUTOLOGIN" = 1 ]; then
+  ok "greetd: $(id -un) logged in automatically at boot$([ -e /dev/mapper/cryptroot ] && echo ", after the disk unlock"); tuigreet on vt1 after logout"
+else
+  ok "greetd + tuigreet on vt1 (AUTOLOGIN=0)"
+fi
+
+# The keyring (ERGON-123, after omarchy). With nobody typing a login password
+# there is nothing for PAM to unlock a password-protected login keyring with,
+# so the default keyring has no password: Default_keyring, created here before
+# any app can ask gnome-keyring to make one (which is a password dialog).
+# Electron and Chromium store their key there and never prompt. The disk is
+# what protects it at rest.
+#
+# ERGON-64's pam_gnome_keyring lines in /etc/pam.d/greetd and passwd unlocked
+# and re-keyed a login keyring with the login password. They stay only on a
+# machine that still has that keyring and still logs in at the greeter
+# (AUTOLOGIN=0, installed before this); everywhere else they are removed, so a
+# greeter login cannot create a second, password-protected keyring beside the
+# default one.
+_kr=$HOME/.local/share/keyrings
+if [ "$AUTOLOGIN" = 0 ] && [ -f "$_kr/login.keyring" ]; then
+  _keep_pam=1
+else
+  _keep_pam=0
+  mkdir -p "$_kr" && chmod 700 "$_kr"
+  if [ ! -f "$_kr/Default_keyring.keyring" ]; then
+    # An unencrypted keyring file: no [keyring] password, so it is never locked.
+    printf '%s\n' '[keyring]' 'display-name=Default keyring' "ctime=$(date +%s)" 'mtime=0' \
+      'lock-on-idle=false' 'lock-after=false' > "$_kr/Default_keyring.keyring"
+    chmod 600 "$_kr/Default_keyring.keyring"
+    ok "passwordless default keyring created"
+  fi
+  if [ "$(cat "$_kr/default" 2>/dev/null)" != Default_keyring ]; then
+    printf 'Default_keyring\n' > "$_kr/default"; chmod 644 "$_kr/default"
+    ok "the passwordless keyring is the default (apps never ask to unlock one)"
+  else
+    skip "the passwordless keyring is already the default"
+  fi
+fi
+
 # An edit, not a file: the rest is the package's, and pacman keeps an edited
-# backup file across upgrades. Keyring lines already there are dropped first, so
-# a re-run -- `ergon sync` on an installed machine -- leaves one of each. Each
-# line hangs off an include only one of the two files has.
+# backup file across upgrades. Keyring lines already there are dropped first,
+# so a re-run -- ergon sync on an installed machine -- leaves one of each, or
+# none. Each line hangs off an include only one of the two files has: auth
+# after the include, where the password has been checked, and session after
+# it, where pam_systemd has made the runtime dir the daemon listens in.
 _pam_kr=$(cat <<'PAMKR'
 /^[[:space:]]*-?(auth|session|password)[[:space:]].*pam_gnome_keyring\.so/ { next }
 { print }
-$1 == "auth" && $2 == "include" && $3 == "system-local-login" { print "auth       optional     pam_gnome_keyring.so" }
-$1 == "session" && $2 == "include" && $3 == "system-local-login" { print "session    optional     pam_gnome_keyring.so auto_start" }
-$1 == "password" && $2 == "include" && $3 == "system-auth" { print "password   optional     pam_gnome_keyring.so" }
+keep && $1 == "auth" && $2 == "include" && $3 == "system-local-login" { print "auth       optional     pam_gnome_keyring.so" }
+keep && $1 == "session" && $2 == "include" && $3 == "system-local-login" { print "session    optional     pam_gnome_keyring.so auto_start" }
+keep && $1 == "password" && $2 == "include" && $3 == "system-auth" { print "password   optional     pam_gnome_keyring.so" }
 PAMKR
 )
-for _pam in greetd:2 passwd:1; do   # the file, and how many keyring lines it ends with
+for _pam in greetd:2 passwd:1; do   # the file, and how many keyring lines it ends with when kept
   _pf=/etc/pam.d/${_pam%:*}
-  _pam_new=$(awk "$_pam_kr" "$_pf" 2>/dev/null) || _pam_new=
+  _want=$(( _keep_pam ? ${_pam#*:} : 0 ))
+  _pam_new=$(awk -v keep="$_keep_pam" "$_pam_kr" "$_pf" 2>/dev/null) || _pam_new=
   if [ -z "$_pam_new" ]; then
     # Never write an empty result: PAM would fall through to /etc/pam.d/other,
     # which refuses everything -- for greetd, every login.
-    warn "could not read $_pf, so it does not keep the login keyring in step"
-  elif [ "$(grep -cE '^(auth|session|password) +optional +pam_gnome_keyring' <<<"$_pam_new")" != "${_pam#*:}" ]; then
+    warn "could not read $_pf; its keyring lines are left as they are"
+  elif [ "$(grep -cE '^(auth|session|password) +optional +pam_gnome_keyring' <<<"$_pam_new")" != "$_want" ]; then
     # The lines hang off the includes. A file that stopped including
     # system-local-login / system-auth needs a person, not a guess.
     warn "$_pf no longer has the include pam_gnome_keyring goes after; the login keyring is left out of it"
   elif _changed "$_pf" <<<"$_pam_new"; then
-    ok "${_pam%:*} keeps the login keyring in step with the login password (pam_gnome_keyring)"
+    [ "$_keep_pam" = 1 ] && ok "${_pam%:*} keeps the existing login keyring in step with the login password" \
+                         || ok "${_pam%:*} no longer unlocks or creates a login keyring (the default keyring has no password)"
   else
-    skip "${_pam%:*} already keeps the login keyring in step"
+    skip "${_pam%:*} keyring lines already as they should be"
   fi
 done
 
@@ -889,7 +969,7 @@ if [ -d "$ERGON/hosts/$HOST" ]; then
   skip "hosts/$HOST already exists"
 else
   mkdir -p "$ERGON/hosts/$HOST"
-  sed -e 's/^GRAPHICAL=0/GRAPHICAL=1/' -e 's/^PROFILE=server/PROFILE=laptop/' \
+  sed -e 's/^GRAPHICAL=0/GRAPHICAL=1/' -e 's/^PROFILE=server/PROFILE=laptop/' -e "s/^AUTOLOGIN=.*/AUTOLOGIN=$AUTOLOGIN/" \
       "$ERGON/hosts/_template/host.env" > "$ERGON/hosts/$HOST/host.env"
   # The one machine question asked here, while the file is new (ERGON-39):
   # whether to run tailscaled. ERGON_TAILSCALE=1 or 0 answers it unattended;
@@ -1171,12 +1251,13 @@ say "out-of-memory containment"
 # started straight from a keybind, which put them and everything they ran in
 # exactly that unit.
 #
-# Four files, each answering a different half:
+# Five files, each answering a different half:
 #
 #   oomd.conf.d   act on memory PRESSURE. The kernel OOM killer only fires when
 #                 an allocation actually fails, which on a machine with swap is
 #                 minutes after it stopped being usable.
 #   app.slice.d   where systemd-oomd is allowed to act.
+#   app-.slice.d  never "kill" a slice that has emptied (it holds only cache).
 #   tmux-spawn-   put every tmux pane there too, wherever its server started.
 #   wayland-wm@   the kernel killing something that IS still in the compositor's
 #                 unit must not end the session.
@@ -1188,7 +1269,8 @@ say "out-of-memory containment"
 # each uwsm-app launch in its own scope under app-graphical.slice, which is a
 # child of app.slice -- so monitoring app.slice reaches each app's scope
 # individually, two levels down, and can never kill app-graphical.slice as a
-# whole because a slice with children is not a leaf. app.slice also covers the
+# whole because a slice with children is not a leaf (one WITHOUT children is,
+# which app-.slice.d below answers). app.slice also covers the
 # transient scope `ergon watch` puts each run in; app-graphical.slice would not,
 # since `systemd-run --user` defaults to the ROOT slice (ergon-watch asks for
 # --slice=app.slice for that reason). The compositor is in session.slice, which
@@ -1226,6 +1308,24 @@ if _changed /etc/systemd/user/app.slice.d/10-ergon-oomd.conf <<'OOMAPP'
 [Slice]
 ManagedOOMMemoryPressure=kill
 OOMAPP
+then _user_reload=1; fi
+
+if _changed /etc/systemd/user/app-.slice.d/10-ergon-oomd.conf <<'OOMSLICES'
+# Written by provision-arch.sh. ERGON-123.
+#
+# A slice never holds a process, only child cgroups. Once its last app exits,
+# app-graphical.slice is a LEAF under app.slice -- and oomd's candidates are
+# leaves -- still charged with the page cache its apps left behind, which the
+# kernel moves up to it when their scopes go. Measured in the VM: 358M of it,
+# no process, and the biggest candidate under app.slice. When a runaway has
+# filled swap, every candidate's reclaim rate is zero, size decides, and oomd
+# "killed" that empty slice every 15 s while the runaway kept the machine
+# stalled. omit takes such a slice out of the choice; it changes nothing for
+# the app scopes inside one, which are candidates in their own right (the
+# xattr this sets is not inherited by child cgroups).
+[Slice]
+ManagedOOMPreference=omit
+OOMSLICES
 then _user_reload=1; fi
 
 if _changed /etc/systemd/user/tmux-spawn-.scope.d/10-ergon-oomd.conf <<'OOMTMUX'

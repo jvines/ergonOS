@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# ergon:summary=Install the boot splash in the active palette
+# ergon:group=system
+# ergon:args=install [--palette NAME] [--no-rebuild] | status
+# ergon:help=native
+#
+# The splash and the disk passphrase prompt are drawn by Plymouth, from the
+# initramfs, before any of $HOME exists. So the theme is rendered here from
+# plymouth/*.tpl and copied into /usr/share/plymouth/themes/ergon, and the
+# initramfs (the UKIs) is rebuilt when it changed. ergon-theme calls this after
+# a palette switch; provisioning calls it on every run.
+#
+# The templates are .tpl, not .in, so ergon-theme's own render loop leaves them
+# alone: Plymouth wants colours as "r, g, b" in 0..1, which no other surface
+# does.
+#
+# Only on machines whose initramfs has the plymouth hook (installs from
+# ERGON-123 on). A GRUB machine has none, and this says so and exits 0.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+DEST="${ERGON_DESTROOT:-}"
+THEMEDIR="$DEST/usr/share/plymouth/themes/ergon"
+
+ok()   { printf '   ok   %s\n' "$*"; }
+warn() { printf '   !!   %s\n' "$*" >&2; }
+die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
+
+has_hook() { grep -qE '^HOOKS=.*[( ]plymouth[ )]' "$DEST/etc/mkinitcpio.conf" 2>/dev/null; }
+
+# The palette the desktop uses: the one ergon-theme recorded for the person
+# running this, through sudo too.
+active_palette() {
+  local who home
+  who=${SUDO_USER:-$(id -un)}
+  home=$(getent passwd "$who" | cut -d: -f6)
+  if [ -f "$home/.local/state/ergon/palette" ]; then cat "$home/.local/state/ergon/palette"
+  else echo cool; fi
+}
+
+resolve() {
+  case "$1" in
+    /*|./*|../*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$ERGON/theme/$1.env" ;;
+  esac
+}
+
+# @COOL_X@ -> "r, g, b" (0..1), @COOL_X:raw@ -> RRGGBB. Keys and values are
+# validated as ergon-theme does, so a palette line cannot become sed.
+sedprog() {  # sedprog <palette>
+  local k v
+  while IFS='=' read -r k v; do
+    case "$k" in ''|'#'*) continue ;; COOL_[A-Z0-9_]*) ;; *) die "bad key in $1: $k" ;; esac
+    v="${v%%[[:space:]]*}"
+    [[ $v =~ ^#[0-9A-Fa-f]{6}$ ]] || die "$k is not a 6-digit hex colour: '$v'"
+    printf 's|@%s@|%s|g\ns|@%s:raw@|%s|g\n' "$k" "$(floats "${v#\#}")" "$k" "${v#\#}"
+  done < "$1"
+}
+
+floats() {  # floats RRGGBB -> "r, g, b" in 0..1, three decimals
+  local i x out=()
+  for i in 0 2 4; do
+    x=$(( (16#${1:$i:2} * 1000 + 127) / 255 ))
+    out+=("$(printf '%d.%03d' $((x / 1000)) $((x % 1000)))")
+  done
+  printf '%s, %s, %s' "${out[@]}"
+}
+
+render() {  # render <palette file> <outdir>
+  local prog f
+  prog=$(sedprog "$1")
+  for f in ergon.plymouth ergon.script; do
+    sed -e "$prog" "$ERGON/plymouth/$f.tpl" > "$2/$f"
+    if grep -q '@COOL_' "$2/$f"; then die "$f references a colour $1 does not define"; fi
+  done
+}
+
+case "${1:-status}" in
+install)
+  shift
+  PAL=""; REBUILD=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --palette) PAL="${2:?--palette needs a name}"; shift 2 ;;
+      --no-rebuild) REBUILD=0; shift ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+  has_hook || { echo "   no plymouth hook in this initramfs (a GRUB install); nothing to theme"; exit 0; }
+  # The palette is read before sudo, as the person whose desktop it is.
+  [ -n "$PAL" ] || PAL=$(active_palette)
+  if [ "$(id -u)" != 0 ]; then
+    a=(install --palette "$PAL"); [ "$REBUILD" = 1 ] || a+=(--no-rebuild)
+    exec sudo "$0" "${a[@]}"
+  fi
+  PF=$(resolve "$PAL")
+  [ -f "$PF" ] || die "no palette '$PAL'"
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  render "$PF" "$tmp"
+  changed=0
+  for f in ergon.plymouth ergon.script; do
+    cmp -s "$tmp/$f" "$THEMEDIR/$f" || { install -Dm644 "$tmp/$f" "$THEMEDIR/$f"; changed=1; }
+  done
+  # The theme the plymouth hook copies into the initramfs.
+  conf="$DEST/etc/plymouth/plymouthd.conf"
+  if ! grep -qx 'Theme=ergon' "$conf" 2>/dev/null; then
+    install -Dm644 /dev/stdin "$conf" <<'EOF'
+# Written by ergon-plymouth.
+[Daemon]
+Theme=ergon
+ShowDelay=0
+EOF
+    changed=1
+  fi
+  if [ "$changed" = 0 ]; then
+    ok "boot splash already in $(basename "$PF" .env)"
+  elif [ "$REBUILD" = 1 ]; then
+    mkinitcpio -P >/dev/null 2>&1 || die "mkinitcpio -P failed; the splash changes at the next successful rebuild"
+    ok "boot splash in $(basename "$PF" .env); initramfs rebuilt"
+  else
+    ok "boot splash in $(basename "$PF" .env) (takes effect at the next initramfs rebuild)"
+  fi
+  printf '%s\n' "$(basename "$PF" .env)" > "$THEMEDIR/palette"
+  ;;
+
+status)
+  has_hook || { echo "   no plymouth hook in this initramfs (a GRUB install)"; exit 0; }
+  cur=$(cat "$THEMEDIR/palette" 2>/dev/null || echo none)
+  want=$(active_palette); want=$(basename "$want" .env)
+  printf '   splash palette: %s (desktop: %s)\n' "$cur" "$want"
+  [ "$cur" = "$want" ]
+  ;;
+
+-h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) die "unknown command '$1' (install|status)" ;;
+esac

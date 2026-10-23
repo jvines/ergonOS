@@ -34,6 +34,10 @@ ERGON_PROVISION_INPUTS=(
   bin/ergon-hardware
   bin/ergon-backup
   bin/ergon-boot-guard
+  bin/ergon-boot-entries
+  bin/ergon-plymouth
+  lib/bootloader.sh
+  plymouth
   packages/pacman
   packages/aur
   packages/aur-hardware

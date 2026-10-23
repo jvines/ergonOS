@@ -33,4 +33,20 @@ if [ -e "/.snapshots/$before/snapshot$MARKER" ]; then
 fi
 echo "SNAPSHOT_IS_CLEAN=yes"
 
+# The snapshot must reach the boot menu by itself (ERGON-123): the path unit
+# on /.snapshots runs ergon-boot-entries, which copies its kernel to the ESP
+# and writes its entry. Then the next boot is that entry, once, chosen the way
+# a person picking it from the menu would.
+ENT=/efi/loader/entries/ergon-snapshot-$before.conf
+for _ in $(seq 60); do [ -f "$ENT" ] && break; sleep 1; done
+if [ -f "$ENT" ]; then
+  echo "SNAPSHOT_ENTRY=yes"
+  sed 's/^/     /' "$ENT"
+  bootctl set-oneshot "ergon-snapshot-$before.conf" && echo "ONESHOT_SET=yes"
+else
+  echo "SNAPSHOT_ENTRY=no"
+  ls /efi/loader/entries/ | sed 's/^/     /'
+  systemctl status ergon-boot-entries.path ergon-boot-entries.service --no-pager 2>&1 | tail -15
+fi
+
 echo "ARM_DONE"

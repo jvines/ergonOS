@@ -45,7 +45,7 @@ not()  { ! "$@"; }
 E=$T/ergon
 mkdir -p "$E/bin" "$T/stub" "$T/log"
 cp "$REPO/bin/ergon-hardware" "$REPO/bin/ergon-sleep" "$REPO/bin/ergon-battery" "$E/bin/"
-cp -r "$REPO/hardware" "$E/"
+cp -r "$REPO/hardware" "$REPO/lib" "$E/"
 cp "$REPO/bin/ergon-gpu" "$E/bin/"
 # ergon-aur is stubbed: it builds from the AUR. It records what it was asked for.
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TEST_ROOT/log/aur"\n[ ! -e "$TEST_ROOT/aur-fails" ]\n' > "$E/bin/ergon-aur"; chmod +x "$E/bin/ergon-aur"
@@ -168,6 +168,19 @@ check "power key: ignored by logind (ergon-session owns it)" hasx "$D/etc/system
 reset_logs; apply fw
 check "a second apply does not add the parameter twice" hasx "$D/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet amdgpu.dcdebugmask=0x610"'
 check "  nor regenerate grub.cfg" test ! -e "$T/log/grub"
+
+echo "== the same laptop on systemd-boot (ERGON-123)"
+# The cmdline lives in /etc/kernel/cmdline and is baked into the UKIs, so a
+# profile parameter means a rebuild, not grub-mkconfig.
+mkdir -p "$T/sdb/dest/etc/kernel"; cp -r "$T/fw/root" "$T/sdb/root"
+printf 'root=/dev/mapper/cryptroot rootflags=subvol=@ rw quiet splash\n' > "$T/sdb/dest/etc/kernel/cmdline"
+reset_logs; apply sdb; D=$T/sdb/dest
+check "profile parameter added to /etc/kernel/cmdline" hasx "$D/etc/kernel/cmdline" 'root=/dev/mapper/cryptroot rootflags=subvol=@ rw quiet splash amdgpu.dcdebugmask=0x610'
+check "  and the UKIs rebuilt" hasx "$T/log/mkinitcpio" "-P"
+check "  and no grub-mkconfig" test ! -e "$T/log/grub"
+reset_logs; apply sdb
+check "a second apply adds nothing" hasx "$D/etc/kernel/cmdline" 'root=/dev/mapper/cryptroot rootflags=subvol=@ rw quiet splash amdgpu.dcdebugmask=0x610'
+check "  and rebuilds nothing" test ! -e "$T/log/mkinitcpio"
 
 echo "== an Intel laptop"
 reset_logs; apply tp; D=$T/tp/dest

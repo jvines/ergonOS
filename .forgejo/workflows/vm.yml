@@ -40,6 +40,11 @@ on:
       # change to them belongs in the same bucket as a change to install.sh
       # itself, which is what this list already says is worth 35 minutes.
       - 'bin/ergon-theme'
+      - 'bin/ergon-boot-entries'
+      - 'bin/ergon-boot-guard'
+      - 'bin/ergon-plymouth'
+      - 'lib/bootloader.sh'
+      - 'plymouth/**'
       - 'lib/user-config.sh'
       # The surfaces the session suite now switches palette against. Without
       # them the assertion added for ERGON-33 could only ever fail on the

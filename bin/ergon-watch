@@ -124,14 +124,26 @@ done
 # the instant it dies, taking the manager's verdict on it -- the only witness
 # below that a kill was for memory -- with it. The failed scope is cleared by
 # hand once it has been read.
+#
+# ManagedOOMMemoryPressure=kill ON THE SCOPE ITSELF, and not only through
+# app.slice (ERGON-123). Under app.slice the run is one candidate among many,
+# and oomd picks among them by reclaim rate, then by size. A run held at
+# MemoryHigh pushes everything above the limit into swap, quickly and at low
+# pressure, so the pressure only crosses the limit once swap is FULL -- and then
+# nothing can be reclaimed from the run at all, its reclaim rate is zero like
+# everyone else's, and the biggest cgroup wins. Measured in the VM: an emptied
+# app-graphical.slice holding 358M of page cache outranked a 280M run, oomd
+# "killed" it every 15 s with nothing in it to kill, and the run stalled until
+# its 300 s timeout. Watched on its own, the scope is the only candidate under
+# itself and its own pressure is what the limit measures: killed in 33 s.
 SCOPE=""; UNIT=""
 if command -v systemd-run >/dev/null 2>&1; then
   # A unit name, so the manager can be asked afterwards WHY the run died. tr -cs
   # because a name is a command's basename and carries dots and slashes.
   UNIT="ergon-watch-$(printf '%s' "$NAME" | tr -cs 'A-Za-z0-9' '-')-$$"
   if systemd-run --user --scope --quiet --collect --slice=app.slice \
-       -p MemoryHigh="$MEM" -- true >/dev/null 2>&1; then
-    SCOPE="systemd-run --user --scope --quiet --slice=app.slice --unit=$UNIT -p MemoryHigh=$MEM --"
+       -p MemoryHigh="$MEM" -p ManagedOOMMemoryPressure=kill -- true >/dev/null 2>&1; then
+    SCOPE="systemd-run --user --scope --quiet --slice=app.slice --unit=$UNIT -p MemoryHigh=$MEM -p ManagedOOMMemoryPressure=kill --"
     # A LIMIT IS NOT A KILLER, and the scope succeeding does not say anything
     # about whether one is there: app.slice is a stock systemd user unit that
     # exists on every machine, so the call above succeeds just as happily on a

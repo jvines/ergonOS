@@ -113,6 +113,17 @@ check "  from the prefix drop-in the user manager applies to every tmux-spawn-*"
 check "  and a change to it reloads the manager, as the other two do" \
   test "$(grep -A1 '^OOMTMUX$' "$REPO/bin/provision-arch.sh" | tail -1)" = 'then _user_reload=1; fi'
 
+# ERGON-123. A slice holds no process; emptied, it is a leaf under app.slice
+# still charged with its apps' page cache, and once a runaway has filled swap
+# oomd picks it by size and "kills" nothing, every 15 s (measured in the VM).
+check "the emptied-slice drop-in is still written by provisioning" heredoc OOMSLICES "$T/app-slices.conf"
+check "  it omits app-*.slice from the choice, and sets nothing else" \
+  test "$(grep -vE '^[[:space:]]*(#|$)' "$T/app-slices.conf" | tr '\n' ' ')" = '[Slice] ManagedOOMPreference=omit '
+check "  from the prefix drop-in the user manager applies to every app-*.slice" \
+  has "$REPO/bin/provision-arch.sh" '/etc/systemd/user/app-\.slice\.d/10-ergon-oomd\.conf'
+check "  and a change to it reloads the manager" \
+  test "$(grep -A1 '^OOMSLICES$' "$REPO/bin/provision-arch.sh" | tail -1)" = 'then _user_reload=1; fi'
+
 # uwsm's unit sets no OOMPolicy=, so it takes the default, stop -- and it stops
 # FAILED, which its own OnFailure=wayland-session-shutdown.target turns into the
 # end of the session. Anything still inside that unit would otherwise cost the
@@ -370,6 +381,10 @@ check "  with a memory limit, so it throttles before the machine does" \
 check "  under a name the manager can be asked about afterwards" \
   has "$L/systemd-run" '--unit=ergon-watch-fit-[0-9]+'
 check "  and it is a USER scope, not a system one" hasf "$L/systemd-run" '--user'
+# ERGON-123: judged on its own pressure, not only as one of app.slice's
+# candidates, where a full swap leaves size as the only thing oomd compares.
+check "  and oomd watches the scope's own pressure" \
+  hasf "$L/systemd-run" '-p ManagedOOMMemoryPressure=kill'
 # --collect unloads a unit the moment it dies, verdict and all, so the real call
 # must not carry it -- only the probe, whose unit nobody asks about.
 check "  and it is not collected, or its verdict would be gone before it is read" \

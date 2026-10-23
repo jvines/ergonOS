@@ -553,6 +553,13 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
   if command -v ergon-wallpaper-gen >/dev/null 2>&1; then
     ergon-wallpaper-gen --current >/dev/null 2>&1 9>&- || true
   fi
+  # The boot splash follows the palette too (ERGON-123), but it lives in the
+  # initramfs: root, and a rebuild of a minute. Only where sudo needs no
+  # password, and detached; otherwise it follows at the next provisioning run,
+  # and ergon doctor's boot-splash row says it is behind.
+  if [ -x "$ERGON/bin/ergon-plymouth" ] && sudo -n true 2>/dev/null; then
+    ( setsid "$ERGON/bin/ergon-plymouth" install --palette "$PALETTE" >/dev/null 2>&1 9>&- & ) || true
+  fi
   "$ERGON/bin/ergon-wallpaper" --force >/dev/null 2>&1 || true
   hyprctl reload >/dev/null 2>&1 || true
   # waybar and swayosd both parse everything they draw exactly once, at

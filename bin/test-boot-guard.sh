@@ -8,9 +8,9 @@
 # Five boots:
 #   1  record a known-good snapshot, then add a unit that always fails and that
 #      default.target requires -- the machine will boot and never finish
-#   2  fails. GRUB's counter goes 2 -> 1
+#   2  fails. The boot counter goes 2 -> 1 (systemd-boot: in the entry's name)
 #   3  fails. 1 -> 0
-#   4  GRUB boots the last known-good snapshot BY ITSELF. From there,
+#   4  the loader boots the last known-good snapshot BY ITSELF. From there,
 #      ergon-rollback makes it @ again, which is the recovery a person would do
 #   5  back on @, healthy, break gone, counter armed again
 #
@@ -126,11 +126,14 @@ puts "\n-- armed: the next two boots must fail"
 foreach attempt {2 3} {
   set want [expr {4 - \$attempt}]
   boot_vm
-  # The disk is encrypted, so GRUB and the initramfs both ask before anything
-  # can fail. Answer every prompt and keep waiting for the failure.
+  # The disk is encrypted, so the initramfs asks before anything can fail
+  # (GRUB installs: GRUB too). Answer each prompt once, keep waiting for the
+  # failure.
+  set typed 0
   expect {
     timeout { puts "\n!! boot \$attempt neither failed nor finished"; kill_vm; exit 1 }
-    -nocase "passphrase" { send "$PASSPHRASE\r"; exp_continue }
+    -re {Enter passphrase for hd} { send "$PASSPHRASE\r"; exp_continue }
+    -nocase "passphrase" { if {\$typed == 0} { send "$PASSPHRASE\r"; incr typed }; exp_continue }
     -re "ergon boot guard: tries=(\[0-9\]+)" {
       if {\$expect_out(1,string) != \$want} {
         puts "\n!! boot \$attempt started with tries=\$expect_out(1,string), expected \$want: GRUB is not persisting the counter"
@@ -146,14 +149,10 @@ foreach attempt {2 3} {
   kill_vm
 }
 
-# --- boot 4: GRUB must choose the fallback with nobody at the keyboard -----
+# --- boot 4: the loader must choose the fallback with nobody at the keyboard
+# GRUB announces it; systemd-boot just boots the first entry not marked bad.
+# Either way the guest check below asserts / is the snapshot.
 boot_vm
-expect {
-  timeout { puts "\n!! GRUB did not announce the fallback entry"; kill_vm; exit 1 }
-  -nocase "passphrase" { send "$PASSPHRASE\r"; exp_continue }
-  "booting the last known-good snapshot" {}
-}
-puts "\n-- GRUB chose the fallback by itself"
 unlock_and_login "$PASSPHRASE" "$VMHOST" "$USERNAME" "$USERPASS"
 share
 send "echo '$USERPASS' | sudo -S bash /mnt/test/arch-vm/guest-boot-guard-verify.sh\r"

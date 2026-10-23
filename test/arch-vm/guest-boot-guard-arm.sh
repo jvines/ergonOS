@@ -33,11 +33,9 @@ echo "KNOWN_GOOD_CANDIDATE=$snap"
 # and THIS boot may have inherited a break from an aborted run -- in which case
 # it rightly refuses, and the test could never set itself up. `ok` is exercised
 # for real on the last boot instead, where the system is healthy.
-ESP=$(findmnt -no TARGET -t vfat | head -1)
-grub-editenv "$ESP/EFI/ergon/grubenv" set ergon_good_snapshot="$snap"
-grub-editenv "$ESP/EFI/ergon/grubenv" set ergon_tries=2
-recorded=$(grub-editenv "$ESP/EFI/ergon/grubenv" list | sed -n 's/^ergon_good_snapshot=//p')
-tries=$(grub-editenv "$ESP/EFI/ergon/grubenv" list | sed -n 's/^ergon_tries=//p')
+"$E/bin/ergon-boot-guard" record "$snap"
+recorded=$("$E/bin/ergon-boot-guard" get good)
+tries=$("$E/bin/ergon-boot-guard" get tries)
 echo "RECORDED_GOOD=$recorded TRIES=$tries"
 [ "$recorded" = "$snap" ] || { echo "GUARD_RECORD=wrong"; exit 1; }
 

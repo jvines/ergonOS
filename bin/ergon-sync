@@ -24,7 +24,7 @@
 # session while you are working is a thing people disable after the first time.
 #
 # install.sh is only the user-level layer. Packages, systemd drop-ins, polkit
-# rules and GRUB settings arrive through provisioning and nowhere else, so
+# rules and boot settings arrive through provisioning and nowhere else, so
 # until this re-ran it, every system-level fix in the repo reached fresh
 # installs only and an older machine silently kept the system it was born with.
 set -euo pipefail

@@ -16,26 +16,47 @@
 # with it: login prints "Password: " with no newline and with echo off, expect
 # did not see it promptly, and the password ended up typed at the NEXT login
 # prompt as a username -- three boots running.
+#
+# The passphrase is asked ONCE per boot (ERGON-123): by Plymouth, from the
+# initramfs, which on a serial console shows its text prompt there and reads
+# the answer from it. It is typed once and again only after the prompt says
+# the first was wrong, because Plymouth redraws the prompt line as it reads,
+# and answering every redraw would type it into the shell afterwards. How
+# many times it was typed is printed, and test-arch-vm.sh insists on one.
 proc unlock_and_login {passphrase host user userpass} {
-  # Answer GRUB's passphrase prompt, then WAIT for the kernel to take over
-  # before sending anything else.
-  #
-  # That wait is not politeness. After the passphrase GRUB shows its menu and
-  # counts down, and ANY keystroke cancels the countdown -- so a poll loop that
-  # starts typing immediately types into GRUB and the machine never boots. It
-  # looks exactly like a broken install: megabytes of menu redraws, no kernel.
+  # Then WAIT for the kernel or the initrd to get on with it before sending
+  # anything else: a keystroke at a boot menu cancels its countdown.
   #
   # The marker must work for a RESUME as well as a fresh boot. systemd prints
   # "Welcome to Arch Linux!" only when it starts normally; restoring a
   # hibernation image prints nothing of the sort, so waiting on that banner
   # alone hangs forever on exactly the path hibernation exists for. The
   # initramfs messages below appear either way.
+  # The markers count only once the prompt was answered: the initrd says
+  # "Welcome to" and starts cryptsetup before it asks, and a poll typed then
+  # lands in the prompt as the passphrase. (No comments inside an expect
+  # block: Tcl reads them as patterns.)
+  set typed 0
+  set retry 0
   expect {
     timeout { puts "\n!! never reached the LUKS prompt"; exit 1 }
-    -nocase "passphrase" { send "$passphrase\r"; exp_continue }
-    -re {Welcome to|Reached target|Cryptography Setup|Resume from hibernation} {}
+    -nocase -re {(no key available|incorrect|wrong passphrase|try again)} { set retry 1; exp_continue }
+    -nocase "passphrase" {
+      if {$typed == 0 || $retry} { send "$passphrase\r"; incr typed; set retry 0 }
+      exp_continue
+    }
+    -re {Welcome to|Reached target|Resume from hibernation|Finished.*cryptsetup} {
+      if {$typed == 0} { exp_continue }
+    }
   }
+  puts "\n-- passphrase typed $typed time(s) this boot"
+  serial_shell $host $user $userpass
+}
 
+# The shell serial autologin gives, once the boot is past the unlock. Its own
+# proc for a boot whose passphrase was typed some other way (the graphical
+# Plymouth prompt in test-hypr-session.sh).
+proc serial_shell {host user userpass} {
   set saved $::timeout
   set ::timeout 10
   set ready 0
@@ -45,7 +66,6 @@ proc unlock_and_login {passphrase host user userpass} {
     # no error, the pattern simply never fires, and the loop spins out.
     expect {
       timeout {}
-      -nocase "passphrase"  { send "$passphrase\r" }
       -re "$host login:"    {
         # Autologin SHOULD mean this never appears. If it does, log in the slow
         # way rather than failing: send the user, PAUSE so login can print its
