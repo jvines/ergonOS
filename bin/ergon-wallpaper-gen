@@ -70,6 +70,9 @@ _resolve_palette() {
 }
 _resolve_palette || exit 1
 
+# ergon-wallpaper must not start another recolour from inside this one.
+export ERGON_WALLPAPER_NO_REGEN=1
+
 # Fields are kept, and they are PALETTE-INDEPENDENT.
 #
 # A generator computes a scalar density; the palette only decides how that
@@ -155,6 +158,7 @@ _render() {
     --save-field "$FIELDDIR/$gen-$seed-$SIZE.npy" \
     --save-prepared "${XDG_DATA_HOME:-$HOME/.local/share}/ergon/prepared/$gen-$seed.npz" \
     --out "$OUTDIR/$gen-$seed.png"
+  printf '%s\n' "$SIZE" > "${XDG_DATA_HOME:-$HOME/.local/share}/ergon/prepared/$gen-$seed.size"
 }
 
 # Colour every cached field into the ACTIVE palette, skipping what is already
@@ -236,6 +240,13 @@ _recolour() {
   done
 }
 
+# Is the cache baked at (at least) this size? $1 sidecar, $2 WxH wanted.
+_prep_big_enough() {
+  local have; have=$(cat "$1" 2>/dev/null) || return 1
+  case "$have" in [0-9]*x[0-9]*) ;; *) return 1 ;; esac
+  [ "${have%x*}" -ge "${2%x*}" ] && [ "${have#*x}" -ge "${2#*x}" ]
+}
+
 _recolour_once() {
   local made=0 gen seed fsize f base
   [ -d "$FIELDDIR" ] || { echo "  no cached fields yet"; return 0; }
@@ -271,7 +282,13 @@ _recolour_once() {
     base=$(basename "$f"); base=${base%.*}   # <gen>-<seed>-<WxH>; .npy made here, .npz shipped
     gen=${base%-*-*}; seed=${base#"$gen"-}; seed=${seed%-*}
     _generators | grep -qx "$gen" || continue
-    [ -s "$PREPDIR/$gen-$seed.npz" ] && continue
+    # Stale when it was baked SMALLER than this panel (ERGON-127): the cache
+    # holds pixels at the size it was made for, and the old test (does it exist)
+    # kept a 1280x800 bake for a 1920x1200 panel for ever. The size is in a
+    # sidecar; a cache without one predates it and is rebuilt once.
+    if [ -s "$PREPDIR/$gen-$seed.npz" ] && _prep_big_enough "$PREPDIR/$gen-$seed.size" "${PANEL:-$SIZE}"; then
+      continue
+    fi
     # A switch, mid-bake. BREAK rather than return: everything baked so far is
     # kept (the prepared cache is palette-independent, so it is never wasted),
     # and the caller re-resolves and comes straight back for whoever is current
@@ -287,7 +304,8 @@ _recolour_once() {
       --generator "$gen" --palette "$PALETTE" \
       --size "${PANEL:-$SIZE}" --seed "$seed" \
       --from-field "$f" --save-prepared "$PREPDIR/$gen-$seed.npz" \
-      --out "$OUTDIR/$gen-$seed.png" >/dev/null && made=$((made+1))
+      --out "$OUTDIR/$gen-$seed.png" >/dev/null \
+      && { printf '%s\n' "${PANEL:-$SIZE}" > "$PREPDIR/$gen-$seed.size"; made=$((made+1)); }
   done
 
   if [ "$made" -gt 0 ]; then echo "  baked $made new prepared field(s)"; fi

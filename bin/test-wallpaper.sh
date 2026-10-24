@@ -60,6 +60,7 @@ cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/nord.env" "$E/t
 cat > "$T/stub/magick" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/magick"
+if [ "$1" = identify ]; then cat "$TEST_ROOT/identify" 2>/dev/null; exit 0; fi
 out="${@: -1}"
 # REFUSES a path it cannot infer a format from, because the real magick does.
 # Writing "${@: -1}" whatever its name is what let a render to
@@ -88,6 +89,16 @@ for c in hyprctl pkill pgrep; do
 printf '%s\n' "\$*" >> "\$TEST_ROOT/log/$c"
 EOF
 done
+# A monitor and an image size on demand (ERGON-127: a cache made for a smaller panel).
+cat > "$T/stub/hyprctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/hyprctl"
+if [ "$1" = monitors ] && [ -s "$TEST_ROOT/monitor" ]; then cat "$TEST_ROOT/monitor"; fi
+EOF
+cat > "$T/stub/ergon-wallpaper-gen" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_ROOT/log/gen-called"
+EOF
 # Except this one, which must never run: reaching it means the fast path above
 # was not taken and a real daemon would have been spawned.
 cat > "$T/stub/hyprpaper" <<'EOF'
@@ -225,6 +236,7 @@ _good=$(cat "$T/home/.local/share/ergon/wallpaper.png")
 cat > "$T/stub/magick" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/magick"
+if [ "$1" = identify ]; then cat "$TEST_ROOT/identify" 2>/dev/null; exit 0; fi
 exit 1
 EOF
 chmod +x "$T/stub/magick"
@@ -241,6 +253,7 @@ check "  and no stamp is left certifying the failure" \
 cat > "$T/stub/magick" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TEST_ROOT/log/magick"
+if [ "$1" = identify ]; then cat "$TEST_ROOT/identify" 2>/dev/null; exit 0; fi
 out="${@: -1}"
 # REFUSES a path it cannot infer a format from, because the real magick does.
 # Writing "${@: -1}" whatever its name is what let a render to
@@ -525,6 +538,44 @@ printf 'def generate():\n    pass\n' > "$E/wallpaper/flame.py"
 ERGON="$E" ERGON_DRM_DIR="$T/drm" "$E/bin/ergon-wallpaper-gen" --recolour >/dev/null 2>&1
 check "colouring is sized for the connected output (not a guessed 4K)" grep -q -- '--size 1920x1200' "$T/log/py"
 rm -f "$FIELDS/flame-0-3840x2400.npz" "$E/wallpaper/flame.py"
+
+
+echo
+echo "== a cache made for a smaller panel is rebuilt (ERGON-127)"
+# Measured on a real machine: backgrounds baked at 1280x800 stayed 1280x800 on a
+# 1920x1200 monitor, because "already baked" meant "the file exists".
+printf 'def generate():\n    pass\n' > "$E/wallpaper/flame.py"
+: > "$FIELDS/flame-0-3840x2400.npz"
+mkdir -p "$T/data/ergon/prepared"; PREP2=$T/data/ergon/prepared
+gen_at() { rm -f "$T/log/py"; ERGON="$E" ERGON_DRM_DIR="$T/drm" "$E/bin/ergon-wallpaper-gen" --recolour >"$T/log/gen_at.out" 2>&1; }
+echo cached > "$PREP2/flame-0.npz"; echo 1280x800 > "$PREP2/flame-0.size"
+gen_at
+check "a 1280x800 cache is baked again for a 1920x1200 panel" grep -q -- '--generator flame .*--from-field' "$T/log/py"
+check "  at the panel's size"                                   grep -q -- '--size 1920x1200' "$T/log/py"
+check "  and remembers the size it now holds"                   test "$(cat "$PREP2/flame-0.size")" = 1920x1200
+gen_at
+check "a cache that is big enough is left alone"                test -z "$(grep -- '--generator flame .*--from-field' "$T/log/py" 2>/dev/null)"
+rm -f "$PREP2/flame-0.size"; gen_at
+check "a cache from before sizes were recorded is rebuilt once" grep -q -- '--generator flame .*--from-field' "$T/log/py"
+echo 3840x2400 > "$PREP2/flame-0.size"; gen_at
+check "a cache larger than the panel is kept (undocked laptop)" test -z "$(grep -- '--generator flame .*--from-field' "$T/log/py" 2>/dev/null)"
+rm -f "$PREP2/flame-0.npz" "$PREP2/flame-0.size" "$FIELDS/flame-0-3840x2400.npz" "$E/wallpaper/flame.py"
+
+# ergon-wallpaper notices when the panel has outgrown the picture it shows.
+RG=$T/data/ergon/backgrounds/cool; mkdir -p "$RG"
+printf 'PNGSTUB\n' > "$RG/flame-0.png"
+printf '[{"width":1920,"height":1200}]\n' > "$T/monitor"
+pal cool; printf '%s\n' "$RG/flame-0.png" > "$T/state/ergon/background"
+rm -f "$T/log/gen-called"; echo '1280 800' > "$T/identify"
+PATH="$T/stub:$PATH" ERGON="$E" "$E/bin/ergon-wallpaper" >"$T/log/rg.out" 2>&1; sleep 1
+check "a 1280x800 background on a 1920x1200 panel starts a recolour" grep -q -- '--recolour' "$T/log/gen-called"
+rm -f "$T/log/gen-called"; echo '1920 1200' > "$T/identify"
+PATH="$T/stub:$PATH" ERGON="$E" "$E/bin/ergon-wallpaper" --force >/dev/null 2>&1; sleep 1
+check "one that fits does not"                                      test ! -e "$T/log/gen-called"
+rm -f "$T/log/gen-called"; echo '1280 800' > "$T/identify"
+ERGON_WALLPAPER_NO_REGEN=1 PATH="$T/stub:$PATH" ERGON="$E" "$E/bin/ergon-wallpaper" --force >/dev/null 2>&1; sleep 1
+check "and the recolour's own redraw cannot start another"          test ! -e "$T/log/gen-called"
+rm -f "$T/monitor" "$T/identify" "$T/log/gen-called"
 
 echo
 echo "== login fetches what install could not, and only that"

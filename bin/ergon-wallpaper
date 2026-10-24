@@ -336,6 +336,7 @@ elif command -v hyprctl >/dev/null && SIZE=$(hyprctl monitors -j 2>/dev/null \
      | jq -r 'max_by(.width * .height) | "\(.width)x\(.height)"' 2>/dev/null) \
      && [ -n "$SIZE" ] && [ "$SIZE" != "null" ]; then
   :
+  SIZE_FROM_PANEL=1
 else
   SIZE=2880x1920          # Framework 13 panel
 fi
@@ -485,6 +486,21 @@ if [ "$ACTIVE" != "$OUT" ] && command -v magick >/dev/null 2>&1; then
   _dims=$(magick identify -format '%w %h' "$ACTIVE" 2>/dev/null || true)
   _iw=${_dims% *}; _ih=${_dims#* }
   _pw=${SIZE%x*};  _ph=${SIZE#*x}
+  # A coloured background made for a SMALLER panel than this one is soft here
+  # (ERGON-127): it was baked at the first panel it ever saw -- a first boot in
+  # the wrong mode, a laptop docked to a bigger monitor -- and stayed that size.
+  # Re-colour at the panel's size, detached; the pass ends by setting the image
+  # again, with ERGON_WALLPAPER_NO_REGEN so that cannot loop.
+  case "$ACTIVE" in
+    */ergon/backgrounds/*)
+      if [ "${SIZE_FROM_PANEL:-0}" = 1 ] && [ -z "${ERGON_WALLPAPER_NO_REGEN:-}" ] \
+         && [ "${ERGON_WALLPAPER_NO_APPLY:-0}" != 1 ] && [ -n "$_dims" ] \
+         && { [ "$_iw" -lt "$_pw" ] || [ "$_ih" -lt "$_ph" ]; } \
+         && command -v ergon-wallpaper-gen >/dev/null 2>&1; then
+        echo "  ${_iw}x${_ih} is smaller than the ${SIZE} panel; recolouring at the panel's size"
+        ( setsid ergon-wallpaper-gen --recolour >/dev/null 2>&1 9>&- & ) || true
+      fi ;;
+  esac
   if [ -n "$_dims" ] && { [ "$_iw" -gt "$_pw" ] || [ "$_ih" -gt "$_ph" ]; }; then
     _cache="${XDG_CACHE_HOME:-$HOME/.cache}/ergon/wallpaper"
     mkdir -p "$_cache"
