@@ -42,13 +42,17 @@ hl.on("hyprland.start", function()
   -- per machine. hyprpaper also reads its config only at startup. The result
   -- was a flat desktop on every machine, which no assertion here noticed
   -- because the fallback looks deliberate.
-  hl.exec_cmd("ergon-wallpaper")
-  -- The approved backgrounds (ERGON-74), coloured for this panel and palette.
-  -- install.sh fetches their fields but cannot colour them: it has no
-  -- compositor to ask the panel's size, and this is the first moment one
-  -- exists. Cheap when nothing is new -- an image already newer than its cache
-  -- entry is skipped -- and niced inside, so it never holds up the session.
-  hl.exec_cmd("ergon-wallpaper-gen --recolour")
+  -- ONE sequence, not two exec_cmds. They used to be two lines and so ran at the
+  -- same moment: ergon-wallpaper chose and drew a background while
+  -- --recolour was rewriting the same PNGs and reading the same state file.
+  --
+  -- The wallpaper first, because what it shows is already on disk (install.sh
+  -- fetched the approved backgrounds and coloured them for the active palette,
+  -- ERGON-127; the first one is flame-0). Then --ensure: it fetches whatever an
+  -- offline install could not, in the background and niced, so nothing blocks
+  -- the session, and recolours for this panel and palette. Cheap when nothing
+  -- is new.
+  hl.exec_cmd("sh -c 'ergon-wallpaper; ergon-wallpaper-gen --ensure'")
   hl.exec_cmd("hypridle")
   hl.exec_cmd("swayosd-server")
 
