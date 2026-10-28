@@ -2599,7 +2599,12 @@ usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
 # what it killed -- was missing. The explicit setenvs above are kept as belt
 # and braces regardless (same reasoning as systemd/ergon-oom-notify.service's
 # own Environment= line), not because either is known to be the fix.
-usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app.slice \
+# app-graphical.slice, where a terminal running `ergon watch` lives, and which
+# provisioning marks ManagedOOMPreference=omit. In app.slice this wrapper was a
+# candidate of its own: since ERGON-123 the scope has its own pressure rule AND
+# app.slice still has one, and when both fired the second took the wrapper and
+# ergon-oom-notify rightly announced it (VM run 2089, once in many runs).
+usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app-graphical.slice \
      --setenv=PATH='$SESSION_PATH' \
      --setenv=XDG_RUNTIME_DIR=/run/user/1000 \
      --setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus -- \
@@ -2693,7 +2698,12 @@ fi
 # above, which ergon watch named itself, must not have been named twice.
 if usr "pgrep -x mako" >/dev/null 2>&1; then
   case "$(usr "makoctl list" 2>/dev/null)" in
-    *"was killed for memory"*) bad "ergon watch's own kill was announced a second time, by ergon-oom-notify" ;;
+    *"was killed for memory"*)
+      bad "ergon watch's own kill was announced a second time, by ergon-oom-notify"
+      # Name the victim: a bare FAIL here once cost a whole diagnosis.
+      usr "makoctl list" 2>&1 | grep -A2 "was killed for memory" | sed 's/^/     mako: /'
+      usr "journalctl --user --no-pager -o cat MESSAGE_ID=d989611b15e44c9dbf31e3c81256e4ed" 2>&1 | tail -5 | sed 's/^/     kill: /'
+      journalctl -b -u systemd-oomd --no-pager -o cat -n 10 2>&1 | sed 's/^/     oomd: /' ;;
     *) ok "ergon watch's own kill was announced once, by ergon watch" ;;
   esac
   # 300 s, as the watched run above gets: on a loaded host oomd took longer
