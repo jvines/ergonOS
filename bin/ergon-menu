@@ -219,10 +219,7 @@ dump() {
     printf '    (unavailable: %s)\n' "$("$BINDIR/ergon-wallpaper" --list 2>&1 >/dev/null)"
   fi
   printf 'Commands\n'
-  while IFS= read -r g; do
-    printf '  %s\n' "$g"
-    in_group "$g" | sed 's/^/    /'
-  done < <(groups)
+  "$BINDIR/ergon" --tree | sed 's/^/  /'
   printf 'Help\n  Keybindings\n  Explain\n'
   topics | sed 's/^/    /'
 }
