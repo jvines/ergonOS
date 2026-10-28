@@ -353,7 +353,7 @@ jobs:
       # turns the job red and tells nobody -- which is this feature failing in
       # its own shape.
       - name: And say when it is green again
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         env:
           REF: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
@@ -371,7 +371,7 @@ jobs:
       # Cancelled is not failed, and this workflow cancels in progress on a
       # newer push, so a superseded run says nothing.
       - name: Say so somewhere a person will see it
-        if: failure()
+        if: failure() && github.ref == 'refs/heads/main'
         env:
           # Through env rather than interpolated into the script. A branch name
           # may contain $( ), a backtick or a semicolon -- git accepts all

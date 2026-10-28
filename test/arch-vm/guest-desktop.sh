@@ -132,6 +132,11 @@ else
   bad "provision-arch.sh failed"
   tail -25 /tmp/prov.log | sed 's/^/     /'
 fi
+# Arch news published AFTER the install: informant was not there when the
+# ERGON_SKIP_NEWS gate ran, so its hook would abort every later pacman
+# transaction (aur --rebuild, ergon update). The operator reads it; so does this.
+# Root: informant keeps its read state under /var (provision-arch.sh, top).
+informant read --all >/dev/null 2>&1 || true
 rm -f /etc/sudoers.d/99-harness
 
 # --- what provisioning was supposed to leave behind ------------------------
@@ -346,6 +351,9 @@ rm -rf /tmp/ergon-origin.git /tmp/ergon-ahead
 # tree the disk was built from is not what is under test.
 if su - "$U" -c "set -e
     git -C $G clean -qfd
+    # A dispatched CI run checks out DETACHED; on a branch, as main is, the
+    # ahead clone has something to push and ergon-sync something to pull.
+    git -C $G checkout -q -B main
     git clone -q --bare $G /tmp/ergon-origin.git
     git -C $G remote set-url origin /tmp/ergon-origin.git
     git clone -q /tmp/ergon-origin.git /tmp/ergon-ahead
@@ -2599,7 +2607,12 @@ usr "systemctl --user reset-failed $OOMUNIT.service" >/dev/null 2>&1 || true
 # what it killed -- was missing. The explicit setenvs above are kept as belt
 # and braces regardless (same reasoning as systemd/ergon-oom-notify.service's
 # own Environment= line), not because either is known to be the fix.
-usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app.slice \
+# app-graphical.slice, where a terminal running `ergon watch` lives, and which
+# provisioning marks ManagedOOMPreference=omit. In app.slice this wrapper was a
+# candidate of its own: since ERGON-123 the scope has its own pressure rule AND
+# app.slice still has one, and when both fired the second took the wrapper and
+# ergon-oom-notify rightly announced it (VM run 2089, once in many runs).
+usr "timeout 300 systemd-run --user --quiet --wait --unit=$OOMUNIT --slice=app-graphical.slice \
      --setenv=PATH='$SESSION_PATH' \
      --setenv=XDG_RUNTIME_DIR=/run/user/1000 \
      --setenv=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus -- \
@@ -2693,7 +2706,12 @@ fi
 # above, which ergon watch named itself, must not have been named twice.
 if usr "pgrep -x mako" >/dev/null 2>&1; then
   case "$(usr "makoctl list" 2>/dev/null)" in
-    *"was killed for memory"*) bad "ergon watch's own kill was announced a second time, by ergon-oom-notify" ;;
+    *"was killed for memory"*)
+      bad "ergon watch's own kill was announced a second time, by ergon-oom-notify"
+      # Name the victim: a bare FAIL here once cost a whole diagnosis.
+      usr "makoctl list" 2>&1 | grep -A2 "was killed for memory" | sed 's/^/     mako: /'
+      usr "journalctl --user --no-pager -o cat MESSAGE_ID=d989611b15e44c9dbf31e3c81256e4ed" 2>&1 | tail -5 | sed 's/^/     kill: /'
+      journalctl -b -u systemd-oomd --no-pager -o cat -n 10 2>&1 | sed 's/^/     oomd: /' ;;
     *) ok "ergon watch's own kill was announced once, by ergon watch" ;;
   esac
   # 300 s, as the watched run above gets: on a loaded host oomd took longer
@@ -4056,7 +4074,7 @@ _e99_tested=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$G/packages/tested-date" 
 _e99_pm() { pacman -Q | sha256sum | cut -c1-16; }
 _e99_list() { cat /etc/pacman.d/ergon-mirrorlist 2>/dev/null; }
 # The gate on unread Arch news is real; read it the way a person would, bounded.
-_e99 120 "informant read --all" || true
+timeout 120 informant read --all >/dev/null 2>&1 || true   # root: the state is under /var
 
 # (1) nothing set: tested, and the day
 _e99 60 "ergon channel"; _o=$(cat /tmp/e99.out)
