@@ -68,6 +68,9 @@ cat > "$T/stub/ergon-wallpaper-gen" <<'EOF'
 #!/usr/bin/env bash
 printf '%s
 ' "$*" >> "$TEST_ROOT/log/ergon-wallpaper-gen"
+# The full pass is the slow one; --current is about half a second from the
+# prepared cache, and the apply waits for it.
+case "$*" in *--current*) exit 0 ;; esac
 exec sleep 30
 EOF
 # pgrep answers for the fake foot: -x foot gives the pty holder, -P its child.

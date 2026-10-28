@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Run or list the ergon-* commands
 # ergon:group=help
-# ergon:args=[command] [args...] | --list | --groups | --group <name> | --pick
+# ergon:args=[command] [args...] | --list | --groups | --group <name> | --tree | --pick
 #
 # The one idea worth taking from Omarchy's 457-script CLI: scripts describe
 # themselves in a comment header, and the router reads those headers. There is
@@ -56,6 +56,10 @@ case "${1:-}" in
   # here (and in the menu) without a second parser reading bin/*'s headers.
   --groups) entries | awk -F'\t' '{print $1}' | uniq; exit 0 ;;
   --group) entries | awk -F'\t' -v g="${2:?--group needs a name}" '$1==g{printf "%-16s %s\n", $2, $3}'; exit 0 ;;
+  # Every group with its commands in ONE pass over the headers: ergon-menu --dump
+  # used to call --group once per group, and at 15 groups that alone crossed
+  # the 5 s test-cli budget on the CI runner.
+  --tree) entries | awk -F'\t' '$1!=p{print $1; p=$1} {printf "  %-16s %s\n", $2, $3}'; exit 0 ;;
   --pick)
     # The picker, opt-in only now (see the '' arm above). Asked for by name,
     # so no tty/WAYLAND_DISPLAY guessing left to do -- a caller invoking
