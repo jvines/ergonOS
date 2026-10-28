@@ -551,7 +551,8 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
   # detached full pass had written anything, found no such image under the new
   # palette, and showed the gradient until the pass reached it (ERGON-127).
   if command -v ergon-wallpaper-gen >/dev/null 2>&1; then
-    ergon-wallpaper-gen --current >/dev/null 2>&1 9>&- || true
+    # Bounded: a recolour that hangs must not hold up the palette switch.
+    timeout 5 ergon-wallpaper-gen --current >/dev/null 2>&1 9>&- || true
   fi
   # The boot splash follows the palette too (ERGON-123), but it lives in the
   # initramfs: root, and a rebuild of a minute. Only where sudo needs no
