@@ -132,6 +132,11 @@ else
   bad "provision-arch.sh failed"
   tail -25 /tmp/prov.log | sed 's/^/     /'
 fi
+# Arch news published AFTER the install: informant was not there when the
+# ERGON_SKIP_NEWS gate ran, so its hook would abort every later pacman
+# transaction (aur --rebuild, ergon update). The operator reads it; so does this.
+# Root: informant keeps its read state under /var (provision-arch.sh, top).
+informant read --all >/dev/null 2>&1 || true
 rm -f /etc/sudoers.d/99-harness
 
 # --- what provisioning was supposed to leave behind ------------------------
@@ -346,6 +351,9 @@ rm -rf /tmp/ergon-origin.git /tmp/ergon-ahead
 # tree the disk was built from is not what is under test.
 if su - "$U" -c "set -e
     git -C $G clean -qfd
+    # A dispatched CI run checks out DETACHED; on a branch, as main is, the
+    # ahead clone has something to push and ergon-sync something to pull.
+    git -C $G checkout -q -B main
     git clone -q --bare $G /tmp/ergon-origin.git
     git -C $G remote set-url origin /tmp/ergon-origin.git
     git clone -q /tmp/ergon-origin.git /tmp/ergon-ahead
@@ -4066,7 +4074,7 @@ _e99_tested=$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$G/packages/tested-date" 
 _e99_pm() { pacman -Q | sha256sum | cut -c1-16; }
 _e99_list() { cat /etc/pacman.d/ergon-mirrorlist 2>/dev/null; }
 # The gate on unread Arch news is real; read it the way a person would, bounded.
-_e99 120 "informant read --all" || true
+timeout 120 informant read --all >/dev/null 2>&1 || true   # root: the state is under /var
 
 # (1) nothing set: tested, and the day
 _e99 60 "ergon channel"; _o=$(cat /tmp/e99.out)
