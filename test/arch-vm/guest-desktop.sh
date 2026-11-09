@@ -166,6 +166,14 @@ fi
 grep -q 'uwsm start -S' /etc/greetd/config.toml 2>/dev/null \
   && bad "greetd uses 'uwsm start -S', which errors on an unrecognized argument" \
   || ok "no invalid -S flag in the session command"
+# ERGON-42: the greeter's colours, from the palette in use when provisioning
+# ran -- nothing set one on this disk, so cool. Spelled out rather than
+# recomputed with lib/greeter-theme.sh, which would make this agree with itself.
+if grep -qF -- "--theme 'border=lightcyan;prompt=lightcyan;text=white;input=white;time=gray;action=gray'" /etc/greetd/config.toml; then
+  ok "tuigreet carries cool's theme, from provisioning"
+else
+  bad "tuigreet's command has no --theme from cool: $(grep '^command' /etc/greetd/config.toml)"
+fi
 # ERGON-123: the installer's AUTOLOGIN=1 reached host.env, and greetd starts
 # the same uwsm session for the user once per boot. That it really lands in
 # Hyprland is the screenshot boot's job (guest-autologin.sh), after this suite.
@@ -1329,6 +1337,22 @@ NB=$(hq binds -j 2>/dev/null | grep -c '"key"' || true)
 NB=${NB:-0}
 if [ "$NB" -gt 20 ]; then ok "$NB keybindings registered"; else bad "only $NB keybindings registered"; fi
 
+# ERGON-42: the animation tree the compositor is RUNNING, not the file. A
+# leaf that parses but never applied -- the wrong table, a call that ran
+# before its curve existed -- looks exactly like Hyprland's defaults. Searched
+# recursively, so the check does not depend on how hyprctl nests leaves.
+_anim=$(hq animations -j 2>/dev/null)
+_leaf() { jq -c --arg n "$1" '[.. | objects | select(.name? == $n)][0] // empty' <<<"$_anim" 2>/dev/null; }
+_wi=$(_leaf windowsIn); _ws=$(_leaf workspaces); _fs=$(_leaf fadeSwitch)
+if jq -e '.bezier == "easeOutQuint" and (.style | test("popin 87%"))' <<<"$_wi" >/dev/null 2>&1 \
+   && jq -e '.enabled == false' <<<"$_ws" >/dev/null 2>&1 \
+   && jq -e '.enabled == false' <<<"$_fs" >/dev/null 2>&1; then
+  ok "the running compositor pops windows in at 87% on easeOutQuint, with workspaces and fadeSwitch off"
+else
+  bad "the animation tree is not looknfeel's: windowsIn=${_wi:-?} workspaces=${_ws:-?} fadeSwitch=${_fs:-?}"
+  head -c 600 <<<"$_anim" | sed 's/^/     /'
+fi
+
 # --- ERGON-15: the first login opens the welcome, once ----------------------
 # A window mapping, not a string in autostart.lua. The stamp is the other half:
 # only the page itself writes it, from inside the window, once it has a
@@ -2367,6 +2391,19 @@ shot() {
 }
 assert_flame cool "the first session"
 shot first-desktop
+# ERGON-42: the overlays, for a person to look at. A window, then a
+# notification (mako's border), then the launcher (fuzzel's). Best effort like
+# every shot: a note, never a failure, where the VM cannot capture.
+usr "foot" >/dev/null 2>&1 </dev/null &
+sleep 4
+usr "notify-send -a ergon 'Border check' 'One 2px ACTIVE border on every overlay'" >/dev/null 2>&1 || true
+sleep 2
+shot overlay-notification
+usr "fuzzel" >/dev/null 2>&1 </dev/null &
+sleep 3
+shot overlay-launcher
+usr "pkill -x fuzzel; pkill -x foot; makoctl dismiss -a" >/dev/null 2>&1 || true
+sleep 1
 
 # The file existing is not the point; hyprpaper actually putting a surface on
 # the background layer is. A file that hyprpaper cannot read looks identical

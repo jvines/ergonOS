@@ -101,7 +101,11 @@ input-field {
     dots_center = true
     dots_rounding = -1
 
-    outer_color = rgb(@COOL_INACTIVE:raw@)
+    # The overlay border (ERGON-42): outline_thickness 2 above, in @COOL_ACTIVE@ --
+    # the token mako, fuzzel and the OSD share, solid so the four overlays match
+    # each other. It was @COOL_INACTIVE@, which made the one thing waiting for
+    # input look switched off.
+    outer_color = rgb(@COOL_ACTIVE:raw@)
     inner_color = rgb(@COOL_BG1:raw@)
     font_color  = rgb(@COOL_FG0:raw@)
     check_color = rgb(@COOL_ACCENT:raw@)
