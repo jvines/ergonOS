@@ -67,6 +67,7 @@ need("common.looknfeel")
 need("common.windows")
 need("common.media")
 need("common.lid")
+need("common.workspaces")
 need("common.screenshot")
 need("common.autostart")
 

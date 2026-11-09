@@ -216,10 +216,21 @@ bind("SUPER + CTRL + G",  "Previous window in group", hl.dsp.group.prev())
 -- = evdev code + 8), whatever the layout makes them type. ergon-keys turns a
 -- code back into what that key types on the current layout, so the cheatsheet
 -- still reads "SUPER + 1" -- or "SUPER + &".
+--
+-- common.workspaces is per-monitor (ERGON-91). If it fails to load the binds fall
+-- back to the plain dispatch: hyprland.lua reports the failure, and the digits
+-- must still work.
+local ok, workspaces = pcall(require, "common.workspaces")
+if not ok then
+  workspaces = {
+    focus       = function(i) return hl.dsp.focus({ workspace = tostring(i) }) end,
+    move_window = function(i) return hl.dsp.window.move({ workspace = tostring(i), follow = false }) end,
+  }
+end
 for i = 1, 9 do
   local key = "code:" .. (9 + i)
-  bind("SUPER + " .. key,         "Workspace " .. i,         hl.dsp.focus({ workspace = tostring(i) }))
-  bind("SUPER + SHIFT + " .. key, "Move to workspace " .. i, hl.dsp.window.move({ workspace = tostring(i), follow = false }))
+  bind("SUPER + " .. key,         "Workspace " .. i,         workspaces.focus(i))
+  bind("SUPER + SHIFT + " .. key, "Move to workspace " .. i, workspaces.move_window(i))
 end
 
 bind("SUPER + mouse_down", "Next workspace",     hl.dsp.focus({ workspace = "e+1" }))
