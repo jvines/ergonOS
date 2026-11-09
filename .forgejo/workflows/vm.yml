@@ -107,7 +107,10 @@ jobs:
       # Its own disk. The default is ~/.cache/fleet-artifacts/arch-vm, which is
       # the disk a person tests against by hand -- a CI run rebuilding it
       # mid-week would silently destroy their provisioned VM.
-      WORK: /home/jayvains/ci-vm/arch-vm
+      # One per run. Forgejo does not honour the concurrency group above: on
+      # 2026-11-09 two dispatched runs overlapped, each one's cleanup deleted the
+      # other's disk and logs, and both reported "install did not complete".
+      WORK: /home/jayvains/ci-vm/arch-vm-${{ github.run_id }}
     steps:
       - name: Preconditions
         run: |
