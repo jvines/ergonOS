@@ -111,6 +111,7 @@ jobs:
       # 2026-11-09 two dispatched runs overlapped, each one's cleanup deleted the
       # other's disk and logs, and both reported "install did not complete".
       WORK: /home/jayvains/ci-vm/arch-vm-${{ github.run_id }}
+      SLOT: /home/jayvains/ci-vm/.vm-slot
     steps:
       - name: Preconditions
         run: |
@@ -125,6 +126,26 @@ jobs:
           [ "${avail:-0}" -ge 40 ] \
             || { echo "only ${avail}G free on /home; a run needs about 40G" >&2; exit 1; }
           echo "kvm and ${avail}G free"
+
+      # One VM run at a time, enforced here because Forgejo ignores the
+      # concurrency group above. On 2026-11-09 three runs installed at once,
+      # archive.archlinux.org throttled the three downloads, and two runs failed
+      # provisioning after four tries. mkdir is the atomic test-and-set; Clean
+      # up releases it. A slot older than 3 h belongs to a runner that died.
+      - name: Wait for the VM slot
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$SLOT")"
+          until mkdir "$SLOT" 2>/dev/null; do
+            if [ -n "$(find "$SLOT" -maxdepth 0 -mmin +180 2>/dev/null)" ]; then
+              echo "breaking a stale slot held by run $(cat "$SLOT/run" 2>/dev/null || echo '?')"
+              rm -rf "$SLOT"; continue
+            fi
+            echo "waiting: run $(cat "$SLOT/run" 2>/dev/null || echo '?') has the VM slot"
+            sleep 60
+          done
+          echo "${{ github.run_id }}" > "$SLOT/run"
+          echo "slot taken"
 
       - name: Check out the commit under test
         run: |
@@ -268,6 +289,11 @@ jobs:
           if [ -d "$WORK" ]; then
             docker run --rm --label cl.jvines.owner=ergon-vm-ci \
               -v "$(dirname "$WORK"):/p" debian:13 rm -rf "/p/$(basename "$WORK")"
+          fi
+          # Only our own slot: a run that failed before taking it must not free
+          # the one another run is holding.
+          if [ "$(cat "$SLOT/run" 2>/dev/null)" = "${{ github.run_id }}" ]; then
+            rm -rf "$SLOT"
           fi
 
       # ERGON-12's third criterion, and the one that was never met: a failure
