@@ -3888,7 +3888,11 @@ if [ -n "$_fam" ]; then
   _pal=$(usr "ergon theme --list 2>/dev/null | head -20" </dev/null | tr -s ' ' '\n' | grep -E '^(gruvbox|nord|cool)$' | head -1)
   [ -n "$_pal" ] && usr "timeout -k 5 120 ergon theme $_pal" >/dev/null 2>&1 </dev/null
   grep -qxF "font=$_fam:size=11" "$G/foot/foot.ini" 2>/dev/null && ok "ERGON-131: the font survived a palette switch" || bad "ERGON-131: foot.ini lost '$_fam' after theme ${_pal:-?}"
-  shot font-after-palette-switch
+  # The switch restarts waybar: wait for it, and open the launcher, so the shot
+  # shows the bar and fuzzel in the chosen family.
+  for _i in $(seq 20); do pgrep -u "$U" -x waybar >/dev/null && break; sleep 0.5; done; sleep 3
+  usr "makoctl dismiss -a" >/dev/null 2>&1; usr fuzzel >/dev/null 2>&1 &
+  sleep 2; shot font-after-palette-switch; pkill -u "$U" -x fuzzel 2>/dev/null || true
   usr "timeout -k 5 90 ergon font mono default" >/dev/null 2>&1 </dev/null
   grep -qxF "font=JetBrainsMono Nerd Font:size=11" "$G/foot/foot.ini" 2>/dev/null && ok "ERGON-131: ergon font mono default restored the shipped family" || bad "ERGON-131: default family not restored"
 else note "ERGON-131: no second monospace family installed in the guest; font picker unproven here"; fi
@@ -4411,7 +4415,10 @@ grep -qx "color_scheme_path=$_qs" "$H/.config/qt6ct/qt6ct.conf" 2>/dev/null && o
 _wb=$(pgrep -u "$U" -x waybar | head -1)
 if [ -n "$_wb" ] && tr '\0' '\n' </proc/"$_wb"/environ | grep -qx 'QT_QPA_PLATFORMTHEME=qt6ct'; then ok "  and a session client sees QT_QPA_PLATFORMTHEME=qt6ct"
 else bad "  QT_QPA_PLATFORMTHEME=qt6ct did not reach the session (waybar pid '${_wb:-none}')"; fi
-usr qt6ct >/dev/null 2>&1 </dev/null &
+# Through the compositor, so it gets the session environment (QT_QPA_PLATFORMTHEME);
+# a `usr` child does not, and qt6ct then says it is not configured.
+usr "makoctl dismiss -a" >/dev/null 2>&1
+hq "dispatch 'hl.dsp.exec_cmd(\"qt6ct\")'" >/dev/null 2>&1
 sleep 5
 if pgrep -u "$U" -x qt6ct >/dev/null; then ok "  qt6ct (a Qt6 app) opens"; shot qt6-themed; else bad "  qt6ct did not stay open"; fi
 pkill -u "$U" -x qt6ct 2>/dev/null
