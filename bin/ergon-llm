@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# ergon:summary=Run local language models with Ollama (opt-in: ergon bundle add llm)
+# ergon:group=science
+# ergon:args=status|start|stop|list|run MODEL|rm MODEL
+#
+# ERGON-148. The llm bundle installs ollama, plus ollama-cuda or ollama-rocm
+# when bin/ergon-gpu finds an NVIDIA or AMD GPU (pacman.nvidia / pacman.amd in
+# packages/bundles/llm). This is the minimal way to use it.
+#
+#   ergon llm status       which backend is installed, whether the server runs
+#   ergon llm start|stop   the system ollama.service; never enabled at boot
+#   ergon llm list         models on this machine
+#   ergon llm run llama3.2 chat with a model. The FIRST run downloads it
+#                          (hundreds of MB to tens of GB); that is the only
+#                          thing here that downloads, and only when you name one.
+#   ergon llm rm llama3.2  delete a model
+#
+# The server is not started by the bundle and not at boot: it holds the GPU's
+# memory while it runs, which would take it from a simulation or the compositor.
+set -euo pipefail
+
+die() { printf 'ergon llm: %s\n' "$*" >&2; exit 1; }
+command -v ollama >/dev/null 2>&1 || die "ollama is not installed: ergon bundle add llm"
+up() { systemctl is-active --quiet ollama.service; }
+need_server() { up || { echo "starting ollama.service"; sudo systemctl start ollama.service; sleep 2; }; }
+
+case "${1:-status}" in
+  status)
+    for p in ollama-cuda ollama-rocm; do pacman -Qq "$p" >/dev/null 2>&1 && backend=$p; done
+    echo "backend: ${backend:-ollama (CPU)}"
+    echo "gpus:    $("$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/ergon-gpu" --vendors 2>/dev/null | tr '\n' ' ')"
+    if up; then echo "server:  running"; ollama list; else echo "server:  stopped (ergon llm start)"; fi ;;
+  start) sudo systemctl start ollama.service; echo "ollama running; ergon llm stop when done" ;;
+  stop)  sudo systemctl stop ollama.service ;;
+  list)  need_server; ollama list ;;
+  run)   [ -n "${2:-}" ] || die "usage: ergon llm run MODEL"
+         need_server; ollama run "${@:2}" ;;
+  rm)    [ -n "${2:-}" ] || die "usage: ergon llm rm MODEL"
+         need_server; ollama rm "$2" ;;
+  *)     die "usage: ergon llm status|start|stop|list|run MODEL|rm MODEL" ;;
+esac

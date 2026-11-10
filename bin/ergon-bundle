@@ -36,7 +36,7 @@ CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ergon"
 # in the repo -- another machine's record of what it already had means nothing
 # here.
 LEDGER="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/bundle-ledger"
-LISTS="pacman aur python git"
+LISTS="pacman pacman.nvidia pacman.amd aur python git"
 TMP=""
 trap '[ -z "$TMP" ] || rm -rf "$TMP"' EXIT
 
@@ -85,7 +85,7 @@ _token_ok() {  # _token_ok <kind> <token>
   local git="^[A-Za-z0-9][A-Za-z0-9._-]* @ ${url}@([A-Za-z0-9][A-Za-z0-9._/-]*)\$"
   local noref="^[A-Za-z0-9][A-Za-z0-9._-]* @ ${url}\$"
   case $1 in
-    pacman|aur) [[ $2 =~ $pkg ]] ;;
+    pacman|pacman.nvidia|pacman.amd|aur) [[ $2 =~ $pkg ]] ;;
     python)     [[ $2 =~ $py ]] ;;
     git)        [[ $2 =~ $git && ${BASH_REMATCH[3]} != *..* ]] ;;
     # A git line that would be valid with a ref, so the refusal can say that
@@ -127,7 +127,7 @@ _check() {  # _check <dir>
     [ -e "$e" ] || [ -L "$e" ] || continue
     f=${e##*/}
     case $f in
-      meta|pacman|aur|python|git)
+      meta|pacman|pacman.nvidia|pacman.amd|aur|python|git)
         [ -f "$e" ] && [ ! -L "$e" ] || { warn "${d#"$ERGON"/}/$f: not a regular file"; return 1; }
         [ "$(stat -c %s -- "$e")" -le 65536 ] || { warn "${d#"$ERGON"/}/$f: larger than 64 KiB"; return 1; } ;;
       README|README.*|LICENSE|LICENSE.*|COPYING|.source) ;;
@@ -265,7 +265,7 @@ _snapshot() {
 # What a bundle directory declares, in snapshot form.
 _declares() {  # _declares <dir>
   local p
-  { _list "$1/pacman"; _list "$1/aur"; } | sed 's/^/pacman /'
+  { _list "$1/pacman"; _list "$1/pacman.nvidia"; _list "$1/pacman.amd"; _list "$1/aur"; } | sed 's/^/pacman /'
   { _list "$1/python"; _list "$1/git"; } | while read -r p; do printf 'python %s\n' "$(_norm "$p")"; done
 }
 
@@ -279,6 +279,20 @@ _ledger_add() {  # _ledger_add <name> <before-file> <dir>
     LC_ALL=C comm -13 "$2" <(_snapshot) | grep -xF -f <(_declares "$3") | sed "s/^/$1 /" || true
   } | LC_ALL=C sort -u > "$LEDGER.new"
   mv -- "$LEDGER.new" "$LEDGER"
+}
+
+
+# pacman.nvidia / pacman.amd (ERGON-148): packages a bundle wants only on a
+# machine that has that GPU, as bin/ergon-gpu --vendors reads it from sysfs.
+# Declared for the ledger whatever the machine has, installed only where found.
+_gpu_lists() {  # _gpu_lists <dir>
+  local v vs
+  vs=$("$ERGON/bin/ergon-gpu" --vendors 2>/dev/null || true)
+  # One backend, NVIDIA first: a laptop with an AMD iGPU beside an NVIDIA card
+  # wants CUDA, not CUDA and ROCm.
+  for v in nvidia amd; do
+    if grep -qx "$v" <<<"$vs"; then _list "$1/pacman.$v"; return 0; fi
+  done
 }
 
 # --- install and remove ------------------------------------------------------
@@ -296,7 +310,7 @@ _install_bundle() {  # _install_bundle <name>
   # would ever take them.
   trap '_ledger_add "$b" "$before" "$d"; rm -f "$before"; exit 130' INT TERM
 
-  mapfile -t P < <(_list "$d/pacman")
+  mapfile -t P < <(_list "$d/pacman"; _gpu_lists "$d")
   [ "${#P[@]}" -eq 0 ] || sudo pacman -S --needed --noconfirm -- "${P[@]}" || fail=1
 
   while read -r p; do
@@ -496,6 +510,8 @@ _show() {  # _show <dir> <name>
     [ -s "$d/$f" ] || continue
     case $f in
       pacman) printf '\n[pacman]  official repositories, installed as root\n' ;;
+      pacman.nvidia) printf '\n[pacman.nvidia]  as above, only when an NVIDIA GPU is found\n' ;;
+      pacman.amd)    printf '\n[pacman.amd]     as above, only when an AMD GPU is found\n' ;;
       aur)    printf '\n[aur]     built from the AUR: the PKGBUILD runs as you, its install script as root\n' ;;
       python) printf '\n[python]  PyPI, into pyfleet\n' ;;
       git)    printf '\n[git]     built from source into pyfleet: runs its build code\n' ;;
