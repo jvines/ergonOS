@@ -253,6 +253,10 @@ jobs:
       - name: Web apps are created, listed and removed, only ours
         run: cd "$CI_DIR" && ./bin/test-webapp.sh
 
+      # ERGON-147: Vaultwarden client config, Tailscale login, opt-in app bundles, stubs.
+      - name: Vault and Tailscale commands, opt-in app bundles
+        run: cd "$CI_DIR" && ./bin/test-apps.sh
+
       # ERGON-106: the session SSH agent; static, plus an archlinux container if docker is there.
       - name: Session SSH agent is exported, enabled and reachable
         run: cd "$CI_DIR" && ./bin/test-ssh-agent.sh

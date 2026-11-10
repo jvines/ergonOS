@@ -1,0 +1,3 @@
+DESCRIPTION="Sunshine, game and desktop streaming host for Moonlight (AUR sunshine-bin)"
+SIZE_MB=100
+NOTE="Opt-in since ERGON-147. Prebuilt binary from the AUR, no source build. Start it with systemctl --user enable --now sunshine and set the first password at https://localhost:47990. The nftables ruleset does not open its ports, so streaming from another machine needs them admitted."

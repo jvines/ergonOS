@@ -1,0 +1,3 @@
+DESCRIPTION="Dropbox, file sync (AUR dropbox)"
+SIZE_MB=150
+NOTE="Opt-in since ERGON-147. Built from the AUR on install. The first start downloads the sync daemon into ~/.dropbox-dist and asks you to log in."

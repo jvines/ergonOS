@@ -4191,5 +4191,18 @@ grep -qiE "cannot load|failed to load|no such file" /tmp/hyprlock.log 2>/dev/nul
   && bad "  hyprlock could not load its background: $(grep -iE 'cannot load|failed to load|no such file' /tmp/hyprlock.log | head -1)" \
   || ok "  and reported no failure loading the image"
 
+# --- ERGON-147: Vaultwarden client, Tailscale login, menu entries -------------
+usr "ergon-menu --dump" >/tmp/e147.out 2>&1 </dev/null
+grep -q "Vault" /tmp/e147.out && grep -q "Tailscale" /tmp/e147.out \
+  && ok "ergon-menu --dump lists Vault and Tailscale" || bad "ergon-menu --dump lacks Vault or Tailscale"
+for _p in bitwarden rbw; do
+  pacman -Q "$_p" >/dev/null 2>&1 && ok "$_p is installed" || bad "$_p is not installed"
+done
+usr "ergon-vault url </dev/null; ergon-tailscale --help >/dev/null" >/dev/null 2>&1 \
+  && ok "ergon-vault url and ergon-tailscale --help run" || bad "ergon-vault or ergon-tailscale does not run"
+_pol=/etc/firefox/policies/policies.json
+jq -e ".policies.ExtensionSettings[\"{446900e4-71c2-419f-a6a7-df9c091e268b}\"]" "$_pol" >/dev/null 2>&1 \
+  && ok "Firefox policy installs the Bitwarden extension" || bad "no Bitwarden extension in $_pol"
+
 [ "$F" -gt 0 ] && dump_log
 finish

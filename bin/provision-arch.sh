@@ -1098,6 +1098,13 @@ if command -v tailscale >/dev/null 2>&1 \
 fi
 
 # ---------------------------------------------------------------------------
+# ERGON-147: the Bitwarden extension, installed in Firefox by policy (and given
+# VAULT_URL as its server when host.env sets one).
+say "vault"
+"$ERGON/bin/ergon-vault" firefox \
+  && ok "Bitwarden extension policy for Firefox" || warn "could not write the Firefox policy"
+
+# ---------------------------------------------------------------------------
 say "bundles"
 # Optional package groups, offered here rather than installed for everyone:
 # `ergon-bundle list` prints them all, apps like discord and moonlight among

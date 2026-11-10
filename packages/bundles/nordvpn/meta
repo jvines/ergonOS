@@ -1,0 +1,3 @@
+DESCRIPTION="NordVPN client (AUR nordvpn-bin)"
+SIZE_MB=60
+NOTE="Opt-in since ERGON-147. After installing: sudo systemctl enable --now nordvpnd, sudo usermod -aG nordvpn YOUR_USER, log out and in, then nordvpn login. It sets its own firewall rules next to ergon's nftables ruleset, so check connectivity before relying on it."

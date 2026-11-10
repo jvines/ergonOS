@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# ergon:summary=Log in to Tailscale and turn it on, from the desktop (no host.env edit)
+# ergon:group=network
+# ergon:args=[up | status]
+# ergon:help=native
+#
+# ERGON-147. TAILSCALE=1 in host.env makes provisioning start tailscaled; this
+# does the rest without it. `up` starts tailscaled, shows the login URL and a
+# QR code (`tailscale up --qr`, so a phone can approve it), and makes this user
+# the tailscale operator, which is what ergon-taildrop expects. Already logged
+# in: it only sets the operator. Then it restarts the Taildrop receiver.
+#   status    BackendState, and the machine's tailnet name
+set -euo pipefail
+
+case "${1:-}" in -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+command -v tailscale >/dev/null 2>&1 || { echo "ergon-tailscale: tailscale is not installed" >&2; exit 1; }
+state() { tailscale status --json 2>/dev/null | jq -r '.BackendState // empty' 2>/dev/null || true; }
+
+up() {
+  sudo systemctl enable --now tailscaled
+  if [ "$(state)" = Running ]; then
+    sudo tailscale set --operator="$USER"
+  else
+    sudo tailscale up --operator="$USER" --qr
+  fi
+  systemctl --user restart ergon-taildrop.service 2>/dev/null || true
+  echo "Tailscale: $(state)"
+}
+
+case "${1:-up}" in
+  up)     up ;;
+  status) echo "$(state)"; tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' ;;
+  *)      echo "usage: ergon-tailscale [up | status]" >&2; exit 2 ;;
+esac

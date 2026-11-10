@@ -1,0 +1,11 @@
+# ERGON-147. makepkg does not resolve AUR dependencies, so the seven apps the
+# suite depends on come first and storytold-suite, which ties them together, last.
+artcraft-launcher-bin   # the launcher only; NOT the artcraft AI/SaaS app
+designcraft
+effectcraft
+filmcraft
+lightcraft
+pdfcraft
+photocraft
+vectorcraft
+storytold-suite
