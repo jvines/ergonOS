@@ -3140,7 +3140,8 @@ o_active() { hq activewindow -j 2>/dev/null | jq -r "$1" 2>/dev/null; }
 _ob=$(hq binds -j 2>/dev/null)
 for _d in "Copy (every app)" "Paste (every app)" "Cut (every app)" "Next window" "Previous window" \
           "Swap with left window" "Swap with right window" "Swap with window above" "Swap with window below" \
-          "Emoji picker (copy and type)"; do
+          "Emoji picker (copy and type)" "Select all (every app, not terminals)" \
+          "Notification: invoke default action (focus the sender)" "Notification: pick an action" "Notification history"; do
   jq -e --arg d "$_d" 'any(.[]; .description == $d)' <<<"$_ob" >/dev/null 2>&1 \
     && ok "bind registered: $_d" || bad "bind not registered: $_d"
 done
@@ -3228,6 +3229,23 @@ if o_win ergon-t1 && o_win ergon-t2; then
   else bad "SUPER+V: the client read '$(head -c 60 /tmp/o-keys.out 2>/dev/null | tr '\n' ' ')' (focused '$(o_active .class)')"; fi
   note "SUPER+X (cut) is not pressed: a terminal has nothing to cut, and no GTK/Qt app is in the image"
   pkill -u "$U" -f 'app-id=ergon-t[34]' 2>/dev/null; sleep 1
+
+  # --- ERGON-149: SUPER+A sends Ctrl+A to apps, nothing to a terminal -------
+  # ergon-float is a terminal class binds.lua knows; a ^A (readline: line start)
+  # reaching it would show as ^A in the cat -v sink.
+  rm -f /tmp/o-keys.out
+  o_win ergon-float /tmp/o-keys.sh; sleep 1
+  o_focus ergon-float || note "could not focus ergon-float"
+  o_key 125:1 30:1 30:0 125:0
+  o_key 28:1 28:0; sleep 1
+  if grep -q '\^A' /tmp/o-keys.out 2>/dev/null; then bad "SUPER+A sent Ctrl+A into a terminal"
+  else ok "SUPER+A leaves a terminal alone (no ^A reached it)"; fi
+  pkill -u "$U" -f 'app-id=ergon-float' 2>/dev/null; sleep 1
+
+  # --- ERGON-145: helper-window rules float -------------------------------
+  o_win org.keepassxc.KeePassXC && sleep 1
+  [ "$(o_field org.keepassxc.KeePassXC .floating)" = true ] && ok "window rule: KeePassXC opens floating" || bad "window rule: KeePassXC did not float"
+  pkill -u "$U" -f "app-id=org.keepassxc.KeePassXC" 2>/dev/null
 
   # --- ERGON-90: layout cycle ------------------------------------------------
   o_dsp 'hl.dsp.focus({ workspace = 7 })'

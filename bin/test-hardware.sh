@@ -587,5 +587,23 @@ disp scale +
 check "  and 1366x768 goes 1 -> 2, past 1.25 and 1.6" \
   hasx "$SAVED" 'hl.monitor({ output = "LVDS-1", scale = "2" })'
 
+echo "== ergon-gpu --software / --trim (ERGON-136)"
+SW=$T/sw/root; mkdir -p "$SW" "$T/sw/gpu/drivers/amdgpu"
+pci "$T/sw/root" 0000:c1:00.0 0x030000 0x1002 0x1638 1
+ln -s "$T/sw/gpu/drivers/amdgpu" "$SW/sys/bus/pci/devices/0000:c1:00.0/driver"
+check "a bound amdgpu is not software rendering" bash -c '! "$@"' _ env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$SW" "$GPU" --software
+check "no display controller at all is" env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$T/sw/empty" "$GPU" --software
+printf '#!/usr/bin/env bash\necho "OpenGL renderer string: llvmpipe (LLVM 19)"\n' > "$T/stub/eglinfo"; chmod +x "$T/stub/eglinfo"
+check "eglinfo naming llvmpipe is, even with a GPU bound" env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$SW" PATH="$T/stub:/usr/bin:/bin" "$GPU" --software
+check "ERGON_SOFTWARE_RENDER=0 overrides it" bash -c '! "$@"' _ env ERGON_SOFTWARE_RENDER=0 ERGON_SYSROOT="$SW" PATH="$T/stub:/usr/bin:/bin" "$GPU" --software
+reset_logs
+HYPRLAND_INSTANCE_SIGNATURE=t env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$SW" PATH="$T/stub:/usr/bin:/bin" "$GPU" --trim > "$T/out" 2>&1
+check "--trim on llvmpipe turns animations, blur and shadow off" \
+  bash -c 'grep -q "animations = { enabled = false }" "$1" && grep -q "blur = { enabled = false }" "$1" && grep -q "shadow = { enabled = false }" "$1"' _ "$T/log/hyprctl"
+rm -f "$T/stub/eglinfo"; reset_logs
+HYPRLAND_INSTANCE_SIGNATURE=t env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$SW" PATH="$T/stub:/usr/bin:/bin" "$GPU" --trim > "$T/out" 2>&1
+check "--trim with a real GPU touches nothing" bash -c '! [ -s "$1" ]' _ "$T/log/hyprctl"
+
+
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

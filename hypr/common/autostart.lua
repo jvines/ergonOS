@@ -36,6 +36,8 @@ hl.on("hyprland.start", function()
   if tg then tg:close() end
   if not bar_off then hl.exec_cmd("waybar") end
   hl.exec_cmd("mako")
+  -- CPU rendering (llvmpipe, no GPU): animations, blur and shadow off (ERGON-136).
+  hl.exec_cmd("ergon-gpu --trim")
   -- ergon-wallpaper STARTS hyprpaper; there is deliberately no bare
   -- `hyprpaper` line here any more. It renders the image if missing, writes a
   -- config with absolute paths beside it, and launches hyprpaper against that
