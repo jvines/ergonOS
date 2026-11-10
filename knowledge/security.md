@@ -279,9 +279,9 @@ running as you, as the rest of `/home` is.
 
 Installs from before ERGON-123 have GRUB with `/boot` inside LUKS2 and a
 random keyfile in the initramfs, so the passphrase is typed once at GRUB. That
-keyfile is encrypted at rest with everything else. Provisioning moves those
-machines to the layout above (`ergon-boot-migrate`, ERGON-125; `BOOT_MIGRATE=0`
-in host.env keeps GRUB). The keyfile leaves the initramfs before the first UKI
+keyfile is encrypted at rest with everything else. Those machines can move
+to the layout above (`ergon-boot-migrate run`, ERGON-125; opt-in: `BOOT_MIGRATE=1`
+in host.env lets provisioning do it). The keyfile leaves the initramfs before the first UKI
 is built, since on the ESP it would be the disk's key in clear, and the boot
 menu never offers a snapshot from before the move: its initramfs still holds
 the key. Its keyslot stays until you retire it (`ergon-boot-migrate --help`).

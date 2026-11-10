@@ -7,7 +7,7 @@
 # Installs from before ERGON-123 boot GRUB, which unlocks a /boot inside LUKS.
 # This gives them what new installs have: systemd-boot and one UKI per kernel
 # on the ESP, the cmdline in /etc/kernel/cmdline. Provisioning runs it, so
-# `ergon sync` applies it; BOOT_MIGRATE=0 in host.env keeps GRUB.
+# `ergon sync` applies it only where host.env says BOOT_MIGRATE=1 (opt-in until it has moved a real GRUB machine).
 #
 #   check         whether this machine needs it, and whether it can have it
 #   run           do it. Each step checks before it writes, so a run that was
@@ -105,7 +105,7 @@ check)
 run)
   if [ "${2:-}" = --auto ]; then
     v=${BOOT_MIGRATE:-$(sed -n 's/^BOOT_MIGRATE=\([01]\).*/\1/p' "$ERGON/hosts/$(hostname -s)/host.env" 2>/dev/null | tail -1 || true)}
-    [ "$v" != 0 ] || { skip "BOOT_MIGRATE=0: this machine keeps GRUB"; exit 0; }
+    [ "$v" = 1 ] || { skip "BOOT_MIGRATE is not 1: this machine keeps GRUB (opt in with BOOT_MIGRATE=1 in host.env)"; exit 0; }
   fi
   b=$(blockers)
   if [ -n "$b" ]; then

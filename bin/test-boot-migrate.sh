@@ -88,14 +88,16 @@ fixture
 FSROOT=/@snapshots/5/snapshot "$BM" run > "$T/out" 2>&1; rc=$?
 check "a root that is not @: refused, nothing written" \
   bash -c '[ "$1" != 0 ] && [ ! -e "$2/etc/kernel/cmdline" ] && grep -q "not the @ subvolume" "$3"' _ "$rc" "$R" "$T/out"
-FSROOT=/@snapshots/5/snapshot "$BM" run --auto > "$T/out" 2>&1; rc=$?
+BOOT_MIGRATE=1 FSROOT=/@snapshots/5/snapshot "$BM" run --auto > "$T/out" 2>&1; rc=$?
 check "  provisioning's --auto skips it and exits 0" bash -c '[ "$1" = 0 ] && grep -q "keeps GRUB" "$2"' _ "$rc" "$T/out"
 mkdir -p "$R/etc/mkinitcpio.conf.d"; echo 'FILES+=(/etc/cryptsetup-keys.d/x.key)' > "$R/etc/mkinitcpio.conf.d/k.conf"
 "$BM" run > "$T/out" 2>&1; rc=$?
 check "a keyfile in mkinitcpio.conf.d: refused, no UKI" bash -c '[ "$1" != 0 ] && [ ! -e "$2/EFI/ergon/linux.efi" ]' _ "$rc" "$T/esp"
 rm -r "$R/etc/mkinitcpio.conf.d"
 out=$(BOOT_MIGRATE=0 "$BM" run --auto 2>&1)
-check "BOOT_MIGRATE=0 keeps GRUB" bash -c 'grep -q "BOOT_MIGRATE=0" <<<"$1" && [ ! -e "$2/etc/kernel/cmdline" ]' _ "$out" "$R"
+check "BOOT_MIGRATE=0 keeps GRUB" bash -c 'grep -q "keeps GRUB" <<<"$1" && [ ! -e "$2/etc/kernel/cmdline" ]' _ "$out" "$R"
+out=$(env -u BOOT_MIGRATE "$BM" run --auto 2>&1)
+check "no BOOT_MIGRATE at all keeps GRUB too (opt-in)" bash -c 'grep -q "keeps GRUB" <<<"$1" && [ ! -e "$2/etc/kernel/cmdline" ]' _ "$out" "$R"
 rm "$R/etc/default/grub"; mkdir -p "$R/etc/kernel"; echo x > "$R/etc/kernel/cmdline"
 out=$("$BM" check 2>&1)
 check "a systemd-boot install: nothing to migrate" grep -q 'nothing to migrate' <<<"$out"
