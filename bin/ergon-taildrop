@@ -17,6 +17,8 @@
 # Non-root `tailscale file` needs this user to be the tailscale operator;
 # provisioning sets it once tailscale is logged in (`sudo tailscale set
 # --operator=$USER`, or `tailscale up --operator=$USER` when joining).
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 APP=ergon-taildrop
@@ -40,24 +42,24 @@ have() { command -v tailscale >/dev/null 2>&1; }
 send() {
   local files=("$@") picked addr name err st
   if [ ${#files[@]} -eq 0 ]; then
-    if   command -v zenity  >/dev/null 2>&1; then mapfile -t files < <(zenity --file-selection --multiple --separator=$'\n' --title="Send with Taildrop")
+    if   command -v zenity  >/dev/null 2>&1; then mapfile -t files < <(zenity --file-selection --multiple --separator=$'\n' --title="$(_t "Send with Taildrop")")
     elif command -v kdialog >/dev/null 2>&1; then mapfile -t files < <(kdialog --getopenfilename ~ --multiple --separate-output)
     else echo "ergon-taildrop: name the files to send" >&2; exit 1; fi
     [ ${#files[@]} -gt 0 ] || exit 0
   fi
-  st=$(tailscale status --json 2>&1) || { notify-send -a "$APP" -u critical "Taildrop" "Tailscale is not running or not logged in"; exit 1; }
+  st=$(tailscale status --json 2>&1) || { notify-send -a "$APP" -u critical "Taildrop" "$(_t "Tailscale is not running or not logged in")"; exit 1; }
   picked=$(peers <<<"$st")
   if [ -z "$picked" ]; then
-    notify-send -a "$APP" "Taildrop" "No online device can take files right now"; exit 1
+    notify-send -a "$APP" "Taildrop" "$(_t "No online device can take files right now")"; exit 1
   fi
-  picked=$(cut -f1 <<<"$picked" | fuzzel --dmenu --prompt "Send to  ") || exit 0
+  picked=$(cut -f1 <<<"$picked" | fuzzel --dmenu --prompt "$(_t "Send to")  ") || exit 0
   [ -n "$picked" ] || exit 0
   name=$picked
   addr=$(peers <<<"$st" | awk -F'\t' -v n="$name" '$1 == n { print $2; exit }')
   if err=$(tailscale file cp --update-interval=0 -- "${files[@]}" "$addr:" 2>&1); then
-    notify-send -a "$APP" "Sent to $name" "${#files[@]} file(s)"
+    notify-send -a "$APP" "$(_t "Sent to %s" "$name")" "$(_t "%s file(s)" "${#files[@]}")"
   else
-    notify-send -a "$APP" -u critical "Taildrop to $name failed" "${err:-unknown error}"; exit 1
+    notify-send -a "$APP" -u critical "$(_t "Taildrop to %s failed" "$name")" "${err:-$(_t "unknown error")}"; exit 1
   fi
 }
 
@@ -78,7 +80,7 @@ receive() {
         dest="$dir/${base%"$ext"}-$n$ext"
       done
       rm -f -- "$f"
-      notify-send -a "$APP" -u critical "Received ${dest##*/}" "Saved to ${dir/#$HOME/\~}" || true
+      notify-send -a "$APP" -u critical "$(_t "Received %s" "${dest##*/}")" "$(_t "Saved to %s" "${dir/#$HOME/\~}")" || true
     done
     tailscale file get --wait --conflict=rename "$stage" 2>/dev/null || sleep 30
   done

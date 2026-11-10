@@ -12,6 +12,8 @@
 # would look broken. pactl rather than wpctl because `pactl list sinks` prints
 # one stable "Name:/Description:" record per sink, where `wpctl status` is a
 # tree meant for people; pipewire-pulse is already in packages/pacman.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 export LC_ALL=C
 
@@ -49,7 +51,7 @@ main() {
   done < <(pactl list short sink-inputs)
 
   swayosd-client --custom-message "$desc" --custom-icon audio-speakers-symbolic 2>/dev/null \
-    || notify-send -t 2000 "Audio output" "$desc" 2>/dev/null || true
+    || notify-send -t 2000 "$(_t "Audio output")" "$desc" 2>/dev/null || true
 }
 
 [ "${1:-}" = --source-only ] || main "$@"

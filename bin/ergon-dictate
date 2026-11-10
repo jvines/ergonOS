@@ -48,6 +48,8 @@
 # Testing hooks (used by bin/test-dictate.sh, not settings): ERGON_WHISPER_DIR,
 # ERGON_WHISPER_BASE (URL prefix, file:// works), ERGON_WHISPER_CATALOG (a file
 # in the table's format, replacing it).
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -187,26 +189,26 @@ pick() {
     done < <(catalog)
     printf '   language: %s\n' "$(language)"
   )
-  sel=$(printf '%s\n' "$lines" | fuzzel --dmenu --width 60 --prompt 'dictation  ') || return 0
+  sel=$(printf '%s\n' "$lines" | fuzzel --dmenu --width 60 --prompt "$(_t dictation)  ") || return 0
   case "$sel" in
     *"language: "*)
-      choice=$(printf '%s\n' auto en es fr de it pt nl ca gl ru zh ja | fuzzel --dmenu --prompt 'language  ') || return 0
-      set_lang "$choice" >/dev/null && notify "ergon-dictate" "language: $choice" ;;
+      choice=$(printf '%s\n' auto en es fr de it pt nl ca gl ru zh ja | fuzzel --dmenu --prompt "$(_t language)  ") || return 0
+      set_lang "$choice" >/dev/null && notify "ergon-dictate" "$(_t "language: %s" "$choice")" ;;
     *)
       name=$(awk '{ print ($1 == ">>" || $1 == "*") ? $2 : $1 }' <<<"$sel")
       entry "$name" >/dev/null || return 0
       if installed "$name"; then
         choice=$(printf 'use %s\nremove %s\n' "$name" "$name" | fuzzel --dmenu --prompt "$name  ") || return 0
         case "$choice" in
-          use*)    model_use "$name" >/dev/null && notify "ergon-dictate" "using $name" ;;
-          remove*) model_rm "$name" >/dev/null && notify "ergon-dictate" "removed $name" ;;
+          use*)    model_use "$name" >/dev/null && notify "ergon-dictate" "$(_t "using %s" "$name")" ;;
+          remove*) model_rm "$name" >/dev/null && notify "ergon-dictate" "$(_t "removed %s" "$name")" ;;
         esac
       else
-        notify "ergon-dictate" "downloading $name ($(human "$(entry "$name" | awk '{print $2}')"))"
+        notify "ergon-dictate" "$(_t "downloading %s (%s)" "$name" "$(human "$(entry "$name" | awk '{print $2}')")")"
         if ERGON_DICTATE_QUIET=1 model_get "$name" >/dev/null 2>"$RT/get.err"; then
-          notify "ergon-dictate" "$name is ready"
+          notify "ergon-dictate" "$(_t "%s is ready" "$name")"
         else
-          warn -u critical "ergon-dictate" "$name: $(tail -n1 "$RT/get.err" 2>/dev/null || echo failed)"
+          warn -u critical "ergon-dictate" "$name: $(tail -n1 "$RT/get.err" 2>/dev/null || _t failed)"
         fi
       fi ;;
   esac
@@ -253,9 +255,9 @@ deliver() { # text
     # Detached from our output and from the lock (fd 9): wl-copy stays behind
     # to serve the selection.
     printf '%s' "$text" | wl-copy >/dev/null 2>&1 9>&-
-    warn "ergon-dictate" "could not type it, so it is on the clipboard"
+    warn "ergon-dictate" "$(_t "could not type it, so it is on the clipboard")"
   else
-    warn -u critical "ergon-dictate" "could not type it and wl-copy is missing: $text"
+    warn -u critical "ergon-dictate" "$(_t "could not type it and wl-copy is missing: %s" "$text")"
   fi
 }
 
@@ -274,13 +276,13 @@ session() {
   rp=$!
   echo "$rp" > "$RT/pid"
   poke
-  notify "ergon-dictate" "listening — SUPER+CTRL+X to finish"
+  notify "ergon-dictate" "$(_t "listening — SUPER+CTRL+X to finish")"
   for ((i = 0; i < MAXSEC * 2; i++)); do
     kill -0 "$rp" 2>/dev/null || break
     sleep 0.5
   done
   if kill -0 "$rp" 2>/dev/null; then
-    warn "ergon-dictate" "reached the ${MAXSEC} s limit, transcribing what there is"
+    warn "ergon-dictate" "$(_t "reached the %s s limit, transcribing what there is" "$MAXSEC")"
     kill -INT "$rp" 2>/dev/null || true
   fi
   wait "$rp" 2>/dev/null || true
@@ -289,27 +291,27 @@ session() {
 
   # 16 kHz s16 mono is 32000 bytes a second: under ~0.3 s is a mis-press.
   if [ ! -s "$wav" ] || [ "$(stat -c %s "$wav")" -lt 10000 ]; then
-    notify "ergon-dictate" "nothing recorded"; exit 0
+    notify "ergon-dictate" "$(_t "nothing recorded")"; exit 0
   fi
   lang=$(language)
   case "$model" in *.en) lang=en ;; esac
-  notify "ergon-dictate" "transcribing…"
+  notify "ergon-dictate" "$(_t "transcribing…")"
   t=$(threads)
   if ! out=$(whisper-cli -m "$(file_of "$model")" -f "$wav" -nt -np -t "$t" -l "$lang" 2>"$RT/whisper.err" </dev/null); then
-    warn -u critical "ergon-dictate" "whisper-cli failed: $(tail -n1 "$RT/whisper.err" 2>/dev/null)"; exit 1
+    warn -u critical "ergon-dictate" "$(_t "whisper-cli failed: %s" "$(tail -n1 "$RT/whisper.err" 2>/dev/null)")"; exit 1
   fi
   out=$(clean <<<"$out")
-  if [ -z "$out" ]; then notify "ergon-dictate" "no speech heard"; exit 0; fi
+  if [ -z "$out" ]; then notify "ergon-dictate" "$(_t "no speech heard")"; exit 0; fi
   deliver "$out"
 }
 
 need_ready() { # prints nothing; returns 1 after telling the person what to do
   local m
-  command -v pw-record >/dev/null || { warn -u critical "ergon-dictate" "pw-record is not installed (pipewire)"; echo "ergon-dictate: pw-record is not installed" >&2; return 1; }
-  command -v whisper-cli >/dev/null || { warn -u critical "ergon-dictate" "whisper-cli is not installed (bundle: ergon-bundle add dictation)"; echo "ergon-dictate: whisper-cli is not installed (ergon-bundle add dictation)" >&2; return 1; }
+  command -v pw-record >/dev/null || { warn -u critical "ergon-dictate" "$(_t "pw-record is not installed (pipewire)")"; echo "ergon-dictate: pw-record is not installed" >&2; return 1; }
+  command -v whisper-cli >/dev/null || { warn -u critical "ergon-dictate" "$(_t "whisper-cli is not installed (bundle: ergon-bundle add dictation)")"; echo "ergon-dictate: whisper-cli is not installed (ergon-bundle add dictation)" >&2; return 1; }
   m=$(active)
   if [ -z "$m" ] || ! installed "$m"; then
-    warn "ergon-dictate" "no speech model yet: pick one to download"
+    warn "ergon-dictate" "$(_t "no speech model yet: pick one to download")"
     echo "ergon-dictate: no active model (ergon dictate model list; model get NAME)" >&2
     pick_detached
     return 1
@@ -331,7 +333,7 @@ start() {
 stop() {
   case "$(phase)" in
     idle)         echo "ergon-dictate: not recording" >&2; return 0 ;;
-    transcribing) notify "ergon-dictate" "still transcribing"; return 0 ;;
+    transcribing) notify "ergon-dictate" "$(_t "still transcribing")"; return 0 ;;
   esac
   local pid; pid=$(cat "$RT/pid" 2>/dev/null || true)
   is_recorder "$pid" || { echo "ergon-dictate: recorder not found" >&2; return 1; }
@@ -342,7 +344,7 @@ stop() {
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); if ($0 !~ /^ergon:/) print; next } NR > 1 { exit }' "$0"; }
 
 case "${1:-}" in
-  toggle)  case "$(phase)" in idle) start ;; recording) stop ;; *) notify "ergon-dictate" "still transcribing" ;; esac ;;
+  toggle)  case "$(phase)" in idle) start ;; recording) stop ;; *) notify "ergon-dictate" "$(_t "still transcribing")" ;; esac ;;
   start)   start ;;
   stop)    stop ;;
   status)  s=$(phase); echo "$s"; [ "$s" != idle ] ;;

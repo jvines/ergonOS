@@ -94,3 +94,124 @@ restart	reiniciar
 resolution	resolución
 rotate	rotar
 toggle	interruptor
+# notifications and prompts: the remaining commands (ERGON-158)
+Audio output	Salida de audio
+audio restarted	audio reiniciado
+bluetooth restarted	bluetooth reiniciado
+wifi restarted	wifi reiniciado
+cannot read '%s' as a time (try 25m, 14:30, 2pm, 'tomorrow 9:00')	no entiendo '%s' como hora (prueba 25m, 14:30, 2pm, 'tomorrow 9:00')
+cleared %s reminder(s)	%s recordatorio(s) borrado(s)
+Connected to %s	Conectado a %s
+Could not connect to %s	No se pudo conectar a %s
+Could not connect to %s (wrong password?)	No se pudo conectar a %s (¿contraseña incorrecta?)
+could not type it and wl-copy is missing: %s	no se pudo escribir y falta wl-copy: %s
+could not type it, so it is on the clipboard	no se pudo escribir, así que quedó en el portapapeles
+Disconnected	Desconectado
+dns servers, space separated	servidores dns, separados por espacios
+downloading %s (%s)	descargando %s (%s)
+exit %s, after %s	código de salida %s, tras %s
+git email	correo de git
+git name	nombre de git
+hyprland refused '%s': %s	Hyprland rechazó '%s': %s
+idle and suspend back to normal	inactividad y suspensión vuelven a la normalidad
+imv is not installed	imv no está instalado
+in %s, peak %s MB	en %s, máximo %s MB
+Keyboard layout	Distribución de teclado
+killed after %s — peak %s MB against a limit of %s	terminado tras %s — máximo %s MB contra un límite de %s
+language: %s	idioma: %s
+listening — SUPER+CTRL+X to finish	escuchando — SUPER+CTRL+X para terminar
+need a time and a message: ergon remind 25m %s	falta una hora y un mensaje: ergon remind 25m %s
+none found	no se encontró ninguno
+No online device can take files right now	Ningún dispositivo conectado puede recibir archivos ahora
+no output	sin salida
+no pending reminder with id '%s' (see: ergon remind list)	no hay un recordatorio pendiente con id '%s' (ver: ergon remind list)
+No saved width: %s	Sin ancho guardado: %s
+no speech heard	no se oyó voz
+no speech model yet: pick one to download	aún no hay modelo de voz: elige uno para descargar
+not connected to a Wi-Fi network	no estás conectado a una red Wi-Fi
+nothing recorded	no se grabó nada
+Nothing to disconnect	Nada que desconectar
+pw-record is not installed (pipewire)	pw-record no está instalado (pipewire)
+qrencode is not installed	qrencode no está instalado
+reached the %s s limit, transcribing what there is	se alcanzó el límite de %s s, transcribiendo lo que hay
+Received %s	Recibido %s
+remind about	recordar sobre
+reminder %s at %s: %s	recordatorio %s a las %s: %s
+remind in/at (25m, 14:30)	recordar en/a las (25m, 14:30)
+removed %s	%s eliminado
+removed web app %s	aplicación web %s eliminada
+remove web app	eliminar aplicación web
+%s audio	audio %s
+Saved to %s	Guardado en %s
+Saved width: %s	Ancho guardado: %s
+Scan to join %s (the QR holds the password; close the window when done)	Escanea para unirte a %s (el QR lleva la contraseña; cierra la ventana al terminar)
+%s copied	%s copiado
+Send to	Enviar a
+Send with Taildrop	Enviar con Taildrop
+Sent to %s	Enviado a %s
+%s failed	%s falló
+%s file(s)	%s archivo(s)
+%s finished	%s terminó
+%s font	fuente %s
+'%s' is not in the future	'%s' no está en el futuro
+%s is ready	%s está listo
+%s needs enterprise settings: opening Advanced	%s requiere configuración empresarial: abriendo Avanzado
+%s not installed	%s no está instalado
+%s password	contraseña de %s
+%s px on workspace %s	%s px en el espacio de trabajo %s
+%s ran out of memory	%s se quedó sin memoria
+%s, really?	%s, ¿seguro?
+%s %s failed	%s %s falló
+ssh key	clave ssh
+SSH key	Clave SSH
+staying awake: no dimming, lock or screen-off until you turn it off	manteniendo despierto: sin atenuar, bloquear ni apagar la pantalla hasta que lo desactives
+staying fully awake: no suspend, not even on lid close (the lid locks and blanks)	totalmente despierto: sin suspender, ni al cerrar la tapa (la tapa bloquea y apaga la pantalla)
+still transcribing	aún transcribiendo
+SUPER+ALT+Home saves one	SUPER+ALT+Inicio guarda uno
+systemd-run failed: %s	systemd-run falló: %s
+Taildrop to %s failed	Taildrop a %s falló
+Tailscale is not running or not logged in	Tailscale no está corriendo o no has iniciado sesión
+This network wants you to sign in. Opening the page.	Esta red pide iniciar sesión. Abriendo la página.
+trackpad rebound (%s %s)	trackpad reasignado (%s %s)
+transcribing…	transcribiendo…
+unknown error	error desconocido
+using %s	usando %s
+Web app added	Aplicación web añadida
+web app name	nombre de la aplicación web
+web app %s	aplicación web %s
+web app URL	URL de la aplicación web
+whisper-cli failed: %s	whisper-cli falló: %s
+whisper-cli is not installed (bundle: ergon-bundle add dictation)	whisper-cli no está instalado (bundle: ergon-bundle add dictation)
+Wi-Fi sign-in needed	Se necesita iniciar sesión en el Wi-Fi
+Workspace %s layout	Distribución del espacio de trabajo %s
+# bare words and menu labels
+add	añadir
+battery	batería
+copy	copiar
+dictation	dictado
+dns	dns
+failed	falló
+language	idioma
+Open	Abrir
+recording	grabando
+session	sesión
+Time	Hora
+Transcoded	Transcodificado
+wifi	wifi
+Rescan	Volver a buscar
+Disconnect	Desconectar
+Share this network (QR)	Compartir esta red (QR)
+Turn Wi-Fi off	Apagar el Wi-Fi
+Advanced (nmtui)	Avanzado (nmtui)
+New key	Nueva clave
+Add a key to the agent	Añadir una clave al agente
+Copy a public key	Copiar una clave pública
+List keys	Listar claves
+DHCP (network default)	DHCP (predeterminado de la red)
+Custom	Personalizado
+lock	bloquear
+suspend	suspender
+hibernate	hibernar
+logout	cerrar sesión
+reboot	reiniciar
+shutdown	apagar

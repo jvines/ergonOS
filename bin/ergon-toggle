@@ -25,6 +25,8 @@
 # chose. Not in ~/.config/ergon: that directory is yours, nothing here writes it.
 # The bar is not config: autostart.lua and ergon-theme ask `ergon-toggle get bar`
 # before starting waybar. The screensaver is read by ergon-screensaver.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 state="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"

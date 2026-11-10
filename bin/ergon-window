@@ -23,6 +23,8 @@
 # Dispatches go through the Lua form (`ergon explain desktop-config`): a
 # Lua-configured Hyprland reads the payload as Lua, and a classic string dies
 # silently.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 dispatch() { hyprctl dispatch "$1" >/dev/null; }
@@ -79,9 +81,9 @@ width() {
     save)
       mkdir -p "$WDIR"
       jq -r '.size[0]' <<<"$win" > "$file"
-      note "Saved width: $class" "$(<"$file") px on workspace $ws" ;;
+      note "$(_t "Saved width: %s" "$class")" "$(_t "%s px on workspace %s" "$(<"$file")" "$ws")" ;;
     restore)
-      [[ -f $file ]] || { note "No saved width: $class" "SUPER+ALT+Home saves one"; return 1; }
+      [[ -f $file ]] || { note "$(_t "No saved width: %s" "$class")" "$(_t "SUPER+ALT+Home saves one")"; return 1; }
       target=$(<"$file"); cur=$(width_of "$addr") || return 1
       for i in 1 2 3 4 5 6; do
         ((cur == target)) && break

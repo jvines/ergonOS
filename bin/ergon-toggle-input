@@ -13,6 +13,8 @@
 # report that flag back, so the state is a marker file in $XDG_RUNTIME_DIR: off
 # until logout or reboot, and a config reload re-enables the device (the marker
 # is then stale; the next toggle just says "on" while nothing changed).
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
@@ -35,7 +37,7 @@ while IFS='|' read -r _ n; do
   h=$(ergon_input_hypr_name "$n")
   grep -qxF -- "$h" <<<"$known" && names+=("$h")
 done < <(ergon_input_nodes "$kind")
-[ "${#names[@]}" -gt 0 ] || { say "$kind" "none found"; exit 1; }
+[ "${#names[@]}" -gt 0 ] || { say "$kind" "$(_t "none found")"; exit 1; }
 
 case "$act" in
   on) want=on ;; off) want=off ;;
@@ -46,7 +48,7 @@ esac
 
 for h in "${names[@]}"; do
   r=$(hyprctl eval "hl.device({ name = \"${h//\"/}\", enabled = $enabled })" 2>&1) || true
-  [ "$r" = ok ] || { say "$kind" "hyprland refused '$h': $r"; exit 1; }
+  [ "$r" = ok ] || { say "$kind" "$(_t "hyprland refused '%s': %s" "$h" "$r")"; exit 1; }
 done
 mkdir -p "${marker%/*}"
 if [ "$want" = on ]; then rm -f "$marker"; else : > "$marker"; fi

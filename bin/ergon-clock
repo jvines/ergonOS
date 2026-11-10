@@ -12,6 +12,8 @@
 # Zones live one a line in ~/.config/ergon/clocks and are checked against
 # /usr/share/zoneinfo. UTC is always shown. The battery line is ergon-battery's
 # own, so there is one place that finds the cells.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 BINDIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -29,10 +31,10 @@ case "${1:-}" in
        [ -f "$CFG" ] && { grep -vxF -- "$z" "$CFG" > "$CFG.new" || true; mv "$CFG.new" "$CFG"; } ;;
   "")  out=$(date '+%H:%M  %a %d %b')
        b=$("$BINDIR/ergon-battery" --short 2>/dev/null || true)
-       [ -z "$b" ] || out+=$'\n'"battery $b"
+       [ -z "$b" ] || out+=$'\n'"$(_t battery) $b"
        out+=$'\n'"UTC $(TZ=UTC date +%H:%M)"
        while read -r z; do [ -n "$z" ] && out+=$'\n'"$z $(TZ=$z date '+%H:%M %a')"; done < <(zones)
-       notify-send -a ergon-clock -u low -t 6000 "Time" "$out" >/dev/null 2>&1 || true
+       notify-send -a ergon-clock -u low -t 6000 "$(_t Time)" "$out" >/dev/null 2>&1 || true
        echo "$out" ;;
   *)   echo "usage: ergon clock [add ZONE | rm ZONE | list]" >&2; exit 2 ;;
 esac

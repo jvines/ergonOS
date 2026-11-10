@@ -16,6 +16,8 @@
 # network answers it with a login page instead. The page opened is the portal's own
 # redirect, or the check URL itself, which the portal hijacks. A custom DNS
 # (ergon dns) can stop a portal from redirecting; `ergon dns dhcp` undoes it.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -uo pipefail
 BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 CHECK_URL=${ERGON_CAPTIVE_URL:-http://ping.archlinux.org/nm-check.txt}
@@ -34,7 +36,7 @@ once() {
   if [ "$(state)" = portal ]; then
     [ -e "$STATE" ] && return 0
     : > "$STATE"
-    command -v notify-send >/dev/null 2>&1 && notify-send -a ergon-captive "Wi-Fi sign-in needed" "This network wants you to sign in. Opening the page."
+    command -v notify-send >/dev/null 2>&1 && notify-send -a ergon-captive "$(_t "Wi-Fi sign-in needed")" "$(_t "This network wants you to sign in. Opening the page.")"
     open_page
   else
     rm -f "$STATE"

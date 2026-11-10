@@ -21,6 +21,8 @@
 # default: ssh is first-match, so a user's earlier per-host setting wins. An
 # existing config is otherwise never touched (an earlier prepended Include is
 # migrated away); the first time it is copied to config.ergon-backup. Idempotent.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -uo pipefail
 
 SSH_DIR="$HOME/.ssh"
@@ -146,17 +148,19 @@ cmd_copy() {
 menu() {
   command -v fuzzel >/dev/null 2>&1 || { sed -n '6,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
   local sel key
-  sel=$(printf 'New key\nAdd a key to the agent\nCopy a public key\nList keys\n' | fuzzel --dmenu --prompt 'ssh key  ') || exit 0
+  local M=("New key" "Add a key to the agent" "Copy a public key" "List keys")
+  sel=$(_t_menu "${M[@]}" | fuzzel --dmenu --prompt "$(_t "ssh key")  ") || exit 0
+  sel=$(_t_back "$sel" "${M[@]}")
   case "$sel" in
     "New key")  # asks for a passphrase, so it needs a terminal
       if [ -t 0 ]; then "$0" new; else exec "$(dirname "$0")/ergon-term" sh -c '"$0" new; echo; echo "-- press enter to close --"; read -r _' "$0"; fi ;;
     "Add a key to the agent")
-      key=$(ls "$SSH_DIR" 2>/dev/null | grep -v -e '\.pub$' -e '^config' -e '^known_hosts' -e '^authorized_keys' -e '\.ergon-backup$' | fuzzel --dmenu --prompt 'add  ') || exit 0
+      key=$(ls "$SSH_DIR" 2>/dev/null | grep -v -e '\.pub$' -e '^config' -e '^known_hosts' -e '^authorized_keys' -e '\.ergon-backup$' | fuzzel --dmenu --prompt "$(_t add)  ") || exit 0
       [ -n "$key" ] || exit 0
       if [ -t 0 ]; then "$0" add "$key"; else exec "$(dirname "$0")/ergon-term" sh -c '"$0" add "$1"; echo; echo "-- press enter to close --"; read -r _' "$0" "$key"; fi ;;
     "Copy a public key")
-      key=$(cd "$SSH_DIR" 2>/dev/null && ls *.pub 2>/dev/null | sed 's/\.pub$//' | fuzzel --dmenu --prompt 'copy  ') || exit 0
-      [ -n "$key" ] && "$0" copy "$key" >/dev/null && { command -v notify-send >/dev/null && notify-send -a ergon-ssh-key "SSH key" "$key.pub copied"; } ;;
+      key=$(cd "$SSH_DIR" 2>/dev/null && ls *.pub 2>/dev/null | sed 's/\.pub$//' | fuzzel --dmenu --prompt "$(_t copy)  ") || exit 0
+      [ -n "$key" ] && "$0" copy "$key" >/dev/null && { command -v notify-send >/dev/null && notify-send -a ergon-ssh-key "$(_t "SSH key")" "$(_t "%s copied" "$key.pub")"; } ;;
     "List keys")
       if [ -t 0 ]; then "$0" list; else exec "$(dirname "$0")/ergon-term" sh -c '"$0" list; echo; echo "-- press enter to close --"; read -r _' "$0"; fi ;;
   esac

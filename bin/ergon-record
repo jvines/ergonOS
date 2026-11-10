@@ -26,6 +26,8 @@
 # needs no pw-loopback process and no module-combine-sink. The three module
 # ids land in $STATE/audio-modules so the STOP half of this toggle can unload
 # exactly what START created.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 OUT="${ERGON_RECORD_DIR:-$HOME/recordings}"
@@ -76,12 +78,12 @@ if pgrep -x wf-recorder >/dev/null; then
     # shell string built by concatenation -- $file is a path this script
     # built from a timestamp it also chose, but nothing downstream of here
     # should have to re-derive that to stay safe.
-    ( action=$(notify-send -t 15000 -A "default=Open" "ergon-record" \
-                 "stopped — $(basename "$file")")
+    ( action=$(notify-send -t 15000 -A "default=$(_t Open)" "ergon-record" \
+                 "$(_t "stopped — %s" "$(basename "$file")")")
       [ "$action" = default ] && exec mpv "$file" ) </dev/null >/dev/null 2>&1 &
     disown
   else
-    notify-send "ergon-record" "stopped — $OUT"
+    notify-send "ergon-record" "$(_t "stopped — %s" "$OUT")"
   fi
   exit 0
 fi
@@ -148,8 +150,8 @@ if [ -e /dev/dri/renderD128 ]; then
   args+=(-c h264_vaapi -d /dev/dri/renderD128)
 fi
 
-msg="recording"
-[ -n "$audio" ] && msg="$msg, $audio audio"
+msg=$(_t recording)
+[ -n "$audio" ] && msg="$msg, $(_t "%s audio" "$audio")"
 notify-send "ergon-record" "$msg → $(basename "$file")"
 # The bar shows the recording once wf-recorder is running, which is after the
 # exec below: so the poke waits for it, from a subshell the exec leaves behind.

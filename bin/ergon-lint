@@ -799,7 +799,7 @@ SPAN = re.compile(r'`([^`]+)`')
 
 n_cmd = n_chord = 0
 kdir = os.path.join(root, "knowledge")
-for name in sorted(os.listdir(kdir)):
+for name in sorted(os.path.join(sub, f) for sub in ("", "es") if os.path.isdir(os.path.join(kdir, sub)) for f in os.listdir(os.path.join(kdir, sub))):
     if not name.endswith(".md"):
         continue
     path = os.path.join(kdir, name)

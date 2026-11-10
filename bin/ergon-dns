@@ -16,6 +16,8 @@
 # re-applies the connections that are up. `dhcp` clears exactly those fields, so it is
 # the way back. A hotel or conference network that hijacks DNS for its sign-in page
 # needs `ergon dns dhcp` first.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -uo pipefail
 
 profiles() { nmcli -t -f UUID,TYPE connection show 2>/dev/null | awk -F: '$2=="802-11-wireless"||$2=="802-3-ethernet"{print $1}'; }
@@ -57,12 +59,14 @@ show() {
 menu() {
   command -v fuzzel >/dev/null 2>&1 || { show; return; }
   local sel
-  sel=$(printf 'DHCP (network default)\nCloudflare\nQuad9\nCustom\n' | fuzzel --dmenu --prompt 'dns  ') || return 0
+  local M=("DHCP (network default)" Cloudflare Quad9 Custom)
+  sel=$(_t_menu "${M[@]}" | fuzzel --dmenu --prompt "$(_t dns)  ") || return 0
+  sel=$(_t_back "$sel" "${M[@]}")
   case "$sel" in
     DHCP*) exec "$0" dhcp ;;
     Cloudflare) exec "$0" cloudflare ;;
     Quad9) exec "$0" quad9 ;;
-    Custom) sel=$(fuzzel --dmenu --lines 0 --prompt 'dns servers, space separated  ' </dev/null) || return 0
+    Custom) sel=$(fuzzel --dmenu --lines 0 --prompt "$(_t "dns servers, space separated")  " </dev/null) || return 0
             # shellcheck disable=SC2086
             exec "$0" custom $sel ;;
   esac
