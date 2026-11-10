@@ -675,7 +675,7 @@ NS='[{"name":"DP-1","id":0,"width":1280,"height":800,"scale":1,"x":0,"y":0,"tran
 mons "$NS"; rm -f "$SAVED"
 disp extend right
 check "extend right with no eDP: the first screen is the source, not the focused projector" has "$SAVED" 'output = "HDMI-A-1", position = "1280x0"'
-check "  and the screen itself is not moved" not has "$SAVED" 'output = "DP-1", position'
+check "  and the screen itself is pinned at 0x0" has "$SAVED" 'output = "DP-1", position = "0x0"'
 mons "$EXT"; rm -f "$SAVED"
 disp extend left
 check "extend left: the projector goes before it" has "$SAVED" 'output = "HDMI-A-1", position = "-1920x0"'

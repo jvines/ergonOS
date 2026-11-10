@@ -258,9 +258,9 @@ place() {  # right|left SOURCE
     def lw: ((if ((.transform // 0) % 2) == 1 then .height else .width end) / (.scale // 1)) | round;
     (map(select(.name == $s))[0]) as $src
     | [.[] | select(.name != $s and .name != "FALLBACK" and (.disabled | not))] as $o
-    | reduce $o[] as $m ({x: (if $d == "right" then ($src.x // 0) + ($src | lw) else ($src.x // 0) end), l: []};
-        if $d == "right" then .l += ["\($m.name) \(.x)x\($src.y // 0)"] | .x += ($m | lw)
-        else .x -= ($m | lw) | .l += ["\($m.name) \(.x)x\($src.y // 0)"] end)
+    | reduce $o[] as $m ({x: (if $d == "right" then ($src | lw) else 0 end), l: []};
+        if $d == "right" then .l += ["\($m.name) \(.x)x0"] | .x += ($m | lw)
+        else .x -= ($m | lw) | .l += ["\($m.name) \(.x)x0"] end)
     | .l[]'
 }
 
@@ -278,6 +278,9 @@ case "$1" in
       right|left)
         src=$(hyprctl monitors -j | jq -r '(map(select(.name | startswith("eDP"))) + sort_by(.id))[0].name // empty')
         [ -n "$src" ] && name_ok "$src" || { echo "no output to extend from" >&2; exit 1; }
+        # The screen is pinned at 0x0 first: left on `auto`, Hyprland re-lays it out
+        # after the projector moves, and it slid right of the projector (VM run 2748).
+        set_rule "$src" position=0x0 || rc=1
         while read -r t xy; do
           [ -n "$t" ] || continue
           if name_ok "$t" && set_rule "$t" mirror= position="$xy"; then echo "   $t extends the desktop to the $2 of $src, at $xy"; else rc=1; fi
