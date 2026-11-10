@@ -100,6 +100,23 @@ say "arch date"
 # test-hypr-session.sh provisions this disk, from this date.
 # shellcheck source=../lib/archive-pin.sh
 . "$ERGON/lib/archive-pin.sh"
+# CI cache (bin/ci-archive-cache): when it answers, the guest installs and
+# provisions through it, so a run after one good download reads everything
+# locally. Otherwise the real archive, said so in the log. An explicit
+# ERGON_ARCHIVE_URL from the caller wins.
+if [ "${ERGON_ARCHIVE_URL:-https://archive.archlinux.org/repos}" = "https://archive.archlinux.org/repos" ]; then
+  # checo's LAN address, not the docker bridge gateway: the guest runs docker, whose
+  # own docker0 is 172.17.0.1 inside the guest and shadows it (measured 2026-11-10).
+  _cache=${ERGON_ARCHIVE_CACHE_URL:-http://192.168.0.87:9129/repos}
+  if curl -fs --max-time 5 "${_cache%/repos}/healthz" >/dev/null 2>&1; then
+    ERGON_ARCHIVE_URL=$_cache
+    ok "archive cache answers: packages come through $ERGON_ARCHIVE_URL"
+  else
+    echo "-- archive cache at $_cache is down: using archive.archlinux.org directly" >&2
+  fi
+fi
+export ERGON_ARCHIVE_URL
+echo "$ERGON_ARCHIVE_URL" > "$WORK/archive-url"
 ARCHIVE_DATE=$(ERGON_ARCHIVE_DATE="${ERGON_ARCHIVE_DATE:-$(date -u -d yesterday +%F)}" ergon_tested_date) \
   || { echo "ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} is not a day up to today" >&2; exit 1; }
 curl -fsI --max-time 30 "$(ergon_archive_url "$ARCHIVE_DATE")/core/os/x86_64/core.db" >/dev/null \
@@ -230,7 +247,7 @@ expect {
 # UNATTENDED only -- deliberately NOT ARCH_BOOTSTRAP_TEST. The live-ISO guard,
 # the UEFI guard and the real swapon all have to run here; that is the entire
 # reason for doing this in a VM instead of a container.
-send "ARCH_BOOTSTRAP_UNATTENDED=1 HOSTNAME_NEW=$VMHOST USERNAME_NEW=$USERNAME LUKS_PASSPHRASE=$PASSPHRASE USER_PASSWORD=$USERPASS SWAP_GIB=$SWAP_GIB ERGON_ARCHIVE_DATE=$ARCHIVE_DATE bash /ergon/bin/arch-bootstrap.sh /dev/vda; echo BOOTSTRAP_RC=\\\$?\r"
+send "ARCH_BOOTSTRAP_UNATTENDED=1 HOSTNAME_NEW=$VMHOST USERNAME_NEW=$USERNAME LUKS_PASSPHRASE=$PASSPHRASE USER_PASSWORD=$USERPASS SWAP_GIB=$SWAP_GIB ERGON_ARCHIVE_DATE=$ARCHIVE_DATE ERGON_ARCHIVE_URL=$ERGON_ARCHIVE_URL bash /ergon/bin/arch-bootstrap.sh /dev/vda; echo BOOTSTRAP_RC=\\\$?\r"
 expect {
   timeout { puts "\n!! arch-bootstrap.sh did not finish in 50 minutes"; exit 1 }
   "BOOTSTRAP_RC=0" { puts "\n-- bootstrap exited 0" }

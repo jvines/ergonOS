@@ -51,7 +51,8 @@
 # normally under a week. Provisioning that must install during it installs
 # from live mirrors, as the machine already is, and the gap moves to that day.
 # The same rule covers `ergon update --latest` and back.
-ERGON_ARCHIVE_URL=https://archive.archlinux.org/repos
+# The harness points this at the CI cache (test/arch-vm/archive-cache); nothing shipped sets it.
+ERGON_ARCHIVE_URL=${ERGON_ARCHIVE_URL:-https://archive.archlinux.org/repos}
 ERGON_PIN_LIST=/etc/pacman.d/ergon-mirrorlist
 # A copy of the list, made only once a sync against it went through. The list
 # alone cannot say that: it is written BEFORE the sync, and one that fails or is

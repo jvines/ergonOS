@@ -83,6 +83,7 @@ fi
 # test-arch-vm.sh left beside it. Empty, the guest fails the run rather than
 # test whatever the mirrors have: that is no day vm.yml could record.
 ARCHIVE_DATE=$(cat "$WORK/archive-date" 2>/dev/null || true)
+ERGON_ARCHIVE_URL=$(cat "$WORK/archive-url" 2>/dev/null || echo https://archive.archlinux.org/repos)
 # Same GPU auto-detection as bin/hypr-vm. With a render node the guest gets real
 # GL and a dmabuf path, which is what makes the wallpaper and grim assertions
 # mean anything; without one they are skips. Run this on a host with a GPU.
@@ -148,7 +149,7 @@ expect {
   "SHARE_OK" {}
 }
 
-send "echo '$USERPASS' | sudo -S env USERPASS=$USERPASS BACKUP_NAS=$BACKUP_NAS ERGON_ARCHIVE_DATE=$ARCHIVE_DATE bash /mnt/test/arch-vm/guest-desktop.sh\r"
+send "echo '$USERPASS' | sudo -S env USERPASS=$USERPASS BACKUP_NAS=$BACKUP_NAS ERGON_ARCHIVE_DATE=$ARCHIVE_DATE ERGON_ARCHIVE_URL=$ERGON_ARCHIVE_URL bash /mnt/test/arch-vm/guest-desktop.sh\r"
 # SILENCE, not a budget.
 #
 # "set timeout 1800" above plus a single expect makes 1800s the allowance for

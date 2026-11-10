@@ -114,7 +114,7 @@ cp "$S/etc/pacman.conf" "$T/stock.conf"
 LIST="$S/etc/pacman.d/ergon-mirrorlist"
 TESTED=$(date -u -d '3 days ago' +%F)
 # The line a day must produce, spelled out here rather than asked of the lib.
-server() { echo "Server = https://archive.archlinux.org/repos/${1//-//}/\$repo/os/\$arch"; }
+server() { echo "Server = ${ERGON_ARCHIVE_URL:-https://archive.archlinux.org/repos}/${1//-//}/\$repo/os/\$arch"; }
 
 # --- stubs in front of everything that runs as root or reads a real Arch ------
 cat > "$T/stub/sudo" <<'EOF'

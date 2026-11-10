@@ -170,6 +170,10 @@ jobs:
         id: install
         run: |
           rm -f "$WORK"/phase[123].log "$WORK"/session.log "$WORK"/archive-date
+          # The archive cache (bin/ci-archive-cache) survives runs; start it if it is gone.
+          # Down or not, the harness falls back to the real archive and says so.
+          [ "$(docker inspect -f "{{.State.Running}}" ergon-archive-cache 2>/dev/null)" = true ] \
+            || "$CI_DIR/bin/ci-archive-cache" || echo "archive cache did not start; using archive.archlinux.org" >&2
           cd "$CI_DIR" && ./bin/test-arch-vm.sh --keep
 
       - name: Provision it and prove the desktop works
