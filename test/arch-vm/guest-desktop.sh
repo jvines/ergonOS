@@ -3007,11 +3007,16 @@ for _p in ethereal flexoki-light hackerman jade-horse last-horizon lumon lupine 
       */backgrounds/$_p/*) ok "ERGON-156: $_p applied and its background was coloured for it" ;;
       *) bad "ERGON-156: $_p applied but the background is '$(bgapplied)'" ;;
     esac
-    sleep 2; shot "palette-$_p"
+    # fuzzel does not restyle live and mako keeps old toasts: a fresh launcher under this palette, no stale toasts
+    usr "makoctl dismiss -a" >/dev/null 2>&1 </dev/null; pkill -u "$U" -x fuzzel 2>/dev/null; sleep 1
+    usr fuzzel >/dev/null 2>&1 &
+    sleep 3; shot "palette-$_p"
+    pkill -u "$U" -x fuzzel 2>/dev/null
   else
     bad "ERGON-156: ergon-theme $_p failed: $(tail -3 /tmp/palette-$_p.log | tr '\n' ' ')"
   fi
 done
+pkill -u "$U" -x fuzzel 2>/dev/null
 usr "ergon-theme cool" > /tmp/palette-restore2.log 2>&1 </dev/null
 assert_flame cool "after the omarchy palettes"
 
@@ -3611,6 +3616,11 @@ note "ERGON-94: the harness hot-adds no second disk, so a removable disk being l
 
 # --- ERGON-104: ergon-qr reads a real QR off the screen; ergon-webcam refuses with no camera
 echo "--- ERGON-104 ---"
+# Nothing from an earlier block may sit over or under the QR: a notification, an
+# open launcher, a screensaver, a stray imv. (imv-wayland: -x imv never matches.)
+usr "makoctl dismiss -a" >/dev/null 2>&1 </dev/null
+usr "ergon-screensaver stop" >/dev/null 2>&1 </dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null; sleep 1
 for _c in zbarimg ffmpeg qrencode grim; do
   command -v "$_c" >/dev/null && ok "$_c is installed" || bad "$_c is missing"
 done
@@ -3632,9 +3642,11 @@ if [ -n "$_qrwin" ]; then
   _clip=$(usr 'timeout 3 wl-paste -n' 2>/dev/null </dev/null)
   if [ "$_qr_rc" = 0 ] && [ "$_clip" = 'https://ergon.example/qr104' ]; then
     ok "ergon-qr decoded the QR shown on screen ($_qrwin) to the clipboard"
-  else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"; fi
+  else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"
+    note "ERGON-104: monitors $(usr 'hyprctl monitors all -j' 2>/dev/null </dev/null | jq -c '[.[] | {name,x,y,width,height,scale,transform,mirrorOf}]' 2>/dev/null); window $_qrwin; clients $(usr 'hyprctl clients -j' 2>/dev/null </dev/null | jq -c '[.[] | {class,monitor,at,size}]' 2>/dev/null)"
+    [ -d /out ] && timeout 20 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -g '$_qrwin' /out/qr104-region.png" >/dev/null 2>&1 </dev/null; fi
 else bad "harness: imv showed no window for the QR image"; fi
-pkill -u "$U" -x imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png /tmp/qr104.out
+pkill -u "$U" -f imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png /tmp/qr104.out
 if ls /sys/class/video4linux/video* >/dev/null 2>&1; then
   note "ERGON-104: the guest has a V4L2 node, so the no-camera refusal is not exercised"
 else
@@ -3647,7 +3659,7 @@ note "ERGON-104: a real webcam recording and the Open button on mako are unprove
 
 # --- ERGON-105..116: locale, ssh-agent, remind, zoom, width, db, speedtest, text size, keymap
 echo "--- ERGON-105..116 ---"
-pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null
 # 106: the session has an agent socket, systemd owns it, and a key round-trips.
 _henv106=$(tr '\0' '\n' < "/proc/$(pgrep -x Hyprland | head -1)/environ" 2>/dev/null)
 grep -qx 'SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket' <<<"$_henv106" && ok "ERGON-106: the compositor carries SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket from the shipped uwsm drop-in" \
@@ -3884,7 +3896,7 @@ else bad "ERGON-112: /etc/vconsole.conf KEYMAP='$_vk' is empty or not Latin: $(h
 
 # --- ERGON-118, 106b, 67, 36, 55: web apps + LocalSend, ssh-key block order, marimo scaffold, GPU report, welcome notebook
 echo "--- ERGON-118, 106b, 67, 36, 55 ---"
-pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null
 _A="$H/.local/share/applications"
 _net() { timeout -k 2 10 curl -sS -o /dev/null -m 6 https://pypi.org/simple/ >/dev/null 2>&1 </dev/null; }
 _close_class() {  # _close_class <class>: closes every client of that class
@@ -3990,7 +4002,7 @@ if [ "$_l53ok" = 1 ] && [ -z "$_l53u" ]; then
 else bad "ERGON-118: nft 53317 rules: '$(head -c 300 <<<"$_l53")'"; fi
 if pacman -Q localsend-bin >/dev/null 2>&1; then
   ok "ERGON-118: localsend-bin is installed ($(pacman -Q localsend-bin))"
-  pkill -u "$U" -x imv 2>/dev/null
+  pkill -u "$U" -f imv 2>/dev/null
   # the package's own launcher says what to run
   _lsx=$(grep -h '^Exec=' /usr/share/applications/*ocalsend*.desktop /usr/share/applications/*ocalSend*.desktop 2>/dev/null | head -1)
   _lsx=${_lsx#Exec=}; _lsx=${_lsx%% *}

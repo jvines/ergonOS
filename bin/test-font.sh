@@ -78,4 +78,9 @@ check "no argument shows the picker and applies the choice" hasx "$T/state/ergon
 check "  with the current family marked" grep -q 'Fira Code  (current)' "$T/log/menu"
 ef mono default >/dev/null 2>&1
 check "default restores JetBrainsMono" hasx "$E/foot/foot.ini" "font=JetBrainsMono Nerd Font:size=14"
+# font.env holding ONLY the key being replaced: grep -v printed nothing and
+# exited 1, which pipefail turned into a silent exit (VM run 2695).
+printf 'FONT_MONO=Fira Code\n' > "$T/state/ergon/font.env"
+ef mono default >/dev/null 2>&1; check "default works when mono is the only key in font.env" test "$?" = 0
+check "  and restored the shipped family" hasx "$E/foot/foot.ini" "font=JetBrainsMono Nerd Font:size=14"
 echo "$PASS passed, $FAIL failed"; [ "$FAIL" = 0 ]
