@@ -92,5 +92,29 @@ mv "$T/root/etc/kernel/cmdline" "$T/root/grub-was-here"; mkdir -p "$T/root/etc/d
 out=$("$BE" sync 2>&1); rc=$?
 check "ergon-boot-entries says GRUB and exits 0" bash -c '[ "$1" = 0 ] && grep -q GRUB <<<"$2"' _ "$rc" "$out"
 
+echo "== the boot guard on GRUB (ERGON-126)"
+# grub-mkconfig writes grub.cfg under umask 077, so it is root's alone, and
+# provisioning runs the guard as the user. Here only the sudo stub can read it.
+G="$T/root/boot/grub/grub.cfg"; mkdir -p "$T/root/boot/grub" "$T/root/etc/grub.d"
+cat > "$T/stub/sudo" <<STUB
+#!/usr/bin/env bash
+chmod 600 "$G" 2>/dev/null; "\$@"; rc=\$?; chmod 000 "$G" 2>/dev/null; exit \$rc
+STUB
+cat > "$T/stub/grub-mkconfig" <<'STUB'
+#!/usr/bin/env bash
+for s in "$ERGON_BOOTROOT"/etc/grub.d/*; do [ -x "$s" ] && "$s"; done > "$2"; chmod 000 "$2"
+STUB
+printf '#!/usr/bin/env bash\ncase "$*" in *FSTYPE*) echo btrfs ;; *UUID*) echo 1234-ABCD ;; *) echo /@ ;; esac\n' > "$T/stub/findmnt"
+printf '#!/usr/bin/env bash\nf=$1; shift; [ "$1" = create ] && : > "$f"; [ "$1" = set ] && echo "$2" >> "$f"; true\n' > "$T/stub/grub-editenv"
+chmod +x "$T/stub"/*
+export ERGON_GUARD_ESP_UUID=1234-ABCD ERGON_GUARD_ROOT_UUID=dead-beef ERGON_GUARD_BOOT=/nonexistent
+"$BG" install > "$T/out" 2>&1; rc=$?
+check "install exits 0 for a user who cannot read grub.cfg" test "$rc" = 0
+check "  without the warning provisioning printed" bash -c '! grep -q "did not reach grub.cfg" "$1"' _ "$T/out"
+check "  the fallback entry is in grub.cfg" sudo grep -q 'id ergon-fallback' "$G"
+check "  the counter and the fallback scripts are installed" test -x "$T/root/etc/grub.d/09_ergon_boot_counter" -a -x "$T/root/etc/grub.d/99_ergon_boot_fallback"
+check "  and the success unit" test -f "$T/root/etc/systemd/system/ergon-boot-ok.service"
+check "status says the fallback entry is there" bash -c '"$1" status 2>&1 | grep -q "fallback entry is in grub.cfg"' _ "$BG"
+
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
