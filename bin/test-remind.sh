@@ -3,6 +3,7 @@
 # systemd-run / systemctl / notify-send. The real user manager is a VM check.
 #   ./bin/test-remind.sh
 set -uo pipefail
+export ERGON_LANG=en   # the assertions read English; i18n follows the session locale (ERGON-158)
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 R="$REPO/bin/ergon-remind"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT

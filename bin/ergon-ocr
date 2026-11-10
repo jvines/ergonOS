@@ -11,8 +11,10 @@
 # watched by screenshot-sync.path and mirrored to checo, and an OCR scratch
 # image is not something to ship across the fleet.
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
-command -v tesseract >/dev/null || { notify-send -u critical "ergon-ocr" "tesseract not installed"; exit 1; }
+command -v tesseract >/dev/null || { notify-send -u critical "ergon-ocr" "$(_t "tesseract not installed")"; exit 1; }
 
 tmp=$(mktemp --suffix=.png); trap 'rm -f "$tmp"' EXIT
 
@@ -25,7 +27,7 @@ grim -g "$geom" "$tmp"
 text=$(tesseract "$tmp" - --psm 6 2>/dev/null | sed -e 's/[[:space:]]*$//' -e '/^$/d')
 
 if [ -z "$text" ]; then
-  notify-send -u normal "ergon-ocr" "no text found in selection"
+  notify-send -u normal "ergon-ocr" "$(_t "no text found in selection")"
   exit 0
 fi
 

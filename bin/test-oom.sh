@@ -33,6 +33,7 @@
 # whether the compositor survives it, or whether a notification is drawn. Those
 # need a booted session and are in test/arch-vm/guest-desktop.sh.
 set -uo pipefail
+export ERGON_LANG=en   # the assertions read English; i18n follows the session locale (ERGON-158)
 
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd -P)"
 T=$(mktemp -d)

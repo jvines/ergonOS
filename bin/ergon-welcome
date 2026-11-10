@@ -27,6 +27,8 @@ set -uo pipefail
 # repo; without it the root comes out as /usr/local (see ergon-lint).
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 BIN="$ERGON/bin"
+# shellcheck source=../lib/i18n.sh
+. "$ERGON/lib/i18n.sh"
 STAMP="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/welcome-shown"
 # Per section. `ergon --help` reads every header in bin/ and was the slowest,
 # at a third of a second on checo; a section is cut off long before it could
@@ -47,25 +49,25 @@ done
 # ergon-keys) cannot hold the pipe open after its parent is gone.
 section() {
   local title=$1 out rc; shift
-  printf '\n## %s: `ergon %s`\n\n' "$title" "$*"
+  printf '\n## %s: `ergon %s`\n\n' "$(_t "$title")" "$*"
   out=$(timeout -k 1 "$LIMIT" "$BIN/ergon" "$@" </dev/null 2>"$ERR"); rc=$?
   case "$rc" in
-    0)       if [ -n "$out" ]; then printf '```\n%s\n```\n' "$out"; else printf '_It printed nothing._\n'; fi ;;
-    124|137) printf '_No answer within %ss._\n' "$LIMIT" ;;
-    *)       printf '_It failed (exit %s): %s_\n' "$rc" "$(tail -1 "$ERR")" ;;
+    0)       if [ -n "$out" ]; then printf '```\n%s\n```\n' "$out"; else printf '_%s_\n' "$(_t "It printed nothing.")"; fi ;;
+    124|137) printf '_%s_\n' "$(_t "No answer within %ss." "$LIMIT")" ;;
+    *)       printf '_%s_\n' "$(_t "It failed (exit %s): %s" "$rc" "$(tail -1 "$ERR")")" ;;
   esac
 }
 
 page() {
-  "$BIN/ergon-explain" welcome 2>/dev/null || printf '# Welcome\n\n_ergon explain has no welcome topic here._\n'
+  "$BIN/ergon-explain" welcome 2>/dev/null || printf '# %s\n\n_%s_\n' "$(_t Welcome)" "$(_t "ergon explain has no welcome topic here.")"
   # --print: this is a pipe, and without it ergon-keys opens a picker.
   section Keys keys --print
   section Bundles bundle list
   # How to add one, from ergon-bundle's own usage message rather than retyped.
   local add
   add=$(sed -n 's/.*"usage: \(ergon-bundle add [^"]*\)".*/\1/p' "$BIN/ergon-bundle" 2>/dev/null | head -1)
-  if [ -n "$add" ]; then printf '\nTo add one: `%s`\n' "$add"
-  else printf '\n_ergon-bundle has no usage line for add._\n'; fi
+  if [ -n "$add" ]; then printf '\n%s `%s`\n' "$(_t "To add one:")" "$add"
+  else printf '\n_%s_\n' "$(_t "ergon-bundle has no usage line for add.")"; fi
   section Topics explain --list
   # --help, not bare `ergon`: bare used to open a picker when stdout was not a
   # terminal and a compositor was up (ERGON-56), which is exactly this, and
@@ -126,8 +128,8 @@ first_run() {
       # for the stamp before calling it a failure.
       for _ in $(seq 20); do [ -e "$STAMP" ] && break; sleep 0.5; done
     fi
-    [ -e "$STAMP" ] || notify-send "Welcome to Ergon" \
-      "The welcome page could not open a window. Run: ergon welcome"
+    [ -e "$STAMP" ] || notify-send "$(_t "Welcome to Ergon")" \
+      "$(_t "The welcome page could not open a window. Run: ergon welcome")"
   ) </dev/null >/dev/null 2>&1 &
   exit 0
 }
