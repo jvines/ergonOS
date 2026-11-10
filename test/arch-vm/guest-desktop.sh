@@ -3028,6 +3028,8 @@ _nb=$(hq binds -j | jq '[.[].description | select(IN("Toggle split", "Toggle gro
 [ "${_nb:-0}" = 7 ] && ok "the seven layout and monitor binds registered" \
                      || bad "only ${_nb:-0} of the seven layout and monitor binds registered"
 _dsp_src=$(hq monitors -j | jq -r '.[0].name' 2>/dev/null)
+_dsp_orig=$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | "\(.x)x\(.y) \(.scale) \(.transform)"')
+_dsp_gdk=$(su "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user show-environment" 2>/dev/null | sed -n 's/^GDK_SCALE=//p')
 _dsp_out=$(hq output create headless ERGON-PROJ)
 mirror_of() { hq monitors all -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .mirrorOf' 2>/dev/null; }
 mirrored() {  # mirrored yes|no, polled: a rule from eval lands on the next refresh
@@ -3070,12 +3072,21 @@ else
     [ "$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | .transform')" = 1 ] \
       && ok "ergon display rotate 90 turns the output" || bad "rotate 90: transform is not 1 (see /tmp/display.log)"
     usr "ergon-display rotate 0" >> /tmp/display.log 2>&1
-    [ "$(hq getoption xwayland:force_zero_scaling -j | jq -r '.int // .custom // empty')" = 1 ] \
+    [ "$(hq getoption xwayland:force_zero_scaling -j | jq -r '.bool // .int // empty')" = true ] \
       && ok "xwayland:force_zero_scaling is on (X11 apps are not upscaled)" || bad "xwayland:force_zero_scaling is off"
   else
     bad "  but ERGON-PROJ does not mirror $_dsp_src (mirrorOf '$(mirror_of)')"
     sed 's/^/     /' /tmp/display.log
   fi
+  # Leave the source as found, whatever failed above: scale, transform and
+  # position, the GDK_SCALE the scale steps set, and the saved rules ergon
+  # display wrote (display.lua is replayed by every later reload, and a
+  # rotated or rescaled output cropped the ERGON-104 QR scan and the font shots).
+  read -r _o_pos _o_scale _o_tr <<<"$_dsp_orig"
+  hq "eval 'hl.monitor({ output = \"$_dsp_src\", position = \"$_o_pos\", scale = \"$_o_scale\", transform = $_o_tr })'" >/dev/null
+  rm -f "/run/user/1000/ergon/display.lua" "$(getent passwd "$U" | cut -d: -f6)/.local/state/ergon/display.lua"
+  if [ -n "$_dsp_gdk" ]; then hq "eval 'hl.env(\"GDK_SCALE\", \"$_dsp_gdk\")'" >/dev/null
+  else su "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user unset-environment GDK_SCALE" 2>/dev/null || true; fi
   hq output remove ERGON-PROJ >/dev/null
 fi
 
