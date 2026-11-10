@@ -91,6 +91,14 @@ hl.config({
     inactive_timeout = 5,
   },
 
+  -- XWayland clients draw at the monitor's pixel size instead of being
+  -- upscaled from 1x, which is what made them blurry at a fractional scale
+  -- (ERGON-134). The cost is that they are then drawn small: GDK_SCALE (ergon
+  -- display xscale) sizes GTK ones, and Tk, Java and Qt have their own knobs.
+  -- Name checked against Hyprland 0.56: --verify-config rejects an unknown
+  -- xwayland key as "unknown config key".
+  xwayland = { force_zero_scaling = true },
+
   misc = {
     disable_hyprland_logo = true,
     disable_splash_rendering = true,

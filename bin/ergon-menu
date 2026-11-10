@@ -120,6 +120,29 @@ system_menu() {
   esac
 }
 
+# Mirror and extend for a projector (ERGON-132), one entry each. ergon-display
+# says why it refused on stderr and nothing is watching that, so it is shown.
+display_do() {
+  local out
+  out=$("$BINDIR/ergon-display" "$@" 2>&1) || { notify-send "ergon display" "$out" 2>/dev/null || true; }
+}
+
+display_menu() {
+  local sel
+  sel=$(printf 'Present (mirror, no notifications)\nMirror\nExtend right\nExtend left\nExtend (undo mirror)\nScale (next)\nResolution and refresh\nRotate\nKeep this layout\n' | pick display 40) || exit 0
+  case "$sel" in
+    Present*)       display_do present ;;
+    Mirror)         display_do mirror ;;
+    "Extend right") display_do extend right ;;
+    "Extend left")  display_do extend left ;;
+    Extend*)        display_do extend ;;
+    Scale*)         display_do scale cycle ;;
+    Resolution*)    sel=$("$BINDIR/ergon-display" modes | pick resolution) || exit 0; display_do mode "$sel" ;;
+    Rotate)         sel=$(printf '0\n90\n180\n270\n' | pick rotate) || exit 0; display_do rotate "$sel" ;;
+    Keep*)          display_do save ;;
+  esac
+}
+
 style_menu() {
   local sel
   sel=$(printf 'Palette\nBackground\nToggles\n' | pick style) || exit 0
@@ -211,6 +234,7 @@ help_menu() {
 # see that test for why comparing it to itself would be circular).
 dump() {
   printf 'System\n  session menu (ergon session)\n  Wi-Fi (ergon wifi)\n  Sign in to Wi-Fi (ergon captive)\n  DNS (ergon dns)\n  SSH server (ergon ssh-enable)\n  Vault (ergon vault)\n  Tailscale (ergon tailscale)\n  Timezone (ergon timezone)\n  Language (ergon language)\n  Channel (ergon channel)\n'
+  printf 'Display\n  Present (mirror, no notifications)\n  Mirror\n  Extend right\n  Extend left\n  Extend (undo mirror)\n  Scale (next)\n  Resolution and refresh\n  Rotate\n  Keep this layout\n'
   printf 'Style\n  Palette\n'
   "$BINDIR/ergon-theme" --list | unmarked | sed 's/^/    /'
   printf '  Toggles\n'
@@ -243,9 +267,10 @@ fi
 
 command -v fuzzel >/dev/null 2>&1 || { echo "ergon-menu: fuzzel is not installed" >&2; exit 1; }
 
-sel=$(printf 'System\nStyle\nCommands\nHelp\n' | pick ergon) || exit 0
+sel=$(printf 'System\nDisplay\nStyle\nCommands\nHelp\n' | pick ergon) || exit 0
 case "$sel" in
   System)   system_menu ;;
+  Display)  display_menu ;;
   Style)    style_menu ;;
   Commands) commands_menu ;;
   Help)     help_menu ;;

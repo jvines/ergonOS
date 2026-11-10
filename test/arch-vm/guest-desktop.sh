@@ -3036,6 +3036,23 @@ else
       || { bad "ERGON-PROJ still mirrors after extend"; sed 's/^/     /' /tmp/display.log; }
     usr "makoctl mode" 2>/dev/null | grep -qx do-not-disturb \
       && bad "  but leaves mako in do-not-disturb" || ok "  and lets notifications through again"
+    # ERGON-132: the projector beside the screen, not on it. Its x is the
+    # source's logical width, whatever scale the VM is at.
+    usr "ergon-display extend right" >> /tmp/display.log 2>&1
+    sleep 2
+    _dx=$(hq monitors -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .x')
+    _sw=$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | ((.width / .scale) | round)')
+    [ -n "$_dx" ] && [ "$_dx" = "$_sw" ] && ok "ergon display extend right puts the second output at x=$_sw" \
+      || bad "extend right: ERGON-PROJ at x='$_dx', expected '$_sw' (see /tmp/display.log)"
+    shot display-extend-right
+    usr "ergon-display scale cycle" >> /tmp/display.log 2>&1 \
+      && ok "ergon display scale cycle steps the focused output" || bad "scale cycle failed (see /tmp/display.log)"
+    usr "ergon-display rotate 90" >> /tmp/display.log 2>&1; sleep 1
+    [ "$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | .transform')" = 1 ] \
+      && ok "ergon display rotate 90 turns the output" || bad "rotate 90: transform is not 1 (see /tmp/display.log)"
+    usr "ergon-display rotate 0" >> /tmp/display.log 2>&1
+    [ "$(hq getoption xwayland:force_zero_scaling -j | jq -r '.int // .custom // empty')" = 1 ] \
+      && ok "xwayland:force_zero_scaling is on (X11 apps are not upscaled)" || bad "xwayland:force_zero_scaling is off"
   else
     bad "  but ERGON-PROJ does not mirror $_dsp_src (mirrorOf '$(mirror_of)')"
     sed 's/^/     /' /tmp/display.log
@@ -4193,6 +4210,7 @@ esac
 # (5) the menu offers it
 usr "ergon-menu --dump" >/tmp/e99.out 2>&1 </dev/null
 grep -q 'Channel' /tmp/e99.out && ok "ergon-menu --dump lists Channel" || bad "ergon-menu --dump has no Channel entry"
+grep -q "Extend right" /tmp/e99.out && ok "ergon-menu --dump lists the display entries" || bad "ergon-menu --dump has no Extend right entry"
 
 # restore: the tested channel, host.env as found
 if [ -f "$_e99_bak" ]; then cp -p "$_e99_bak" "$_e99_hostenv"; else rm -f "$_e99_hostenv"; rmdir "$(dirname "$_e99_hostenv")" 2>/dev/null; fi
