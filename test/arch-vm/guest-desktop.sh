@@ -3070,6 +3070,9 @@ else
       && bad "  but leaves mako in do-not-disturb" || ok "  and lets notifications through again"
     # ERGON-132: the projector beside the screen, not on it. Its x is the
     # source's logical width, whatever scale the VM is at.
+    # From the screen, not the projector: with no eDP, extend works from the
+    # focused output, and creating ERGON-PROJ can leave the focus on it.
+    hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1; sleep 0.5
     usr "ergon-display extend right" >> /tmp/display.log 2>&1
     sleep 2
     _dx=$(hq monitors -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .x')
@@ -3079,10 +3082,10 @@ else
     shot display-extend-right
     usr "ergon-display scale cycle" >> /tmp/display.log 2>&1 \
       && ok "ergon display scale cycle steps the focused output" || bad "scale cycle failed (see /tmp/display.log)"
-    usr "ergon-display rotate 90" >> /tmp/display.log 2>&1; sleep 1
+    usr "ergon-display rotate 90 $_dsp_src" >> /tmp/display.log 2>&1; sleep 1
     [ "$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | .transform')" = 1 ] \
       && ok "ergon display rotate 90 turns the output" || bad "rotate 90: transform is not 1 (see /tmp/display.log)"
-    usr "ergon-display rotate 0" >> /tmp/display.log 2>&1
+    usr "ergon-display rotate 0 $_dsp_src" >> /tmp/display.log 2>&1
     [ "$(hq getoption xwayland:force_zero_scaling -j | jq -r '.bool // .int // empty')" = true ] \
       && ok "xwayland:force_zero_scaling is on (X11 apps are not upscaled)" || bad "xwayland:force_zero_scaling is off"
   else
@@ -4381,7 +4384,17 @@ if [ -z "$_pwp" ]; then
 elif ps -L -o cls=,ni= -p "$_pwp" | awk '$1 ~ /^(FF|RR)$/ || $2 < 0 { f=1 } END { exit !f }'; then
   ok "  pipewire has a thread at realtime class or negative nice: $_pwt"
 elif [ -n "$(loginctl show-user "$U" -p Display --value 2>/dev/null)" ]; then
-  bad "  no pipewire thread has realtime priority: $_pwt"
+  # PipeWire asks rtkit once, at start. Linger starts it at boot, before this
+  # harness's session exists; a real login starts it inside the session. So
+  # restart it here, where a login would have started it, and judge that one.
+  usr "systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service" >/dev/null 2>&1; sleep 3
+  _pwp=$(pgrep -u "$U" -x pipewire | head -1)
+  _pwt=$([ -n "$_pwp" ] && ps -L -o cls=,rtprio=,ni= -p "$_pwp" | sort -u | tr -s ' ' | tr '\n' ';')
+  if [ -n "$_pwp" ] && ps -L -o cls=,ni= -p "$_pwp" | awk '$1 ~ /^(FF|RR)$/ || $2 < 0 { f=1 } END { exit !f }'; then
+    ok "  pipewire restarted inside the session has a realtime or negative-nice thread: $_pwt"
+  else
+    bad "  no pipewire thread has realtime priority, even restarted inside the session: $_pwt ($(journalctl -b --no-pager -q -u rtkit-daemon -n 3 2>/dev/null | tr '\n' ' '))"
+  fi
 else
   note "ERGON-135: no graphical logind session for $U in this harness, so polkit treats pipewire as inactive and rtkit refuses it by design; threads: $_pwt"
 fi
