@@ -288,6 +288,19 @@ bind("SUPER + C", "Copy (every app)",  send_shortcut("CTRL",  "Insert"))
 bind("SUPER + V", "Paste (every app)", send_shortcut("SHIFT", "Insert"))
 bind("SUPER + X", "Cut (every app)",   send_shortcut("SHIFT", "Delete"))
 
+-- Select all (ERGON-149). Ctrl+A is the only chord GUI toolkits agree on, and it
+-- is exactly wrong in a terminal (readline: start of line), so a terminal gets
+-- nothing -- there is no selection to extend there. Unlike copy/paste this has
+-- to look at the focused window's class.
+local terminals = { ["foot"] = true, ["org.wezfurlong.wezterm"] = true, ["ergon-float"] = true }
+local select_all = send_shortcut("CTRL", "A")
+bind("SUPER + A", "Select all (every app, not terminals)", function()
+  local w = hl.get_active_window and hl.get_active_window()
+  -- The field is `class` in 0.56.2; the others cover a rename (the VM suite proves SUPER+A leaves a terminal alone).
+  if w and terminals[w.class or w.initial_class or w.app_id or ""] then return end
+  select_all()
+end)
+
 -- cliphist stores; fuzzel picks; wl-copy puts it back.
 -- `--no-run-if-empty` stops an empty selection from clearing the clipboard.
 bind("SUPER + SHIFT + V", "Clipboard history",
@@ -312,6 +325,14 @@ bind("SUPER + SHIFT + ALT + R", "Record region (toggle)", "ergon-record region")
 bind("SUPER + SHIFT + D",     "Dismiss notification",     "makoctl dismiss")
 bind("SUPER + SHIFT + CTRL + D", "Dismiss all",           "makoctl dismiss --all")
 bind("SUPER + SHIFT + A",     "Restore notification",     "makoctl restore")
+-- Keyboard control of the newest notification (ERGON-144), so a recording or
+-- download toast does not need the mouse. mako's default action is what the
+-- sender registered for a click: usually "focus me". `menu` lists every action
+-- through fuzzel. History is mako's own ring, read as JSON and picked from.
+bind("SUPER + COMMA",          "Notification: invoke default action (focus the sender)", "makoctl invoke")
+bind("SUPER + CTRL + COMMA",   "Notification: pick an action", "makoctl menu -- fuzzel --dmenu --prompt 'action  '")
+bind("SUPER + ALT + COMMA",    "Notification history",
+  [[makoctl history | jq -r '.data[0][] | "\(.app_name.data): \(.summary.data)"' | fuzzel --dmenu --prompt 'history  ']])
 -- Do-not-disturb on its own (ERGON-32). The mode already existed for `ergon
 -- display`'s presentation, which sets it; this is the toggle for everything
 -- else -- observing, a talk on someone else's screen. Toasts are still kept in

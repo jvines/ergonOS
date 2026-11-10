@@ -45,6 +45,31 @@ win("^(ergon-float)$", { float = true, center = true, size = { 1100, 700 } })
 win("^(org.localsend.localsend_app|localsend_app)$", { float = true, center = true, size = { 900, 640 } })
 
 -- ---------------------------------------------------------------------------
+-- Helper windows (ERGON-145): popups that are never meant to tile. Only apps
+-- one can install by pacman (only PyCharm has a bundle); rules for apps nobody
+-- here can install (DaVinci Resolve, Telegram) are left out.
+
+-- Inkscape's dialogs (Preferences, Export, Object Properties...) are separate
+-- toplevels of class org.inkscape.Inkscape; the canvas window has no dialog
+-- title, so key on the title words, not the class alone. The GTK file choosers
+-- are already covered by the generic Open/Save rule above.
+win({ class = "^(org.inkscape.Inkscape|inkscape)$",
+      title = "^(Preferences|Export|Document Properties|Object Properties|Find|Align and Distribute|Fill and Stroke|Layers and Objects|Transform|Trace Bitmap|Save a Copy|Import|Print).*" },
+    { float = true, center = true })
+
+-- JetBrains IDEs (PyCharm bundle): the IDE window tiles; its popups do not.
+-- Popups, the welcome screen and the settings dialog are windows
+-- titled "winNNN" under XWayland.
+win({ class = "^(jetbrains-.*)$", title = "^(win[0-9]+|Welcome to .*|Settings|Project Structure)$" },
+    { float = true, center = true })
+
+-- Password managers: the KeePassXC unlock/entry dialogs and the Bitwarden
+-- desktop and browser popout are small utility windows.
+win("^(org.keepassxc.KeePassXC)$", { float = true, center = true, size = { 900, 650 } })
+win({ class = "^(Bitwarden|bitwarden)$" }, { float = true, center = true, size = { 900, 650 } })
+win({ title = "^(Bitwarden.*|.*Bitwarden Extension.*)$" }, { float = true, center = true, size = { 450, 700 } })
+
+-- ---------------------------------------------------------------------------
 -- Picture-in-picture. Pinned so it survives a workspace switch, aspect locked
 -- so dragging a corner does not letterbox it, and parked top-right where the
 -- bar's status group already draws the eye.

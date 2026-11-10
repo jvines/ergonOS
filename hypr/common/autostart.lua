@@ -32,6 +32,8 @@ hl.on("hyprland.start", function()
   -- The desktop surfaces.
   hl.exec_cmd("waybar")
   hl.exec_cmd("mako")
+  -- CPU rendering (llvmpipe, no GPU): animations, blur and shadow off (ERGON-136).
+  hl.exec_cmd("ergon-gpu --trim")
   -- ergon-wallpaper STARTS hyprpaper; there is deliberately no bare
   -- `hyprpaper` line here any more. It renders the image if missing, writes a
   -- config with absolute paths beside it, and launches hyprpaper against that
