@@ -68,13 +68,13 @@ exit 1
 STUB
 chmod +x "$T/stub/fuzzel"
 TEST_ROOT=$T PATH="$T/stub:$PATH" ERGON_LANG=es "$REPO/bin/ergon-menu" >/dev/null 2>&1
-eq "the top menu is shown in Spanish" "$(head -4 "$T/shown" | tr '\n' ',')" "Sistema,Estilo,Comandos,Ayuda,"
+eq "the top menu is shown in Spanish" "$(head -5 "$T/shown" | tr '\n' ',')" "Sistema,Pantalla,Estilo,Comandos,Ayuda,"
 grep -q -- '--prompt ergon' "$T/prompts" && ok "  with its prompt" || bad "  prompt: $(head -1 "$T/prompts")"
 grep -qx "Zona horaria" "$T/shown" && ok "  and choosing 'Sistema' opened the System menu" || bad "  'Sistema' did not reach system_menu"
 grep -q -- '--prompt sistema' "$T/prompts" && ok "  whose prompt is translated" || bad "  system prompt: $(sed -n 2p "$T/prompts")"
 rm -f "$T/n" "$T/shown" "$T/prompts"
 TEST_ROOT=$T PATH="$T/stub:$PATH" ERGON_LANG=en "$REPO/bin/ergon-menu" >/dev/null 2>&1
-eq "English menu is unchanged" "$(head -4 "$T/shown" | tr '\n' ',')" "System,Style,Commands,Help,"
+eq "English menu is unchanged" "$(head -5 "$T/shown" | tr '\n' ',')" "System,Display,Style,Commands,Help,"
 
 # --- ergon explain picks a translated topic when there is one ----------------
 E="$REPO/bin/ergon-explain"
