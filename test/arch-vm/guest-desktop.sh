@@ -3584,6 +3584,13 @@ if command -v yazi >/dev/null 2>&1; then
   else ok "yazi started with keymap.toml ([mgr]) and theme.toml and printed no config error"; fi
   note "yazi $(yazi --version 2>&1 | head -1)"
   usr "pkill -x yazi" >/dev/null 2>&1
+  # ERGON-122: a yazi SIGABRT showed in one preview VM with no backtrace kept.
+  # yazi builds with panic=abort, so any Rust panic lands here as SIGABRT; say
+  # what it was if it happens again (signal, panic message, top frames).
+  sleep 1
+  if coredumpctl --no-pager list yazi >/dev/null 2>&1; then
+    bad "ERGON-122: yazi dumped core: $(coredumpctl --no-pager info yazi 2>&1 | grep -E 'Signal:|Message:|#[0-5] ' | head -8 | tr '\n' '|' | head -c 900)"
+  else ok "ERGON-122: yazi left no coredump"; fi
 else note "ERGON-96: yazi is not installed in the guest"; fi
 
 # --- ERGON-94: ergon drive on the guest's real lsblk ------------------------
@@ -3926,11 +3933,16 @@ if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
     # Traced, into its own file: the first Chromium still writes to wa118l.out.
     usr "timeout -k 3 30 bash -x \$(command -v ergon-webapp) launch $_yurl" >/tmp/wa118l2.out 2>&1 </dev/null; _l2=$?
     _act0=$(o_active .class)
-    sleep 3
+    # Focus lands asynchronously (the dispatch returns before the compositor
+    # has moved it, and Chromium may re-raise itself after): poll for the
+    # condition up to 10s instead of sampling once after a fixed sleep
+    # (ERGON-120). The assertion is unchanged: that class active, one client.
+    _act_is_y() { [ "$(o_active .class)" = "$_ycls" ]; }
+    o_until 10 _act_is_y; sleep 1
     _n2=$(hq clients -j | jq --arg c "$_ycls" '[.[] | select(.class == $c)] | length')
     _act=$(o_active .class)
     if [ "$_n1" = 1 ] && [ "$_n2" = 1 ] && [ "$_act" = "$_ycls" ]; then ok "ERGON-118: a second launch of the same URL focused the window (still 1 client, active class $_act, rc $_l2)"
-    else bad "ERGON-118: second launch: clients $_n1 -> $_n2, active '$_act0' at once and '$_act' 3s later, rc $_l2; trace: $(grep -vE '^(libva|\[)' /tmp/wa118l2.out | tr '\n' '|' | tail -c 800)"; fi
+    else bad "ERGON-118: second launch: clients $_n1 -> $_n2, active '$_act0' at once and '$_act' after waiting up to 10s, rc $_l2; trace: $(grep -vE '^(libva|\[)' /tmp/wa118l2.out | tr '\n' '|' | tail -c 800)"; fi
     if [ "$_act" != "$_ycls" ]; then
       # Diagnostics: trace the launcher's lookup, then try the focus dispatch by hand.
       _yaddr=$(hq clients -j | jq -r --arg c "$_ycls" '.[] | select(.class == $c) | .address' | head -1)
