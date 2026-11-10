@@ -15,7 +15,8 @@ chmod +x "$E/install.sh" "$E/bin"/*
 export HOME="$T/home" XDG_STATE_HOME="$T/state" XDG_CONFIG_HOME="$T/config" XDG_DATA_HOME="$T/data" ERGON="$E"
 printf 'gruvbox' > "$T/state/ergon/palette"; printf 'TEXT_SIZE=16\n' > "$T/state/ergon/type.env"
 printf 'FONT_MONO=Fira Code\n' > "$T/state/ergon/font.env"; : > "$T/state/ergon/bundle-ledger"; : > "$T/state/ergon/welcome-shown"
-printf '.x{color:red}\n' > "$T/config/ergon/waybar.css"
+UC="$T/config/ergon"   # a fixture under the temp HOME, not the real one
+printf '.x{color:red}\n' > "$UC/waybar.css"
 R() { "$E/bin/ergon-reset" "$@"; }
 
 R --dry-run >/dev/null 2>&1
