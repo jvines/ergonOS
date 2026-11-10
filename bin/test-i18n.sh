@@ -81,7 +81,9 @@ E="$REPO/bin/ergon-explain"
 eq "English explain is the English file"  "$(ERGON_LANG=en "$E" welcome | cmp - "$REPO/knowledge/welcome.md" && echo same)" "same"
 eq "  and so is any locale without a translation" "$(LANG=fr_FR.UTF-8 "$E" welcome | cmp - "$REPO/knowledge/welcome.md" && echo same)" "same"
 eq "Spanish explain welcome is the Spanish file" "$(ERGON_LANG=es "$E" welcome | cmp - "$REPO/knowledge/es/welcome.md" && echo same)" "same"
-eq "a topic with no translation falls back to English" "$(ERGON_LANG=es "$E" security | cmp - "$REPO/knowledge/security.md" && echo same)" "same"
+for tp in using-ergon desktop-config security troubleshooting; do
+  eq "Spanish explain $tp is the Spanish file" "$(ERGON_LANG=es "$E" $tp | cmp - "$REPO/knowledge/es/$tp.md" && echo same)" "same"
+done
 eq "every translated topic has an English original" "$(cd "$REPO/knowledge/es" && for f in *.md; do [ -f "../$f" ] || echo "$f"; done)" ""
 lst=$(ERGON_LANG=es "$E" --list)
 case "$lst" in "Temas (ergon explain <tema>):"*) ok "the topic list is headed in Spanish" ;; *) bad "topic list header: $(head -1 <<<"$lst")" ;; esac

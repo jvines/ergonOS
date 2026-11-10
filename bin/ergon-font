@@ -18,6 +18,8 @@
 # edited. Wezterm keeps "Symbols Nerd Font Mono" as its fallback, so bar and
 # prompt icons still draw with a font that has no Nerd glyphs.
 # New terminals, the bar and the launcher follow now; open terminals keep theirs.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
@@ -44,7 +46,7 @@ fi
 
 if [ -z "$want" ]; then
   command -v fuzzel >/dev/null 2>&1 || die "no fuzzel for the menu; give a family or --list"
-  sel=$("$0" "$slot" --list | fuzzel --dmenu --prompt "$slot font  ") || exit 0
+  sel=$("$0" "$slot" --list | fuzzel --dmenu --prompt "$(_t "%s font" "$slot")  ") || exit 0
   want=${sel%  (current)}
   [ -n "$want" ] || exit 0
 fi

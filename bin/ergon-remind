@@ -48,13 +48,13 @@ parse_when() {
     done
     EPOCH=$((now + d))
   else
-    EPOCH=$(date -d "$1" +%s 2>/dev/null) || die "cannot read '$1' as a time (try 25m, 14:30, 2pm, 'tomorrow 9:00')"
+    EPOCH=$(date -d "$1" +%s 2>/dev/null) || die "$(_t "cannot read '%s' as a time (try 25m, 14:30, 2pm, 'tomorrow 9:00')" "$1")"
     # A bare clock time that has gone by today means the next one.
     if (( EPOCH <= now )) && [[ $t =~ ^[0-9]{1,2}(:[0-9]{2}){1,2}\ ?([ap]m)?$|^[0-9]{1,2}\ ?[ap]m$ ]]; then
       EPOCH=$((EPOCH + 86400))
     fi
   fi
-  (( EPOCH > now )) || die "'$1' is not in the future"
+  (( EPOCH > now )) || die "$(_t "'%s' is not in the future" "$1")"
 }
 
 units() {  # "unit<TAB>next-epoch" per pending reminder, soonest first
@@ -84,8 +84,8 @@ cmd_clear() {
     systemctl --user stop "$u" "${u%.timer}.service" >/dev/null 2>&1 || true
     n=$((n + 1))
   done < <(units)
-  if (( n == 0 )) && [[ $want != all ]]; then die "no pending reminder with id '$want' (see: ergon remind list)"; fi
-  say "cleared $n reminder(s)"
+  if (( n == 0 )) && [[ $want != all ]]; then die "$(_t "no pending reminder with id '%s' (see: ergon remind list)" "$want")"; fi
+  say "$(_t "cleared %s reminder(s)" "$n")"
 }
 
 # Runs from the timer. Hidden: `ergon remind` never documents it.
@@ -113,16 +113,16 @@ cmd_add() {
         --on-calendar="$(date -d "@$EPOCH" '+%Y-%m-%d %H:%M:%S')" \
         --timer-property=AccuracySec=1s --timer-property=RemainAfterElapse=no \
         "$SELF" fire "$alert" "$msg" </dev/null 2>&1) \
-    || die "systemd-run failed: $out"
-  say "reminder $id at $(date -d "@$EPOCH" '+%a %H:%M:%S'): $msg"
+    || die "$(_t "systemd-run failed: %s" "$out")"
+  say "$(_t "reminder %s at %s: %s" "$id" "$(date -d "@$EPOCH" '+%a %H:%M:%S')" "$msg")"
 }
 
 cmd_ask() {
   local alert=$1 when msg
-  when=$(fuzzel --dmenu --lines 0 --prompt 'remind in/at (25m, 14:30)  ' </dev/null) || exit 0
+  when=$(fuzzel --dmenu --lines 0 --prompt "$(_t "remind in/at (25m, 14:30)")  " </dev/null) || exit 0
   [ -n "$when" ] || exit 0
   parse_when "$when" || exit 1
-  msg=$(fuzzel --dmenu --lines 0 --prompt 'remind about  ' </dev/null) || exit 0
+  msg=$(fuzzel --dmenu --lines 0 --prompt "$(_t "remind about")  " </dev/null) || exit 0
   cmd_add "$alert" "$when" "$msg"
 }
 
@@ -139,6 +139,6 @@ case "${1:-}" in
   clear)   cmd_clear "${2:-all}" ;;
   fire)    cmd_fire "$2" "$3" ;;
   -h|--help) sed -n 5,18p "$SELF" | sed 's/^# \{0,1\}//' ;;
-  *)       [ $# -ge 2 ] || die "need a time and a message: ergon remind 25m \"take flats\""
+  *)       [ $# -ge 2 ] || die "$(_t "need a time and a message: ergon remind 25m %s" '"take flats"')"
            when=$1; shift; cmd_add "$alert" "$when" "$*" ;;
 esac

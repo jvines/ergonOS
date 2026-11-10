@@ -18,6 +18,8 @@
 # unbound, and a Wayland compositor applies its own xkb state to clients
 # regardless of what fcitx5's group says. Cycling through fcitx5 would change
 # nothing the keyboard does.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 # waybar/config.jsonc's custom/layout has "signal": this number.
@@ -76,6 +78,6 @@ poke
 if command -v notify-send >/dev/null 2>&1; then
   # One synchronous slot, so repeated presses replace the toast, not stack it.
   notify-send -u low -t 1500 -h string:x-canonical-private-synchronous:ergon-layout \
-    "Keyboard layout" "$(label)  ${name:-}" || true
+    "$(_t "Keyboard layout")" "$(label)  ${name:-}" || true
 fi
 printf '%s\n' "$(label)"

@@ -12,6 +12,8 @@
 # TARGET it offers the ones that fit the input. The result goes next to the
 # input as <name>.<target>; an existing file is never overwritten (-1, -2...).
 # Video and audio use ffmpeg, images use ImageMagick.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 die() { echo "ergon-transcode: $*" >&2; exit 1; }
@@ -48,4 +50,4 @@ else
   esac
 fi
 echo "$out"
-notify-send -a ergon-transcode -u low "Transcoded" "$out" >/dev/null 2>&1 || true
+notify-send -a ergon-transcode -u low "$(_t Transcoded)" "$out" >/dev/null 2>&1 || true

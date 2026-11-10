@@ -13,6 +13,8 @@
 # exists is left alone. The prompt is a fuzzel input on a desktop, read on a terminal.
 # Escape or an empty answer skips, and a skipped first run is not repeated (the stamp is
 # ${XDG_STATE_HOME:-~/.local/state}/ergon/git-identity-asked); `ergon git-identity` asks again.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -uo pipefail
 STAMP="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/git-identity-asked"
 
@@ -36,8 +38,8 @@ fill() {
 
 interactive() {
   local n="" e=""
-  [ -n "$(get user.name)" ] || { n=$(ask "git name") || return $?; }
-  [ -n "$(get user.email)" ] || { e=$(ask "git email") || return $?; }
+  [ -n "$(get user.name)" ] || { n=$(ask "$(_t "git name")") || return $?; }
+  [ -n "$(get user.email)" ] || { e=$(ask "$(_t "git email")") || return $?; }
   fill "$n" "$e"
 }
 

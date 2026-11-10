@@ -28,6 +28,8 @@
 #     (--mem, default 80% of RAM): systemd-oomd then kills THAT scope and
 #     nothing else. See provision-arch.sh's out-of-memory stage. A job that
 #     genuinely needs the whole machine takes --mem infinity and gets it.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 NAME=""; QUIET=0; MEM="80%"
@@ -248,7 +250,7 @@ say_or_not() {  # say_or_not <urgency-args...> -- <summary> <body>
 if [ "$RC" -eq 0 ]; then
   MSG="$NAME finished in $(human "$SECS") (peak ${RSS_MB} MB)"
   [ "$QUIET" = 1 ] || printf '   ok   %s\n' "$MSG"
-  say_or_not "$NAME finished" "in $(human "$SECS"), peak ${RSS_MB} MB"
+  say_or_not "$(_t "%s finished" "$NAME")" "$(_t "in %s, peak %s MB" "$(human "$SECS")" "$RSS_MB")"
 elif [ "$OOM" = 1 ]; then
   # Naming the run is the whole point of the notification: the window it was
   # running in may have been killed with it, so this is the only place the
@@ -256,11 +258,11 @@ elif [ "$OOM" = 1 ]; then
   # card set out to stop.
   MSG="$NAME ran out of memory and was killed after $(human "$SECS") (peak ${RSS_MB} MB, limit $MEM)"
   [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2
-  say_or_not -u critical "$NAME ran out of memory" \
-    "killed after $(human "$SECS") — peak ${RSS_MB} MB against a limit of $MEM"
+  say_or_not -u critical "$(_t "%s ran out of memory" "$NAME")" \
+    "$(_t "killed after %s — peak %s MB against a limit of %s" "$(human "$SECS")" "$RSS_MB" "$MEM")"
 else
   MSG="$NAME FAILED after $(human "$SECS") (exit $RC)"
   [ "$QUIET" = 1 ] || printf '   FAIL %s\n' "$MSG" >&2
-  say_or_not -u critical "$NAME failed" "exit $RC, after $(human "$SECS")"
+  say_or_not -u critical "$(_t "%s failed" "$NAME")" "$(_t "exit %s, after %s" "$RC" "$(human "$SECS")")"
 fi
 exit "$RC"

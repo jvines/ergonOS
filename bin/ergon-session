@@ -23,6 +23,8 @@
 # logout/reboot/shutdown end every job on the machine, so each first lists any
 # `ergon watch` run still going and any systemd-inhibit holder, then asks
 # again. lock/suspend/hibernate do not touch a running job and skip that step.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -101,7 +103,7 @@ _confirm() {
     [ -n "$info" ] && printf '%s\n' "$info"
     printf 'Yes, %s\n' "$action"
   )
-  sel=$(printf '%s\n' "$menu" | fuzzel --dmenu --prompt "$action, really?  ") || return 1
+  sel=$(printf '%s\n' "$menu" | fuzzel --dmenu --prompt "$(_t "%s, really?" "$action")  ") || return 1
   [ "$sel" = "Yes, $action" ]
 }
 
@@ -121,7 +123,7 @@ _run() {
     return 0
   fi
   command -v notify-send >/dev/null 2>&1 \
-    && notify-send -u critical "$1 ${2:-} failed" "${out:-no output}" \
+    && notify-send -u critical "$(_t "%s %s failed" "$1" "${2:-}")" "${out:-$(_t "no output")}" \
     || printf '%s\n' "$out" >&2
   return 1
 }
@@ -152,8 +154,9 @@ case "${1:-}" in
     ;;
   '')
     command -v fuzzel >/dev/null 2>&1 || { echo "ergon-session: fuzzel is not installed" >&2; exit 1; }
-    sel=$(_entries | fuzzel --dmenu --prompt 'session  ') || exit 0
-    _dispatch "$sel"
+    mapfile -t ent < <(_entries)
+    sel=$(_t_menu "${ent[@]}" | fuzzel --dmenu --prompt "$(_t session)  ") || exit 0
+    _dispatch "$(_t_back "$sel" "${ent[@]}")"
     ;;
   *)
     echo "ergon-session: unknown entry '$1' (lock|suspend|hibernate|logout|reboot|shutdown|--list)" >&2

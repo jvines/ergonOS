@@ -28,6 +28,8 @@
 # ergon-status and ergon-lid ask the unit rather than a flag file, and it is
 # gone at logout and reboot, so it can never outlive the session that asked
 # for it. The bar shows which (ERGON-32/81/83) and is poked.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 IDLE=ergon-awake.service
@@ -45,12 +47,12 @@ start() {  # start <unit> <what> <message>
       --mode=block sleep infinity
   say "$3"
 }
-on()   { start "$IDLE" idle "staying awake: no dimming, lock or screen-off until you turn it off"; }
+on()   { start "$IDLE" idle "$(_t "staying awake: no dimming, lock or screen-off until you turn it off")"; }
 full() { start "$FULL" idle:sleep:handle-lid-switch \
-           "staying fully awake: no suspend, not even on lid close (the lid locks and blanks)"; }
+           "$(_t "staying fully awake: no suspend, not even on lid close (the lid locks and blanks)")"; }
 stop() {
   local u; for u in "$IDLE" "$FULL"; do if up "$u"; then systemctl --user stop "$u"; fi; done
-  say "idle and suspend back to normal"
+  say "$(_t "idle and suspend back to normal")"
 }
 any() { up "$IDLE" || up "$FULL"; }
 

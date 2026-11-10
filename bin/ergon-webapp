@@ -28,6 +28,8 @@
 # the default browser and is never used here: it has no app mode.
 # The built-in set is applications/webapps/catalog. Discord is skipped while the
 # native discord bundle is installed, so there are never two launchers of that name.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 case "${1:-}" in -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
@@ -150,8 +152,8 @@ cmd_add() {
   local name=${1:-} url=${2:-} icon=${3:-} interactive=0
   if [ -z "$name" ] && [ -z "$url" ]; then
     interactive=1
-    name=$(ask "web app name"); [ -n "$name" ] || exit 0
-    url=$(ask "web app URL");   [ -n "$url" ]  || exit 0
+    name=$(ask "$(_t "web app name")"); [ -n "$name" ] || exit 0
+    url=$(ask "$(_t "web app URL")");   [ -n "$url" ]  || exit 0
   fi
   [ -n "$name" ] && [ -n "$url" ] || die "usage: ergon webapp add NAME URL [ICON]"
   [[ $name != */* && $name != .* ]] || die "the name becomes a file name; no '/' and no leading '.'"
@@ -162,7 +164,7 @@ cmd_add() {
   fi
   write_entry "$name" "$url" "$(resolve_icon "$(slug "$name")" "$url" "$icon")"
   say "$name -> $url"
-  [ "$interactive" = 1 ] && notify "Web app added" "$name"
+  [ "$interactive" = 1 ] && notify "$(_t "Web app added")" "$name"
   return 0
 }
 
@@ -172,7 +174,7 @@ cmd_rm() {
     local names; names=$(marked | while read -r p; do basename "${p%.desktop}"; done | sort)
     [ -n "$names" ] || { echo "no web apps made by ergon webapp"; exit 0; }
     if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v fuzzel >/dev/null 2>&1; then
-      name=$(fuzzel --dmenu --prompt "remove web app  " <<<"$names") || exit 0
+      name=$(fuzzel --dmenu --prompt "$(_t "remove web app")  " <<<"$names") || exit 0
     else
       echo "$names" >&2; printf 'remove which: ' >&2; read -r name
     fi
@@ -183,7 +185,7 @@ cmd_rm() {
   grep -qx 'X-Ergon-Webapp=true' "$f" || die "$f was not made by ergon webapp; not removing it"
   rm -f "$f" "$ICON_DIR/$(slug "$name")".{png,svg}
   update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
-  say "removed $name"
+  say "$(_t "removed %s" "$name")"
 }
 
 cmd_list() {
@@ -266,10 +268,10 @@ cmd_sync() {
       [ "$check" = 1 ] && { echo "   would create  $title.desktop"; continue; }
       mkdir -p "$ICON_DIR"; install -m644 "$ERGON/applications/webapps/$id.png" "$ICON_DIR/$id.png"
       write_entry "$title" "$url" "$ICON_DIR/$id.png" "$id"
-      say "web app $title"
+      say "$(_t "web app %s" "$title")"
     elif [ -e "$f" ] && grep -qx "X-Ergon-Webapp-Builtin=$id" "$f"; then
       [ "$check" = 1 ] && { echo "   would remove  $title.desktop"; continue; }
-      rm -f "$f" "$ICON_DIR/$id.png"; say "removed web app $title"
+      rm -f "$f" "$ICON_DIR/$id.png"; say "$(_t "removed web app %s" "$title")"
     fi
   done < <(catalog)
   update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true

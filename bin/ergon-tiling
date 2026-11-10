@@ -15,6 +15,8 @@
 # mirrors; a config reload drops the rules and this then reports Hyprland's own
 # layout again. Named workspaces (negative id) are refused: a leading "-" is
 # read as relative to the current one.
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 set -euo pipefail
 
 dir=${1:-next}
@@ -61,5 +63,5 @@ fi
 
 command -v notify-send >/dev/null 2>&1 &&
   notify-send -u low -t 1500 -h string:x-canonical-private-synchronous:ergon-tiling \
-    "Workspace $ws layout" "$new" || true
+    "$(_t "Workspace %s layout" "$ws")" "$new" || true
 echo "$new"
