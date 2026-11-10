@@ -86,7 +86,7 @@ persistable() {
 # against a stub. Every value is checked against the closed vocabulary below
 # before it is Lua source.
 rule_line() {
-  local out=$1 mode pos scale tr mir kv line; shift
+  local out=$1 mode pos scale tr mir kv line unmir=; shift
   IFS='|' read -r mode pos scale tr mir < <(hyprctl monitors all -j | jq -r --arg n "$out" '
     (map({key: (.id | tostring), value: .name}) | from_entries) as $ids
     | (map(select(.name == $n))[0] // {}) | [
@@ -99,7 +99,7 @@ rule_line() {
   for kv in "$@"; do
     case "$kv" in
       mode=*) mode=${kv#*=} ;; position=*) pos=${kv#*=} ;; scale=*) scale=${kv#*=} ;;
-      transform=*) tr=${kv#*=} ;; mirror=*) mir=${kv#*=} ;;
+      transform=*) tr=${kv#*=} ;; mirror=*) mir=${kv#*=}; [ -n "$mir" ] || unmir=1 ;;
     esac
   done
   [[ -z $mode || $mode =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]] || { echo "refusing mode '$mode'" >&2; return 1; }
@@ -113,6 +113,9 @@ rule_line() {
   [ -z "$scale" ] || line+=", scale = \"$scale\""
   [ -z "$tr" ]    || line+=", transform = $tr"
   [ -z "$mir" ]   || line+=", mirror = \"$mir\""
+  # Hyprland merges a rule into the output's existing one (hl.monitor, 0.57), so
+  # a rule that merely omits mirror leaves the mirror standing: say "" outright.
+  [ -z "$unmir" ] || [ -n "$mir" ] || line+=", mirror = \"\""
   printf '%s })\n' "$line"
 }
 

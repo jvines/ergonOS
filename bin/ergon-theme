@@ -193,7 +193,7 @@ if [ "${1:-}" = "--font" ]; then
   [ "$CHECK" = 0 ] || { echo "--check only reads; it cannot set --font" >&2; exit 2; }
   font_ok "$_name" || { echo "'$_name' is not a plain family name" >&2; exit 1; }
   mkdir -p "$STATE"
-  { [ ! -f "$FONT_FILE" ] || grep -v "^$_key=" "$FONT_FILE"; printf '%s=%s\n' "$_key" "$_name"; } > "$FONT_FILE.new"
+  { [ ! -f "$FONT_FILE" ] || { grep -v "^$_key=" "$FONT_FILE" || true; }; printf '%s=%s\n' "$_key" "$_name"; } > "$FONT_FILE.new"
   mv -f "$FONT_FILE.new" "$FONT_FILE"
   shift 3
 fi

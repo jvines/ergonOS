@@ -3013,11 +3013,16 @@ for _p in ethereal flexoki-light hackerman jade-horse last-horizon lumon lupine 
       */backgrounds/$_p/*) ok "ERGON-156: $_p applied and its background was coloured for it" ;;
       *) bad "ERGON-156: $_p applied but the background is '$(bgapplied)'" ;;
     esac
-    sleep 2; shot "palette-$_p"
+    # fuzzel does not restyle live and mako keeps old toasts: a fresh launcher under this palette, no stale toasts
+    usr "makoctl dismiss -a" >/dev/null 2>&1 </dev/null; pkill -u "$U" -x fuzzel 2>/dev/null; sleep 1
+    usr fuzzel >/dev/null 2>&1 &
+    sleep 3; shot "palette-$_p"
+    pkill -u "$U" -x fuzzel 2>/dev/null
   else
     bad "ERGON-156: ergon-theme $_p failed: $(tail -3 /tmp/palette-$_p.log | tr '\n' ' ')"
   fi
 done
+pkill -u "$U" -x fuzzel 2>/dev/null
 usr "ergon-theme cool" > /tmp/palette-restore2.log 2>&1 </dev/null
 assert_flame cool "after the omarchy palettes"
 
@@ -3034,6 +3039,8 @@ _nb=$(hq binds -j | jq '[.[].description | select(IN("Toggle split", "Toggle gro
 [ "${_nb:-0}" = 7 ] && ok "the seven layout and monitor binds registered" \
                      || bad "only ${_nb:-0} of the seven layout and monitor binds registered"
 _dsp_src=$(hq monitors -j | jq -r '.[0].name' 2>/dev/null)
+_dsp_orig=$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | "\(.x)x\(.y) \(.scale) \(.transform)"')
+_dsp_gdk=$(su "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user show-environment" 2>/dev/null | sed -n 's/^GDK_SCALE=//p')
 _dsp_out=$(hq output create headless ERGON-PROJ)
 mirror_of() { hq monitors all -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .mirrorOf' 2>/dev/null; }
 mirrored() {  # mirrored yes|no, polled: a rule from eval lands on the next refresh
@@ -3076,12 +3083,21 @@ else
     [ "$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | .transform')" = 1 ] \
       && ok "ergon display rotate 90 turns the output" || bad "rotate 90: transform is not 1 (see /tmp/display.log)"
     usr "ergon-display rotate 0" >> /tmp/display.log 2>&1
-    [ "$(hq getoption xwayland:force_zero_scaling -j | jq -r '.int // .custom // empty')" = 1 ] \
+    [ "$(hq getoption xwayland:force_zero_scaling -j | jq -r '.bool // .int // empty')" = true ] \
       && ok "xwayland:force_zero_scaling is on (X11 apps are not upscaled)" || bad "xwayland:force_zero_scaling is off"
   else
     bad "  but ERGON-PROJ does not mirror $_dsp_src (mirrorOf '$(mirror_of)')"
     sed 's/^/     /' /tmp/display.log
   fi
+  # Leave the source as found, whatever failed above: scale, transform and
+  # position, the GDK_SCALE the scale steps set, and the saved rules ergon
+  # display wrote (display.lua is replayed by every later reload, and a
+  # rotated or rescaled output cropped the ERGON-104 QR scan and the font shots).
+  read -r _o_pos _o_scale _o_tr <<<"$_dsp_orig"
+  hq "eval 'hl.monitor({ output = \"$_dsp_src\", position = \"$_o_pos\", scale = \"$_o_scale\", transform = $_o_tr })'" >/dev/null
+  rm -f "/run/user/1000/ergon/display.lua" "$(getent passwd "$U" | cut -d: -f6)/.local/state/ergon/display.lua"
+  if [ -n "$_dsp_gdk" ]; then hq "eval 'hl.env(\"GDK_SCALE\", \"$_dsp_gdk\")'" >/dev/null
+  else su "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user unset-environment GDK_SCALE" 2>/dev/null || true; fi
   hq output remove ERGON-PROJ >/dev/null
 fi
 
@@ -3613,6 +3629,11 @@ note "ERGON-94: the harness hot-adds no second disk, so a removable disk being l
 
 # --- ERGON-104: ergon-qr reads a real QR off the screen; ergon-webcam refuses with no camera
 echo "--- ERGON-104 ---"
+# Nothing from an earlier block may sit over or under the QR: a notification, an
+# open launcher, a screensaver, a stray imv. (imv-wayland: -x imv never matches.)
+usr "makoctl dismiss -a" >/dev/null 2>&1 </dev/null
+usr "ergon-screensaver stop" >/dev/null 2>&1 </dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null; sleep 1
 for _c in zbarimg ffmpeg qrencode grim; do
   command -v "$_c" >/dev/null && ok "$_c is installed" || bad "$_c is missing"
 done
@@ -3634,9 +3655,11 @@ if [ -n "$_qrwin" ]; then
   _clip=$(usr 'timeout 3 wl-paste -n' 2>/dev/null </dev/null)
   if [ "$_qr_rc" = 0 ] && [ "$_clip" = 'https://ergon.example/qr104' ]; then
     ok "ergon-qr decoded the QR shown on screen ($_qrwin) to the clipboard"
-  else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"; fi
+  else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"
+    note "ERGON-104: monitors $(usr 'hyprctl monitors all -j' 2>/dev/null </dev/null | jq -c '[.[] | {name,x,y,width,height,scale,transform,mirrorOf}]' 2>/dev/null); window $_qrwin; clients $(usr 'hyprctl clients -j' 2>/dev/null </dev/null | jq -c '[.[] | {class,monitor,at,size}]' 2>/dev/null)"
+    [ -d /out ] && timeout 20 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -g '$_qrwin' /out/qr104-region.png" >/dev/null 2>&1 </dev/null; fi
 else bad "harness: imv showed no window for the QR image"; fi
-pkill -u "$U" -x imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png /tmp/qr104.out
+pkill -u "$U" -f imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png /tmp/qr104.out
 if ls /sys/class/video4linux/video* >/dev/null 2>&1; then
   note "ERGON-104: the guest has a V4L2 node, so the no-camera refusal is not exercised"
 else
@@ -3649,7 +3672,7 @@ note "ERGON-104: a real webcam recording and the Open button on mako are unprove
 
 # --- ERGON-105..116: locale, ssh-agent, remind, zoom, width, db, speedtest, text size, keymap
 echo "--- ERGON-105..116 ---"
-pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null
 # 106: the session has an agent socket, systemd owns it, and a key round-trips.
 _henv106=$(tr '\0' '\n' < "/proc/$(pgrep -x Hyprland | head -1)/environ" 2>/dev/null)
 grep -qx 'SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket' <<<"$_henv106" && ok "ERGON-106: the compositor carries SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket from the shipped uwsm drop-in" \
@@ -3710,8 +3733,13 @@ if [[ "$_z0" =~ ^[0-9.]+$ ]]; then
 else bad "ERGON-108: zoom_factor is not numeric: '$_z0' ($(hq 'getoption cursor:zoom_factor -j' | head -c 150))"; fi
 
 # 109/150/151/155/140: ergon toggle, through the real compositor.
-_opt() { hq "getoption $1 -j" | jq -r '.int // .float // empty' 2>/dev/null; }
-usr "ergon-toggle gaps off; ergon-toggle rounding off; ergon-toggle animations off; ergon-toggle opacity off" >/dev/null 2>&1 </dev/null
+# getoption's JSON shape depends on the type: gaps are .css ("0 0 0 0"), rounding
+# is .int, a bool may be .int or .bool. Normalise to a number; true/false -> 1/0.
+_opt() { hq "getoption $1 -j" | jq -r '[.int, .float, .bool, .value, (.css // null | if . then split(" ")[0] else null end)] | map(select(. != null)) | .[0] | if . == null then empty elif . == true then 1 elif . == false then 0 else . end' 2>/dev/null; }
+# `usr "a; b"` puts the session environment on the FIRST command only, so each
+# toggle gets its own call.
+_tog() { local t; for t in "$@"; do usr "ergon-toggle $t" >/dev/null 2>&1 </dev/null; done; }
+_tog "gaps off" "rounding off" "animations off" "opacity off"
 _g=$(_opt general:gaps_in); _r=$(_opt decoration:rounding); _a=$(_opt animations:enabled)
 [ "$_g" = 0 ] && [ "$_r" = 0 ] && [ "$_a" = 0 ] \
   && ok "ERGON-109/155: toggles off reach the compositor (gaps_in $_g, rounding $_r, animations $_a)" \
@@ -3719,13 +3747,13 @@ _g=$(_opt general:gaps_in); _r=$(_opt decoration:rounding); _a=$(_opt animations
 hq reload >/dev/null 2>&1; sleep 2
 [ "$(_opt general:gaps_in)" = 0 ] && [ "$(_opt decoration:rounding)" = 0 ] \
   && ok "ERGON-109: the choice survives a config reload" || bad "ERGON-109: a reload undid the toggles (gaps_in '$(_opt general:gaps_in)')"
-usr "ergon-toggle gaps on; ergon-toggle rounding on; ergon-toggle animations on; ergon-toggle opacity on" >/dev/null 2>&1 </dev/null
+_tog "gaps on" "rounding on" "animations on" "opacity on"
 [ "$(_opt general:gaps_in)" = 4 ] && [ "$(_opt decoration:rounding)" = 4 ] \
   && ok "ERGON-109: toggled back on, the themed look returns" || bad "ERGON-109: gaps_in '$(_opt general:gaps_in)' rounding '$(_opt decoration:rounding)' after on"
-usr "ergon-toggle widescreen on" >/dev/null 2>&1 </dev/null
-hq "getoption dwindle:single_window_aspect_ratio -j" | grep -q '16' \
-  && ok "ERGON-150: widescreen sets the single-window aspect ratio" || bad "ERGON-150: aspect ratio not set: $(hq 'getoption dwindle:single_window_aspect_ratio -j' | head -c 150)"
-usr "ergon-toggle widescreen off" >/dev/null 2>&1 </dev/null
+_tog "widescreen on"
+hq "getoption layout:single_window_aspect_ratio -j" | grep -q '16' \
+  && ok "ERGON-150: widescreen sets the single-window aspect ratio" || bad "ERGON-150: aspect ratio not set: $(hq 'getoption layout:single_window_aspect_ratio -j' | head -c 150)"
+_tog "widescreen off"
 if [ -S "$YSOCK" ]; then
   # SUPER+ALT+B: evdev LEFTMETA 125, LEFTALT 56, B 48.
   _wb() { pgrep -u "$(id -u "$U")" -x waybar >/dev/null; }
@@ -3881,7 +3909,7 @@ else bad "ERGON-112: /etc/vconsole.conf KEYMAP='$_vk' is empty or not Latin: $(h
 
 # --- ERGON-118, 106b, 67, 36, 55: web apps + LocalSend, ssh-key block order, marimo scaffold, GPU report, welcome notebook
 echo "--- ERGON-118, 106b, 67, 36, 55 ---"
-pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null
 _A="$H/.local/share/applications"
 _net() { timeout -k 2 10 curl -sS -o /dev/null -m 6 https://pypi.org/simple/ >/dev/null 2>&1 </dev/null; }
 _close_class() {  # _close_class <class>: closes every client of that class
@@ -3992,7 +4020,7 @@ if [ "$_l53ok" = 1 ] && [ -z "$_l53u" ]; then
 else bad "ERGON-118: nft 53317 rules: '$(head -c 300 <<<"$_l53")'"; fi
 if pacman -Q localsend-bin >/dev/null 2>&1; then
   ok "ERGON-118: localsend-bin is installed ($(pacman -Q localsend-bin))"
-  pkill -u "$U" -x imv 2>/dev/null
+  pkill -u "$U" -f imv 2>/dev/null
   # the package's own launcher says what to run
   _lsx=$(grep -h '^Exec=' /usr/share/applications/*ocalsend*.desktop /usr/share/applications/*ocalSend*.desktop 2>/dev/null | head -1)
   _lsx=${_lsx#Exec=}; _lsx=${_lsx%% *}

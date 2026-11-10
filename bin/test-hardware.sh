@@ -570,6 +570,7 @@ check "extend: a refused unmirror fails (rc $rc)" test "$rc" -ne 0
 check "  and keeps the saved mirror, which is still live" has "$SAVED" '"HDMI-A-1", mirror'
 check "  and do-not-disturb" not has "$T/log/makoctl" "do-not-disturb"
 disp extend
+check "  and the eval says mirror = \"\" outright, since Hyprland merges rules and omitting it keeps the mirror" has "$T/log/hyprctl" 'mirror = ""'
 check "extend: every saved mirror goes, unplugged outputs' too" not has "$SAVED" "mirror ="
 check "  and do-not-disturb ends" hasx "$T/log/makoctl" "mode -r do-not-disturb"
 
