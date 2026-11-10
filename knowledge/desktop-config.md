@@ -145,6 +145,22 @@ size as the template was designed at 11 -- into `n * N / 11`, and sets GTK's
 `text-scaling-factor` to `N / 11`. `ergon text-size small|normal|large|larger|FACTOR`
 (or a fuzzel picker) is the same input as a factor of 11.
 
+### Monitors: modes, projectors, and what survives
+
+`ergon display` (and the Display entry of `ergon menu`) changes an output with
+`hyprctl eval`, so it lasts until the next login. Every rule it writes is a
+complete one (mode, position, scale, transform) because whether a partial
+`hl.monitor` keeps the fields it leaves out was never measured. `--save` (or
+`ergon display save`) also writes it to `~/.local/state/ergon/display.lua`,
+loaded after `hosts/<host>/hyprland.lua` and before this session's changes. A
+mirror is never saved. `SUPER+CTRL+M` cycles the focused output's scale through
+the steps its mode divides evenly; Hyprland would round any other.
+
+XWayland clients are drawn at the monitor's pixel size (`xwayland = {
+force_zero_scaling = true }`), which is sharp and small. `ergon display xscale`
+sets `GDK_SCALE` from the lowest monitor scale at login and after a scale
+change, for clients started afterwards; Tk, Java and Qt have their own knobs.
+
 ### What checks them, and what does not
 
 Rendered configs are gitignored, so nobody reads them in a diff. The only thing

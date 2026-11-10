@@ -326,6 +326,10 @@ bind("SUPER + CTRL + SHIFT + I", "Stay fully awake, lid included (toggle)", "erg
 -- SUPER+SPACE is the launcher; with CTRL it was free. The bar is told by the script.
 bind("SUPER + CTRL + SPACE",  "Next keyboard layout",     "ergon-layout")
 
+-- Scale of the focused monitor, to the next step its mode divides by and round
+-- to the first (ERGON-92). M for monitor. Mirror and extend are in ergon-menu.
+bind("SUPER + CTRL + M",      "Monitor scale (cycle)",    "ergon-display scale cycle")
+
 -- Cycle this workspace's layout (ERGON-90): dwindle, master, scrolling, floating.
 -- Per workspace, so the others keep theirs. W for "ways to lay out"; SUPER+ALT+W
 -- cycles back. The toast names the layout it landed on.

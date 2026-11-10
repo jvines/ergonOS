@@ -114,6 +114,12 @@ if f then f:close() end
 -- broken per-host override must never take the base config down with it.
 pcall(require, "hosts." .. host)
 
+-- What `ergon display --save` kept from earlier sessions: a mode, a rotation, a
+-- position, a scale. After the host file, so the person's last arrangement
+-- wins over the default one; before the runtime file below, which wins in turn.
+local st = os.getenv("XDG_STATE_HOME") or (os.getenv("HOME") and os.getenv("HOME") .. "/.local/state")
+if st then pcall(dofile, st .. "/ergon/display.lua") end
+
 -- What `ergon display` changed in THIS session: a mirror, a scale. After the
 -- host file, so it wins over it, and re-read on every load because a reload
 -- clears every monitor rule -- and `ergon theme` reloads, so enlarging the text

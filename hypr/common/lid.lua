@@ -30,6 +30,8 @@ local rt = os.getenv("XDG_RUNTIME_DIR")
 local function reapply_host_monitors()
   package.loaded["hosts." .. host] = nil
   pcall(require, "hosts." .. host)
+  local st = os.getenv("XDG_STATE_HOME") or (os.getenv("HOME") and os.getenv("HOME") .. "/.local/state")
+  if st then pcall(dofile, st .. "/ergon/display.lua") end
   if rt then pcall(dofile, rt .. "/ergon/display.lua") end
 end
 

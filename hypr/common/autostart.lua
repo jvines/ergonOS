@@ -19,6 +19,10 @@ hl.on("hyprland.start", function()
   -- palette (bin/ergon-theme, --gsettings).
   hl.exec_cmd("ergon-theme --gsettings")
 
+  -- GDK_SCALE for X11 clients, from the lowest monitor scale (ERGON-134).
+  -- Before the first app, so it is in the user manager when they start.
+  hl.exec_cmd("ergon-display xscale")
+
   -- Secrets. Chromium and Electron apps (Discord, VS Code) keep their key in
   -- the Secret Service once uwsm/env-hyprland.d/ergon-keyring points them at
   -- it (ERGON-64), and otherwise in plaintext or in memory. Firefox uses its own
