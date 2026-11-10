@@ -1,0 +1,16 @@
+# GENERATED from qt6ct/qt6ct.conf.in -- edit the .in, then run: ergon theme
+#
+# Qt6 applications follow the palette (ERGON-139), the way GTK does through
+# gtk/gtk.css: QT_QPA_PLATFORMTHEME (hypr/common/env.lua) names this platform
+# theme, which reads the scheme below. Fusion because it is the one built-in
+# style that paints entirely from the QPalette. The scheme path is absolute
+# because qt6ct takes nothing else, which is why the render fills in
+# @COOL_HOME@. The background below is not read: it makes this file change with
+# the palette, and qt6ct reloads a running application when THIS file does.
+# palette background @COOL_BG0@
+[Appearance]
+color_scheme_path=@COOL_HOME@/.config/qt6ct/colors/ergon.conf
+custom_palette=true
+icon_theme=@COOL_ICON_THEME@
+standard_dialogs=default
+style=Fusion

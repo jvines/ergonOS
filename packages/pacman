@@ -88,6 +88,10 @@ xdg-desktop-portal-gtk      # the file chooser every GTK app opens
 xdg-user-dirs
 qt5-wayland
 qt6-wayland                 # native Wayland for Qt6 apps (Qt5's is above)
+qt6ct               # ERGON-139: the Qt6 platform theme; its colour scheme is rendered
+                    # from the palette (qt6ct/). Qt5 has its own, qt5ct, which one
+                    # QT_QPA_PLATFORMTHEME cannot name alongside this one (a colon
+                    # list is not read), so Qt5 apps are not themed
 
 # --- login -----------------------------------------------------------------
 greetd
@@ -132,6 +136,10 @@ fcitx5-qt           # Qt5 and Qt6 platforminputcontext plugins, which
 pipewire
 pipewire-alsa
 pipewire-pulse
+rtkit               # ERGON-135: PipeWire asks it (org.freedesktop.RealtimeKit1, D-Bus
+                    # activated) for SCHED_FIFO on its audio threads. pipewire only
+                    # OPTdepends on it, so without this line the daemon ran at
+                    # nice level only and dropped out under load
 wireplumber
 pamixer
 playerctl

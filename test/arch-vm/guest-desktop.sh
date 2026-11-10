@@ -4168,6 +4168,60 @@ else
   note "ERGON-70: no user manager for $U to probe"
 fi
 
+
+# --- ERGON-135/139/152: realtime audio, Qt6 palette, the share picker --------
+echo "--- session extras: rtkit, qt6ct, screen-share picker ---"
+# ERGON-135: rtkit is installed, answers on the system bus, and PipeWire ended
+# up with realtime or raised priority on at least one thread.
+pacman -Q rtkit >/dev/null 2>&1 && ok "rtkit is installed" || bad "rtkit is not installed: PipeWire cannot get realtime priority"
+_rtp=$(busctl --system get-property org.freedesktop.RealtimeKit1 /org/freedesktop/RealtimeKit1 org.freedesktop.RealtimeKit1 MaxRealtimePriority 2>&1)
+case "$_rtp" in "i "[1-9]*) ok "  and RealtimeKit1 answers on the system bus ($_rtp)" ;; *) bad "  RealtimeKit1 does not answer: $_rtp" ;; esac
+_pwp=$(pgrep -u "$U" -x pipewire | head -1)
+if [ -n "$_pwp" ]; then
+  if ps -L -o cls=,ni= -p "$_pwp" | awk '$1 ~ /^(FF|RR)$/ || $2 < 0 { f=1 } END { exit !f }'; then
+    ok "  pipewire has a thread at realtime class or negative nice: $(ps -L -o cls=,rtprio=,ni= -p "$_pwp" | sort -u | tr -s ' ' | tr '\n' ';')"
+  else
+    bad "  no pipewire thread has realtime priority: $(ps -L -o cls=,rtprio=,ni= -p "$_pwp" | sort -u | tr -s ' ' | tr '\n' ';')"
+  fi
+else
+  note "ERGON-135: pipewire is not running here; the priority of its threads was not read"
+fi
+
+# ERGON-139: the Qt6 platform theme is rendered from the palette and reaches
+# the session; a Qt6 app is on screen for the gate's screenshot.
+_qs="$H/.config/qt6ct/colors/ergon.conf"
+_n=$(awk -F= '/^(active|disabled|inactive)_colors=/ { n = split($2, a, ","); if (n != 21) bad_n = 1; c++ } END { print (c == 3 && !bad_n) ? "ok" : "bad" }' "$_qs" 2>/dev/null)
+[ "$_n" = ok ] && ok "qt6ct colour scheme rendered: three states of 21 colours" || bad "qt6ct colour scheme missing or malformed: $_qs"
+_win=$(awk -F'[=,]' '/^active_colors=/ { gsub(/ /, "", $12); print tolower(substr($12, 4)) }' "$_qs" 2>/dev/null)
+_gtk=$(sed -n 's/^@define-color window_bg_color #\([0-9A-Fa-f]*\);.*/\1/p' "$H/ergonOS/gtk/gtk.css" 2>/dev/null | head -1 | tr 'A-F' 'a-f')
+[ -n "$_win" ] && [ "$_win" = "$_gtk" ] && ok "  its Window colour is GTK's window_bg_color ($_win)" || bad "  Window colour '$_win' is not the palette's '$_gtk'"
+grep -qx "color_scheme_path=$_qs" "$H/.config/qt6ct/qt6ct.conf" 2>/dev/null && ok "  qt6ct.conf points at it" || bad "  qt6ct.conf does not point at $_qs"
+_wb=$(pgrep -u "$U" -x waybar | head -1)
+if [ -n "$_wb" ] && tr '\0' '\n' </proc/"$_wb"/environ | grep -qx 'QT_QPA_PLATFORMTHEME=qt6ct'; then ok "  and a session client sees QT_QPA_PLATFORMTHEME=qt6ct"
+else bad "  QT_QPA_PLATFORMTHEME=qt6ct did not reach the session (waybar pid '${_wb:-none}')"; fi
+usr qt6ct >/dev/null 2>&1 </dev/null &
+sleep 5
+if pgrep -u "$U" -x qt6ct >/dev/null; then ok "  qt6ct (a Qt6 app) opens"; shot qt6-themed; else bad "  qt6ct did not stay open"; fi
+pkill -u "$U" -x qt6ct 2>/dev/null
+
+# ERGON-152: the screen-share picker. xdg-desktop-portal-hyprland ships
+# hyprland-share-picker (Qt6, so the palette above themes it) and the portal
+# offers monitors and windows as sources.
+command -v hyprland-share-picker >/dev/null && ok "hyprland-share-picker is installed" || bad "no hyprland-share-picker: screen sharing has no picker"
+ldd "$(command -v hyprland-share-picker)" 2>/dev/null | grep -q 'not found' && bad "  hyprland-share-picker has unresolved libraries" || ok "  and links"
+_src=$(usr "busctl --user get-property org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast AvailableSourceTypes" 2>&1 </dev/null)
+case "$_src" in
+  "u "*) [ $(( ${_src#u } & 3 )) = 3 ] && ok "  the ScreenCast portal offers monitors and windows ($_src)" || bad "  the ScreenCast portal offers only: $_src" ;;
+  *) note "ERGON-152: ScreenCast portal not answering in this VM: $(head -c 150 <<<"$_src")" ;;
+esac
+# The picker as xdph starts it: windows arrive in XDPH_WINDOW_SHARING_LIST as
+# handle[HC>]class[HT>]title[HE>]address[HA>]; outputs it reads from Qt itself.
+_wl=$(hq clients -j | jq -r '.[] | "\(.pid)[HC>]\(.class)[HT>]\(.title)[HE>]\(.address)[HA>]"' | tr -d "\n" | tr -d "\"'\`\$\\\\")
+usr "XDPH_WINDOW_SHARING_LIST='$_wl' hyprland-share-picker" >/tmp/picker.out 2>&1 </dev/null &
+sleep 5
+if pgrep -u "$U" -x hyprland-share-picker >/dev/null; then ok "  the picker opens with ${_wl:+windows and }outputs"; shot share-picker
+else bad "  the picker did not stay open: $(head -c 200 /tmp/picker.out)"; fi
+pkill -u "$U" -x hyprland-share-picker 2>/dev/null
 # --- the lock screen (ERGON-127) -------------------------------------------
 # Lock for real, look, unlock. hyprlock draws the blurred wallpaper image; the
 # assertion is that it started and stayed up on that config. SIGUSR1 is its

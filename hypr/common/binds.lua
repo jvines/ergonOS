@@ -47,12 +47,12 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Session
-bind("SUPER + RETURN",       "Terminal",            launch .. term)
+bind("SUPER + RETURN",       "Terminal",            launch .. term .. " --here")
 -- Floating via a WINDOW RULE keyed on a distinct app_id, not via a chained
 -- `hyprctl dispatch togglefloating` -- that runs the moment the command is
 -- issued, against whatever currently has focus, which is a race the new window
 -- usually loses. See windows.lua for the rule.
-bind("SUPER + SHIFT + RETURN", "Floating terminal",  launch .. "ergon-term --class ergon-float")
+bind("SUPER + SHIFT + RETURN", "Floating terminal",  launch .. "ergon-term --here --class ergon-float")
 -- Escape hatch, kept even though ergon-term now falls back automatically: that
 -- fallback triggers on wezterm being ABSENT, and cannot help when wezterm is
 -- present but broken. This one names foot directly. Deliberately an awkward

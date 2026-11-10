@@ -50,3 +50,5 @@ swayosd/style.css
 waybar/style.css
 wezterm/wezterm.lua
 yazi/theme.toml
+qt6ct/qt6ct.conf
+qt6ct/colors/ergon.conf

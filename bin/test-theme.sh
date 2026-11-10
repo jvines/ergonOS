@@ -44,7 +44,7 @@ cp "$REPO/bin/ergon-theme" "$E/bin/"
 cp "$REPO/lib/user-config.sh" "$E/lib/"
 cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/gruvbox-light.env" \
    "$REPO/theme/catppuccin-latte.env" "$REPO/theme/type.env" "$E/theme/"
-for d in foot mako waybar swayosd fuzzel gtk btop/themes wezterm; do
+for d in foot mako waybar swayosd fuzzel gtk btop/themes wezterm qt6ct qt6ct/colors; do
   mkdir -p "$E/$d"; cp "$REPO/$d"/*.in "$E/$d/" 2>/dev/null
 done
 
@@ -235,6 +235,24 @@ check "  and a light palette reaches the launcher's icons, which it never did" \
   has "$E/fuzzel/fuzzel.ini" "icon-theme=Papirus-Light"
 check "  the same way it reaches GTK's" \
   has "$E/gtk/settings.ini" "gtk-icon-theme-name=Papirus-Light"
+
+# --- Qt6 follows the palette (ERGON-139) --------------------------------------
+# The colour scheme is qt6ct's: three lines of 21 #AARRGGBB, the Window role
+# (11th) being the palette's background, and the config naming the scheme by
+# absolute path under the rendering user's $HOME.
+qbg() { grep -m1 "^COOL_BG0=" "$E/theme/$1.env" | sed "s/^COOL_BG0=#//; s/[^0-9A-Fa-f].*//" | tr A-F a-f; }
+qwin() { awk -F'[=,]' '/^active_colors=/ { gsub(/ /, "", $12); print tolower(substr($12, 4)) }' "$E/qt6ct/colors/ergon.conf"; }
+check "qt6ct's Window colour is the active palette's background" \
+  test "$(qwin)" = "$(qbg gruvbox-light)"
+check "  each of the three states has 21 colours" \
+  test "$(awk -F= '/^(active|disabled|inactive)_colors=/ { if (split($2, a, ",") == 21) n++ } END { print n }' "$E/qt6ct/colors/ergon.conf")" = 3
+check "  qt6ct.conf names the scheme under \$HOME and the light icon theme" \
+  bash -c 'grep -qxF "color_scheme_path=$1/.config/qt6ct/colors/ergon.conf" "$2" && grep -qxF "icon_theme=Papirus-Light" "$2"' _ "$HOME" "$E/qt6ct/qt6ct.conf"
+_q1=$(cat "$E/qt6ct/qt6ct.conf"); run gruvbox >/dev/null 2>&1
+check "  a palette switch rewrites qt6ct.conf too, which is what a running Qt6 app reloads on" \
+  test "$(cat "$E/qt6ct/qt6ct.conf")" != "$_q1"
+check "  and the scheme follows to the new background" test "$(qwin)" = "$(qbg gruvbox)"
+run gruvbox-light >/dev/null 2>&1
 
 # --- gtk-4.0 carries both modes, so a running GTK4 app follows a switch -------
 # Asserted per BLOCK, through the one define every palette renders exactly once

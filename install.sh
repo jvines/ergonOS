@@ -252,6 +252,9 @@ else
   # palette switch, and GTK3 cannot parse that (gtk/gtk4.css.in).
   link gtk/gtk.css  .config/gtk-3.0/gtk.css generated
   link gtk/gtk4.css .config/gtk-4.0/gtk.css generated
+  # Qt6 follows the palette through qt6ct (ERGON-139): a whole directory, as
+  # foot is, because the platform theme writes its own files beside the config.
+  link qt6ct .config/qt6ct
   # The OSD. swayosd-server searches $XDG_CONFIG_HOME/swayosd/style.css itself
   # and loads it over the package's own sheet, so this needs no --style flag in
   # autostart.lua -- the file simply has to be at that path. One file rather
