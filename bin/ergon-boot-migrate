@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# ergon:summary=Move a GRUB install to the systemd-boot and UKI boot layout
+# ergon:group=system
+# ergon:args=check | run [--auto]
+# ergon:help=native
+#
+# Installs from before ERGON-123 boot GRUB, which unlocks a /boot inside LUKS.
+# This gives them what new installs have: systemd-boot and one UKI per kernel
+# on the ESP, the cmdline in /etc/kernel/cmdline. Provisioning runs it, so
+# `ergon sync` applies it only where host.env says BOOT_MIGRATE=1 (opt-in until it has moved a real GRUB machine).
+#
+#   check         whether this machine needs it, and whether it can have it
+#   run           do it. Each step checks before it writes, so a run that was
+#                 interrupted is finished by running it again
+#   run --auto    provisioning's form: a machine that cannot have it is told
+#                 why and skipped, not failed
+#
+# Nothing is removed. GRUB stays in the firmware's boot order behind
+# systemd-boot and in systemd-boot's menu, so the old boot is always there.
+# The layout (lib/bootloader.sh) flips only at the last step, once the UKIs,
+# the entries and the firmware entry are verified. Removing GRUB is by hand:
+#   sudo pacman -Rns grub grub-btrfs; sudo efibootmgr -b <its number> -B
+#
+# The boot keyfile. GRUB installs put a LUKS key in the initramfs, harmless
+# while that sat inside LUKS. In a UKI on the ESP it is the disk's key in
+# clear, so it leaves FILES= before the first UKI is built (GRUB then asks for
+# the passphrase twice), and ergon-boot-entries skips every snapshot whose
+# initramfs still has it. Its key slot stays; once no snapshot predates this:
+#   sudo cryptsetup luksRemoveKey <luks partition> /etc/cryptsetup-keys.d/cryptroot.key
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# shellcheck source=../lib/bootloader.sh
+. "$ERGON/lib/bootloader.sh"
+R="${ERGON_BOOTROOT:-}"     # a fixture root, for bin/test-boot-migrate.sh
+MARK="$R/var/lib/ergon/boot-migrated"
+CONF="$R/etc/mkinitcpio.conf"
+
+ok()   { printf '   ok   %s\n' "$*"; }
+skip() { printf '   ·    %s\n' "$*"; }
+warn() { printf '   !!   %s\n' "$*" >&2; }
+die()  { printf '   !!   boot migration: %s\n' "$*" >&2
+         printf '   !!   nothing that boots was changed; GRUB is still the default\n' >&2; exit 1; }
+
+case "${1:-check}" in -h|--help|help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+# Why this machine cannot be migrated, one line each; nothing when it can.
+blockers() {
+  [ -d "$R/sys/firmware/efi" ] || echo "booted in BIOS mode; systemd-boot needs UEFI"
+  [ -n "$ESP" ] || { echo "no EFI partition mounted at /efi, /boot/efi or /boot"; return; }
+  [ "$(findmnt -no FSTYPE /)" = btrfs ] || echo "/ is not btrfs"
+  # rootflags=subvol=@ goes on the cmdline, as on new installs. A root that is
+  # not @ (a snapper rollback moved the default) would boot something else.
+  [ "$(findmnt -no FSROOT /)" = /@ ] || echo "/ is not the @ subvolume"
+  [ -f "$R/boot/vmlinuz-linux" ] || echo "no /boot/vmlinuz-linux"
+  local c; for c in bootctl efibootmgr mkinitcpio; do command -v "$c" >/dev/null || echo "$c is not installed"; done
+  # A keyfile named anywhere but FILES= in mkinitcpio.conf is not ours to edit.
+  if grep -qs 'cryptsetup-keys\.d' "$R"/etc/mkinitcpio.conf.d/*.conf; then
+    echo "a LUKS keyfile is named in /etc/mkinitcpio.conf.d; it would land on the ESP in clear"
+  fi
+  local need=$((256 * 1024 * 1024)) k
+  for k in $(kernels); do
+    [ -s "$ESP/EFI/ergon/$k.efi" ] && continue
+    need=$(( need + 2 * $(stat -c %s "$R/boot/vmlinuz-$k") + 3 * $(stat -c %s "$R/boot/initramfs-$k.img" 2>/dev/null || echo 0) ))
+  done
+  [ $(( $(stat -f -c "%a * %S" "$ESP") )) -gt "$need" ] \
+    || echo "the ESP has less than $((need >> 20)) MiB free for the UKIs and the snapshot kernels"
+  if ! efi_disk >/dev/null; then echo "could not tell which disk and partition $ESP is"; fi
+}
+
+kernels() { local k; for k in linux linux-lts; do [ -f "$R/boot/vmlinuz-$k" ] && echo "$k"; done; }
+efi_disk() {  # -> "<disk> <partition number>"
+  local src pk pn
+  src=$(findmnt -no SOURCE "$ESP") || return 1
+  pk=$(lsblk -ndo PKNAME "$src" 2>/dev/null) && pn=$(lsblk -ndo PARTN "$src" 2>/dev/null) || return 1
+  [ -n "$pk" ] && [ -n "$pn" ] && echo "/dev/$pk $pn"
+}
+
+# The cmdline GRUB boots with, made whole: grub-mkconfig adds root= on an
+# unencrypted root, and the subvolume pin, by itself.
+grub_cmdline() {
+  local a out=() g="$R/etc/default/grub" splash=""
+  for a in $(sed -n 's/^GRUB_CMDLINE_LINUX\(_DEFAULT\)\{0,1\}="\(.*\)"$/\2/p' "$g"); do
+    case "$a" in BOOT_IMAGE=*|rootflags=*|quiet|splash) ;; *) out+=("$a") ;; esac
+  done
+  case " ${out[*]} " in *" root="*) ;; *) out+=("root=UUID=$(findmnt -no UUID /)") ;; esac
+  grep -qE '^HOOKS=.*[( ]plymouth[ )]' "$CONF" && splash=" splash"
+  printf '%s rootflags=subvol=@ quiet%s\n' "${out[*]}" "$splash"
+}
+
+if [ "$(ergon_boot_layout)" != grub ]; then
+  skip "boot layout: $(ergon_boot_layout); nothing to migrate"; exit 0
+fi
+# The ESP may be root-only (umask 0077), as it is on new installs.
+ergon_esp_access || exec sudo "$0" "$@"
+ESP=$(ergon_esp || true)
+
+case "${1:-check}" in
+check)
+  b=$(blockers)
+  if [ -z "$b" ]; then ok "this GRUB install can move to systemd-boot: ergon-boot-migrate run"
+  else printf '%s\n' "$b" | while read -r l; do warn "cannot migrate: $l"; done; fi
+  ;;
+
+run)
+  if [ "${2:-}" = --auto ]; then
+    v=${BOOT_MIGRATE:-$(sed -n 's/^BOOT_MIGRATE=\([01]\).*/\1/p' "$ERGON/hosts/$(hostname -s)/host.env" 2>/dev/null | tail -1 || true)}
+    [ "$v" = 1 ] || { skip "BOOT_MIGRATE is not 1: this machine keeps GRUB (opt in with BOOT_MIGRATE=1 in host.env)"; exit 0; }
+  fi
+  b=$(blockers)
+  if [ -n "$b" ]; then
+    printf '%s\n' "$b" | while read -r l; do warn "cannot migrate: $l"; done
+    [ "${2:-}" = --auto ] && { skip "this machine keeps GRUB"; exit 0; }
+    die "see above"
+  fi
+  read -r DISK PART < <(efi_disk)
+
+  # 1. The keyfile leaves the initramfs, before anything is built for the ESP.
+  if grep -q '^FILES=.*cryptsetup-keys\.d' "$CONF"; then
+    [ -f "$CONF.grub" ] || sudo cp -p "$CONF" "$CONF.grub"
+    sudo sed -i '/^FILES=/ { s|/etc/cryptsetup-keys\.d/[^ )]*||g; s|( *|(|; s| *)|)| }' "$CONF"
+    ! grep -q 'cryptsetup-keys\.d' "$CONF" || die "could not take the keyfile out of FILES= in $CONF"
+    ok "the LUKS keyfile is out of the initramfs (GRUB now asks twice)"
+  fi
+
+  # 2. The cmdline, which mkinitcpio bakes into the UKIs. Written once: a re-run
+  # keeps what the first wrote, or what someone has since edited.
+  if [ ! -s "$R/etc/kernel/cmdline" ]; then
+    cl=$(grub_cmdline)
+    if [ -e "$R/dev/mapper/cryptroot" ] && [[ " $cl" != *" rd.luks."* ]]; then
+      die "the root is encrypted but GRUB's cmdline has no rd.luks; not guessing how to unlock it"
+    fi
+    printf '%s\n' "$cl" | sudo install -Dm644 /dev/stdin "$R/etc/kernel/cmdline"
+    ok "kernel cmdline: $cl"
+  fi
+
+  # 3. One UKI per kernel, as arch-bootstrap.sh writes them. The image in /boot
+  # stays: GRUB boots it, and every snapshot keeps its own copy.
+  sudo mkdir -p "$ESP/EFI/ergon" "$ESP/loader/entries"
+  for k in $(kernels); do
+    p="$R/etc/mkinitcpio.d/$k.preset"
+    grep -qx "default_uki=\"$ESP/EFI/ergon/$k.efi\"" "$p" 2>/dev/null && continue
+    [ ! -f "$p" ] || [ -f "$p.grub" ] || sudo cp -p "$p" "$p.grub"
+    printf '%s\n' "# Written by ergon-boot-migrate (ERGON-125); the GRUB one is $k.preset.grub." \
+      "ALL_kver=\"/boot/vmlinuz-$k\"" "PRESETS=('default')" "default_image=\"/boot/initramfs-$k.img\"" \
+      "default_uki=\"$ESP/EFI/ergon/$k.efi\"" | sudo install -Dm644 /dev/stdin "$p"
+  done
+  sudo mkinitcpio -P >/dev/null 2>&1 || die "mkinitcpio -P failed"
+  for k in $(kernels); do
+    if command -v lsinitcpio >/dev/null && grep -q "cryptsetup-keys" <<<"$(sudo lsinitcpio -l "$R/boot/initramfs-$k.img")"; then
+      sudo rm -f "$ESP"/EFI/ergon/*.efi
+      die "the new initramfs still holds the LUKS keyfile; the UKIs were deleted again"
+    fi
+    [ -s "$ESP/EFI/ergon/$k.efi" ] || die "no UKI for $k at $ESP/EFI/ergon/$k.efi"
+  done
+  ok "UKIs on the ESP: $(kernels | tr '\n' ' ')"
+
+  # 4. What systemd-boot shows. ergon-boot-entries takes these over once the
+  # layout flips; the GRUB entry is the way back, and stays.
+  e="$ESP/loader/entries"
+  [ -f "$ESP/loader/loader.conf" ] || printf '%s\n' "# Written by ergon-boot-migrate." "timeout 2" \
+    "console-mode keep" "editor no" | sudo tee "$ESP/loader/loader.conf" >/dev/null
+  for k in $(kernels); do
+    compgen -G "$e/ergon-$k.conf" >/dev/null || compgen -G "$e/ergon-$k+*.conf" >/dev/null && continue
+    if [ "$k" = linux ]; then t=ergonOS; s=ergon-1; else t="ergonOS ($k, emergency kernel)"; s=ergon-9; fi
+    printf 'title    %s\nsort-key %s\nuki      /EFI/ergon/%s.efi\n' "$t" "$s" "$k" | sudo tee "$e/ergon-$k.conf" >/dev/null
+  done
+  g=$(cd "$ESP" && find EFI -maxdepth 2 -ipath 'EFI/GRUB/grubx64.efi' | head -1)
+  if [ -n "$g" ] && [ ! -f "$e/ergon-grub.conf" ]; then
+    printf 'title    GRUB (how this machine booted before ERGON-125)\nsort-key ergon-8\nefi      /%s\n' "$g" \
+      | sudo tee "$e/ergon-grub.conf" >/dev/null
+  fi
+
+  # 5. systemd-boot itself, and the firmware entry that puts it first. GRUB's
+  # entry stays behind it. efibootmgr, not bootctl, as in arch-bootstrap.sh.
+  [ -f "$ESP/EFI/systemd/systemd-bootx64.efi" ] || sudo bootctl install --esp-path="$ESP" --variables=no >/dev/null \
+    || die "bootctl install failed"
+  if ! grep -q "Linux Boot Manager" <<<"$(sudo efibootmgr)"; then
+    sudo efibootmgr --create --disk "$DISK" --part "$PART" --label "Linux Boot Manager" \
+      --loader '\EFI\systemd\systemd-bootx64.efi' >/dev/null || die "efibootmgr could not add systemd-boot"
+  fi
+  grep -q "Linux Boot Manager" <<<"$(sudo efibootmgr)" || die "the firmware has no systemd-boot entry"
+  sudo systemctl enable systemd-boot-update.service >/dev/null 2>&1 || true
+
+  # 6. The flip. From here every ergon command treats this as systemd-boot.
+  date -Is | sudo install -Dm644 /dev/stdin "$MARK"
+  ok "this machine boots systemd-boot from the next boot; GRUB stays in its menu"
+  [ "${2:-}" = --auto ] || echo "   next: bin/provision-arch.sh writes the snapshot entries and re-arms the boot guard"
+  ;;
+
+*) echo "ergon-boot-migrate: unknown command '$1' (check|run)" >&2; exit 2 ;;
+esac

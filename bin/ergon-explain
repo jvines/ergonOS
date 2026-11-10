@@ -22,9 +22,17 @@ set -euo pipefail
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
 DIRS=("/usr/share/ergon/knowledge" "$ERGON/knowledge")
 
+# A topic translated into the session's language lives at knowledge/<lang>/
+# <topic>.md (ergon_lang: ERGON_LANG, else LC_ALL/LC_MESSAGES/LANG). It is used
+# when present; every other topic is read in English. English is unchanged.
+# shellcheck source=../lib/i18n.sh
+. "$ERGON/lib/i18n.sh"
+LANGCODE=$(ergon_lang) || LANGCODE=
+
 _find() {  # _find <topic> -> path, or empty
   local d
   for d in "${DIRS[@]}"; do
+    [ -n "$LANGCODE" ] && [ -f "$d/$LANGCODE/$1.md" ] && { printf '%s' "$d/$LANGCODE/$1.md"; return 0; }
     [ -f "$d/$1.md" ] && { printf '%s' "$d/$1.md"; return 0; }
   done
   return 1
@@ -43,7 +51,7 @@ _topics() {
 
 case "${1:---list}" in
   --list|-l|"")
-    printf 'Topics (ergon explain <topic>):\n\n'
+    printf '%s\n\n' "$(_t "Topics (ergon explain <topic>):")"
     while read -r t; do
       p=$(_find "$t") || continue
       # The first heading is the title; the first paragraph after it is the gist.
@@ -53,7 +61,7 @@ case "${1:---list}" in
   -h|--help|help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
   *)
     p=$(_find "$1") || {
-      printf 'no topic %s\n\n' "$1" >&2
+      printf '%s\n\n' "$(_t "no topic %s" "$1")" >&2
       "$0" --list >&2
       exit 1
     }

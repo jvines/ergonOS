@@ -50,6 +50,14 @@ SWAP_GIB="${SWAP_GIB:-$(( _ram_gib + 4 ))}"
 HIBERNATE="${HIBERNATE:-1}"
 
 HOSTNAME="${HOSTNAME_NEW:-}"          # prompted if empty
+# Install-media preset (lib/preset.sh): LOCALE, KEYMAP, TIMEZONE, MIRROR_COUNTRY
+# and NTP from an `ergon-preset` file on the boot medium. Environment wins.
+# shellcheck source=../lib/preset.sh
+ERGON="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd -P)"   # again below, where it is explained
+. "$ERGON/lib/preset.sh"
+if _preset=$(ergon_preset_find); then ergon_preset_apply "$_preset"; ok "install preset: $_preset"; fi
+MIRROR_COUNTRY="${MIRROR_COUNTRY:-}"
+NTP="${NTP:-}"
 TIMEZONE="${TIMEZONE:-}"       # env wins; else detected from the connection, else picked
 LOCALE="${LOCALE:-en_US.UTF-8}"
 # Detected, not assumed. Anyone whose keyboard is not American has already run
@@ -407,6 +415,11 @@ case "$(awk -F': ' '/^vendor_id/ {print $2; exit}' /proc/cpuinfo)" in
 esac
 [ -n "$UCODE" ] && ok "microcode: $UCODE"
 
+# Regional mirrors (ERGON-157), only when the preset or MIRROR_COUNTRY asks.
+# Before the pin below: its --latest and the installed system's mirrorlist both
+# start from this list.
+[ -z "$MIRROR_COUNTRY" ] || ergon_mirrors "$MIRROR_COUNTRY"
+
 # The install is a machine's first upgrade, so it comes from the same Arch
 # `ergon update` holds machines at (ERGON-35, lib/archive-pin.sh), and a new
 # machine starts neither ahead of that date nor untested. -C gives pacstrap a
@@ -487,6 +500,11 @@ locale-gen >/dev/null
 echo "LANG=$LOCALE"     > /etc/locale.conf
 echo "KEYMAP=$BOOTKEYMAP" > /etc/vconsole.conf
 [ "$BOOTKEYMAP" = "$KEYMAP" ] || echo "ERGON_KEYMAP=$KEYMAP" >> /etc/vconsole.conf
+if [ -n "$NTP" ]; then
+  mkdir -p /etc/systemd/timesyncd.conf.d
+  printf '[Time]\nNTP=%s\n' "$NTP" > /etc/systemd/timesyncd.conf.d/10-ergon.conf
+  systemctl enable systemd-timesyncd.service
+fi
 echo "$HOSTNAME"        > /etc/hostname
 cat > /etc/hosts <<HOSTS
 127.0.0.1   localhost

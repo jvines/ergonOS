@@ -15,6 +15,8 @@
 #
 #   --list [FILE]   print "<emoji>  <name>" lines and exit (FILE for a fixture)
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
 find_data() {
   local f
@@ -39,7 +41,7 @@ if [ "${1:-}" = --list ]; then
   exit 0
 fi
 
-data=$(find_data) || { notify-send -u critical "ergon-emoji" "unicode-emoji is not installed"; exit 1; }
+data=$(find_data) || { notify-send -u critical "ergon-emoji" "$(_t "unicode-emoji is not installed")"; exit 1; }
 sel=$(list "$data" | fuzzel --dmenu --prompt 'emoji  ') || exit 0
 [ -n "$sel" ] || exit 0
 emoji=${sel%%  *}
@@ -49,5 +51,5 @@ if command -v wtype >/dev/null 2>&1; then
   sleep 0.15
   wtype -- "$emoji"
 else
-  notify-send -u low "ergon-emoji" "$emoji copied (wtype not installed, so not typed)"
+  notify-send -u low "ergon-emoji" "$(_t "%s copied (wtype not installed, so not typed)" "$emoji")"
 fi

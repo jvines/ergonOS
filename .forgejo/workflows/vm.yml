@@ -122,10 +122,7 @@ jobs:
           # first step, so requiring it here refused the one run that would
           # have rebuilt it: the image went missing between 2026-09-26 and the
           # 28th, and the weekly run failed in its first second from then on.
-          avail=$(df -BG --output=avail /home | tail -1 | tr -dc '0-9')
-          [ "${avail:-0}" -ge 40 ] \
-            || { echo "only ${avail}G free on /home; a run needs about 40G" >&2; exit 1; }
-          echo "kvm and ${avail}G free"
+          echo "kvm present"
 
       # One VM run at a time, enforced here because Forgejo ignores the
       # concurrency group above. On 2026-11-09 three runs installed at once,
@@ -146,6 +143,14 @@ jobs:
           done
           echo "${{ github.run_id }}" > "$SLOT/run"
           echo "slot taken"
+
+          # Measured after the slot, not before: while another run holds it, its
+          # disk counts against us, and on 2026-11-10 a run that would have waited
+          # for 2681 to finish was refused at once with 39G free.
+          avail=$(df -BG --output=avail /home | tail -1 | tr -dc '0-9')
+          [ "${avail:-0}" -ge 40 ] \
+            || { echo "only ${avail}G free on /home; a run needs about 40G" >&2; exit 1; }
+          echo "${avail}G free"
 
       - name: Check out the commit under test
         run: |

@@ -19,6 +19,10 @@ hl.on("hyprland.start", function()
   -- palette (bin/ergon-theme, --gsettings).
   hl.exec_cmd("ergon-theme --gsettings")
 
+  -- GDK_SCALE for X11 clients, from the lowest monitor scale (ERGON-134).
+  -- Before the first app, so it is in the user manager when they start.
+  hl.exec_cmd("ergon-display xscale")
+
   -- Secrets. Chromium and Electron apps (Discord, VS Code) keep their key in
   -- the Secret Service once uwsm/env-hyprland.d/ergon-keyring points them at
   -- it (ERGON-64), and otherwise in plaintext or in memory. Firefox uses its own
@@ -30,8 +34,14 @@ hl.on("hyprland.start", function()
   hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
 
   -- The desktop surfaces.
-  hl.exec_cmd("waybar")
+  -- Unless `ergon toggle bar` switched it off (ERGON-151).
+  local tg = io.open((os.getenv("XDG_STATE_HOME") or ((os.getenv("HOME") or "") .. "/.local/state")) .. "/ergon/toggles")
+  local bar_off = tg and ("\n" .. tg:read("a")):match("\nbar=off") or false
+  if tg then tg:close() end
+  if not bar_off then hl.exec_cmd("waybar") end
   hl.exec_cmd("mako")
+  -- CPU rendering (llvmpipe, no GPU): animations, blur and shadow off (ERGON-136).
+  hl.exec_cmd("ergon-gpu --trim")
   -- ergon-wallpaper STARTS hyprpaper; there is deliberately no bare
   -- `hyprpaper` line here any more. It renders the image if missing, writes a
   -- config with absolute paths beside it, and launches hyprpaper against that
@@ -88,4 +98,9 @@ hl.on("hyprland.start", function()
   -- mako, which is started above. It returns at once, so it cannot hold up
   -- anything here; ERGON_WELCOME=0 in the session environment turns it off.
   hl.exec_cmd("ergon-welcome --first-run")
+
+  -- ERGON-141: git name and email, asked once if git has none (fuzzel input).
+  -- ERGON-129: watch NetworkManager and open the sign-in page of a captive portal.
+  hl.exec_cmd("ergon-git-identity --first-run")
+  hl.exec_cmd("ergon-captive --watch")
 end)

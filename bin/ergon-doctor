@@ -483,10 +483,12 @@ fi
 # ERGON-123. Installs from then on boot systemd-boot -> a UKI on the ESP ->
 # Plymouth's passphrase prompt (none with ENCRYPT=0) -> greetd's automatic
 # login. Older installs keep
-# GRUB with /boot inside LUKS until ERGON-125 migrates them; both are healthy,
+# GRUB with /boot inside LUKS until ergon-boot-migrate moves them (ERGON-125); both are healthy,
 # and the rows say which one this is. The ESP is root-only (umask 0077), so the
 # file checks need sudo, as the snapshot count above does.
-if [ -f /etc/kernel/cmdline ]; then
+# shellcheck source=../lib/bootloader.sh
+. "$ERGON/lib/bootloader.sh"
+if [ "$(ergon_boot_layout "")" = systemd-boot ]; then
   if sudo -n true 2>/dev/null; then
     esp=""
     for m in /efi /boot/efi /boot; do
@@ -516,8 +518,14 @@ if [ -f /etc/kernel/cmdline ]; then
       rec warn "boot-splash" "${sp#   } -- ergon-plymouth install"
     fi
   fi
+  # ERGON-124, opt-in: a row only once sbctl is here. Setup mode, on or off,
+  # and unsigned boot files, one line each from ergon-secureboot status.
+  if command -v sbctl >/dev/null && sudo -n true 2>/dev/null; then
+    sb=$(sudo -n "$ERGON/bin/ergon-secureboot" status 2>&1) && st=ok || st=warn
+    rec "$st" "secure-boot" "$(sed 's/^ *\(ok\|!!\) *//' <<<"$sb" | paste -sd ';' | sed 's/;/; /g')"
+  fi
 elif [ -f /etc/default/grub ]; then
-  rec ok "bootloader" "GRUB with /boot inside LUKS (installed before ERGON-123; ERGON-125 migrates it)"
+  rec ok "bootloader" "GRUB with /boot inside LUKS (installed before ERGON-123; provisioning moves it unless BOOT_MIGRATE=0: ergon-boot-migrate check)"
   if systemctl is-enabled --quiet grub-btrfsd 2>/dev/null; then
     rec ok "snapshot-menu" "grub-btrfsd keeps the snapshot submenu"
   else

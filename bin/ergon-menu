@@ -33,6 +33,8 @@
 set -euo pipefail
 
 BINDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/i18n.sh
+. "$BINDIR/../lib/i18n.sh"
 
 # Group and command names come from bin/ergon's own entries() (via --groups
 # and --group), topics from bin/ergon-explain's own --list. Nothing here
@@ -52,7 +54,7 @@ unmarked() { cut -c6-; }
 # $2, when given, is a fuzzel --width. 48 (fuzzel.ini.in's default) is fine
 # for the four top-level nouns; a command's own summary or a background's
 # path needs more room than that to read as anything but a shared prefix.
-pick() { fuzzel --dmenu --prompt "$1  " ${2:+--width "$2"}; }
+pick() { fuzzel --dmenu --prompt "$(_t "$1")  " ${2:+--width "$2"}; }
 
 # ERGON-31 review: binds.lua runs this whole menu with no `launch` prefix
 # (bare `hl.dsp.exec_cmd("ergon-menu")`), same as SUPER+T/SUPER+SHIFT+B right
@@ -71,13 +73,13 @@ launch() {
   exec "$@"
 }
 
-run_in_terminal() {  # $1: a bare `ergon` subcommand name
+run_in_terminal() {  # args: an `ergon` subcommand and its arguments
   # $BINDIR/ergon by full path, not `ergon` off PATH: the menu already read
   # its command list from THIS checkout, so the terminal it opens runs the
   # same one rather than whatever `ergon` a differently-scoped PATH finds.
   launch "$BINDIR/ergon-term" sh -c \
-    '"$0" "$1" || true; echo; echo "-- press enter to close --"; read -r _' \
-    "$BINDIR/ergon" "$1"
+    '"$0" "$@" || true; echo; echo "-- press enter to close --"; read -r _' \
+    "$BINDIR/ergon" "$@"
 }
 
 show_topic() {  # $1: an `ergon explain` topic name
@@ -89,12 +91,13 @@ show_topic() {  # $1: an `ergon explain` topic name
     if command -v glow >/dev/null 2>&1; then "$0" explain "$1" | glow -p -
     elif command -v less >/dev/null 2>&1; then "$0" explain "$1" | less -R
     else "$0" explain "$1"; echo; echo "-- press enter to close --"; read -r _
-    fi' "$BINDIR/ergon" "$1"
+    fi' "$BINDIR/ergon" "$@"
 }
 
 web_app_menu() {
   local sel
-  sel=$(printf 'Add\nRemove\nList\n' | pick "web app") || exit 0
+  sel=$(_t_menu Add Remove List | pick "web app") || exit 0
+  sel=$(_t_back "$sel" Add Remove List)
   case "$sel" in
     Add)    exec "$BINDIR/ergon-webapp" add ;;   # asks name and URL in fuzzel
     Remove) exec "$BINDIR/ergon-webapp" rm ;;    # fuzzel pick
@@ -102,12 +105,29 @@ web_app_menu() {
   esac
 }
 
+restart_menu() {
+  local sel
+  sel=$(printf 'audio\nbluetooth\nwifi\ntrackpad\n' | pick restart) || exit 0
+  run_in_terminal restart "$sel"   # sudo asks for the password, so a real terminal
+}
+
 system_menu() {
   local sel
-  sel=$(printf 'Session\nWi-Fi\nWeb app\nTimezone\nLanguage\nChannel\n' | pick system) || exit 0
+  sel=$(_t_menu Session Wi-Fi "Sign in to Wi-Fi" DNS "SSH server" Vault Tailscale Restart Touchpad Touchscreen "World clock" Transcode "Web app" Timezone Language Channel | pick system) || exit 0
+  sel=$(_t_back "$sel" Session Wi-Fi "Sign in to Wi-Fi" DNS "SSH server" Vault Tailscale Restart Touchpad Touchscreen "World clock" Transcode "Web app" Timezone Language Channel)
   case "$sel" in
     Session)  exec "$BINDIR/ergon-session" ;;
     Wi-Fi)    exec "$BINDIR/ergon-wifi" ;;
+    "Sign in to Wi-Fi") exec "$BINDIR/ergon-captive" ;;
+    DNS)      exec "$BINDIR/ergon-dns" ;;
+    "SSH server") run_in_terminal ssh-enable ;;   # refuses or asks sudo, so a terminal
+    Vault)    run_in_terminal vault ;;         # asks for the server URL once
+    Tailscale) run_in_terminal tailscale ;;   # sudo, login URL and QR: a real terminal
+    Restart)  restart_menu ;;
+    Touchpad) exec "$BINDIR/ergon-toggle-input" touchpad ;;
+    Touchscreen) exec "$BINDIR/ergon-toggle-input" touchscreen ;;
+    "World clock") exec "$BINDIR/ergon-clock" ;;
+    Transcode) run_in_terminal transcode ;;   # asks for a file, then a target
     "Web app") web_app_menu ;;
     Timezone) run_in_terminal timezone ;;   # asks questions, so a real terminal
     Language) run_in_terminal language ;;   # asks questions too
@@ -115,9 +135,34 @@ system_menu() {
   esac
 }
 
+# Mirror and extend for a projector (ERGON-132), one entry each. ergon-display
+# says why it refused on stderr and nothing is watching that, so it is shown.
+display_do() {
+  local out
+  out=$("$BINDIR/ergon-display" "$@" 2>&1) || { notify-send "ergon display" "$out" 2>/dev/null || true; }
+}
+
+display_menu() {
+  local sel
+  sel=$(_t_menu "Present (mirror, no notifications)" Mirror "Extend right" "Extend left" "Extend (undo mirror)" "Scale (next)" "Resolution and refresh" Rotate "Keep this layout" | pick display 40) || exit 0
+  sel=$(_t_back "$sel" "Present (mirror, no notifications)" Mirror "Extend right" "Extend left" "Extend (undo mirror)" "Scale (next)" "Resolution and refresh" Rotate "Keep this layout")
+  case "$sel" in
+    Present*)       display_do present ;;
+    Mirror)         display_do mirror ;;
+    "Extend right") display_do extend right ;;
+    "Extend left")  display_do extend left ;;
+    Extend*)        display_do extend ;;
+    Scale*)         display_do scale cycle ;;
+    Resolution*)    sel=$("$BINDIR/ergon-display" modes | pick resolution) || exit 0; display_do mode "$sel" ;;
+    Rotate)         sel=$(printf '0\n90\n180\n270\n' | pick rotate) || exit 0; display_do rotate "$sel" ;;
+    Keep*)          display_do save ;;
+  esac
+}
+
 style_menu() {
   local sel
-  sel=$(printf 'Palette\nBackground\n' | pick style) || exit 0
+  sel=$(_t_menu Palette Background Toggles | pick style) || exit 0
+  sel=$(_t_back "$sel" Palette Background Toggles)
   case "$sel" in
     Palette)
       sel=$("$BINDIR/ergon-theme" --list | pick palette) || exit 0
@@ -125,6 +170,11 @@ style_menu() {
       ;;
     Background)
       background_menu
+      ;;
+    Toggles)
+      # "name  on|off" lines straight from ergon-toggle; picking one flips it.
+      sel=$("$BINDIR/ergon-toggle" list | pick toggle) || exit 0
+      exec "$BINDIR/ergon-toggle" "$(awk '{print $1}' <<<"$sel")"
       ;;
   esac
 }
@@ -158,7 +208,7 @@ background_menu() {
   # no dump to write it into, so it goes to notify-send.
   if [ "${#labels[@]}" -eq 0 ]; then
     command -v notify-send >/dev/null 2>&1 \
-      && notify-send "ergon-menu" "no backgrounds to choose from (see: ergon wallpaper --list)"
+      && notify-send "ergon-menu" "$(_t "no backgrounds to choose from (see: ergon wallpaper --list)")"
     exit 0
   fi
   sel=$(printf '%s\n' "${labels[@]}" | pick background 60) || exit 0
@@ -186,7 +236,8 @@ commands_menu() {
 
 help_menu() {
   local sel
-  sel=$({ printf 'Keybindings\n'; topics; } | pick help) || exit 0
+  sel=$({ _t_menu Keybindings; topics; } | pick help) || exit 0
+  sel=$(_t_back "$sel" Keybindings)
   if [ "$sel" = Keybindings ]; then
     exec "$BINDIR/ergon-keys"   # already fuzzel-driven; no terminal needed
   fi
@@ -200,9 +251,12 @@ help_menu() {
 # `ergon --list` (not --groups/--group, which this function itself calls --
 # see that test for why comparing it to itself would be circular).
 dump() {
-  printf 'System\n  session menu (ergon session)\n  Wi-Fi (ergon wifi)\n  Timezone (ergon timezone)\n  Language (ergon language)\n  Channel (ergon channel)\n'
+  printf 'System\n  session menu (ergon session)\n  Wi-Fi (ergon wifi)\n  Sign in to Wi-Fi (ergon captive)\n  DNS (ergon dns)\n  SSH server (ergon ssh-enable)\n  Vault (ergon vault)\n  Tailscale (ergon tailscale)\n  Restart (ergon restart: audio, bluetooth, wifi, trackpad)\n  Touchpad, Touchscreen (ergon toggle-input)\n  World clock (ergon clock)\n  Transcode (ergon transcode)\n  Timezone (ergon timezone)\n  Language (ergon language)\n  Channel (ergon channel)\n'
+  printf 'Display\n  Present (mirror, no notifications)\n  Mirror\n  Extend right\n  Extend left\n  Extend (undo mirror)\n  Scale (next)\n  Resolution and refresh\n  Rotate\n  Keep this layout\n'
   printf 'Style\n  Palette\n'
   "$BINDIR/ergon-theme" --list | unmarked | sed 's/^/    /'
+  printf '  Toggles\n'
+  "$BINDIR/ergon-toggle" list | awk '{print "    " $1}'
   printf '  Background\n'
   # Non-fatal: --list itself refuses (exit 1, its error on stderr, nothing on
   # stdout) on a machine with neither imagemagick nor a background on disk
@@ -231,9 +285,11 @@ fi
 
 command -v fuzzel >/dev/null 2>&1 || { echo "ergon-menu: fuzzel is not installed" >&2; exit 1; }
 
-sel=$(printf 'System\nStyle\nCommands\nHelp\n' | pick ergon) || exit 0
+sel=$(_t_menu System Display Style Commands Help | pick ergon) || exit 0
+sel=$(_t_back "$sel" System Display Style Commands Help)
 case "$sel" in
   System)   system_menu ;;
+  Display)  display_menu ;;
   Style)    style_menu ;;
   Commands) commands_menu ;;
   Help)     help_menu ;;

@@ -252,6 +252,9 @@ else
   # palette switch, and GTK3 cannot parse that (gtk/gtk4.css.in).
   link gtk/gtk.css  .config/gtk-3.0/gtk.css generated
   link gtk/gtk4.css .config/gtk-4.0/gtk.css generated
+  # Qt6 follows the palette through qt6ct (ERGON-139): a whole directory, as
+  # foot is, because the platform theme writes its own files beside the config.
+  link qt6ct .config/qt6ct
   # The OSD. swayosd-server searches $XDG_CONFIG_HOME/swayosd/style.css itself
   # and loads it over the package's own sheet, so this needs no --style flag in
   # autostart.lua -- the file simply has to be at that path. One file rather
@@ -398,6 +401,10 @@ else
   # Discord, YouTube). Creates those and removes only entries it made, so this
   # is as safe to rerun as the links around it.
   if [ "$CHECK" = 1 ]; then "$ERGON/bin/ergon-webapp" sync --check; else "$ERGON/bin/ergon-webapp" sync || warn "web apps: sync failed"; fi
+
+  # ERGON-147: point rbw and the Bitwarden app at VAULT_URL (or the saved answer);
+  # unattended with neither, it does nothing -- the question waits for System > Vault.
+  if [ "$CHECK" != 1 ]; then "$ERGON/bin/ergon-vault" setup </dev/null || warn "vault: setup failed"; fi
 
   if [ "$CHECK" != 1 ]; then
     # ERGON-72: `su -`/`sudo -u` (provisioning, the VM harness) open no

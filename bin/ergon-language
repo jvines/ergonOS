@@ -17,6 +17,9 @@
 # stays '.', because a decimal comma breaks science tooling that parses numbers
 # (awk, gnuplot, R, CSV readers). Pass --numeric LOCALE to choose otherwise.
 #
+# The menu, notifications and welcome page follow LANG (es: Spanish, see
+# lib/i18n.sh and i18n/); a language with no catalog stays English.
+#
 # The locale is enabled in /etc/locale.gen, generated, and written with
 # localectl. Apps launched later from the systemd/dbus user environment (the
 # launcher, services) get it at once; apps already running keep their old

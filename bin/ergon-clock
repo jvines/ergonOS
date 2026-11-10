@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# ergon:summary=Time, date and battery toast, plus a world clock of chosen zones
+# ergon:group=system
+# ergon:args=[add ZONE | rm ZONE | list]
+# ergon:help=native
+#
+#   ergon clock            toast: local time and date, the battery, and each chosen zone (SUPER+CTRL+T)
+#   ergon clock add ZONE   add a zone, e.g. America/Santiago (an observatory, a collaborator)
+#   ergon clock rm ZONE    remove it
+#   ergon clock list       the chosen zones
+#
+# Zones live one a line in ~/.config/ergon/clocks and are checked against
+# /usr/share/zoneinfo. UTC is always shown. The battery line is ergon-battery's
+# own, so there is one place that finds the cells.
+set -euo pipefail
+
+BINDIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/ergon/clocks"
+ZI="${ERGON_ZONEINFO:-/usr/share/zoneinfo}"
+zones() { [ -f "$CFG" ] && grep -v '^[[:space:]]*\(#\|$\)' "$CFG" || true; }
+
+case "${1:-}" in
+  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  list) zones ;;
+  add) z=${2:?usage: ergon clock add ZONE}
+       [ -f "$ZI/$z" ] || { echo "ergon-clock: no such zone: $z" >&2; exit 1; }
+       zones | grep -qxF -- "$z" || { mkdir -p "${CFG%/*}"; echo "$z" >> "$CFG"; } ;;
+  rm)  z=${2:?usage: ergon clock rm ZONE}
+       [ -f "$CFG" ] && { grep -vxF -- "$z" "$CFG" > "$CFG.new" || true; mv "$CFG.new" "$CFG"; } ;;
+  "")  out=$(date '+%H:%M  %a %d %b')
+       b=$("$BINDIR/ergon-battery" --short 2>/dev/null || true)
+       [ -z "$b" ] || out+=$'\n'"battery $b"
+       out+=$'\n'"UTC $(TZ=UTC date +%H:%M)"
+       while read -r z; do [ -n "$z" ] && out+=$'\n'"$z $(TZ=$z date '+%H:%M %a')"; done < <(zones)
+       notify-send -a ergon-clock -u low -t 6000 "Time" "$out" >/dev/null 2>&1 || true
+       echo "$out" ;;
+  *)   echo "usage: ergon clock [add ZONE | rm ZONE | list]" >&2; exit 2 ;;
+esac

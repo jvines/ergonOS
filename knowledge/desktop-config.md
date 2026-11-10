@@ -113,7 +113,7 @@ manager does not re-read it.
 
 **Do not edit a themed config. It is generated, and your edit has a short life.**
 
-Nineteen files are rendered from a `.in` template beside them by
+Twenty-one files are rendered from a `.in` template beside them by
 `ergon theme`, which expands the active palette into `@COOL_*@` placeholders:
 
     waybar/style.css      mako/config        hypr/hyprlock.conf
@@ -122,7 +122,7 @@ Nineteen files are rendered from a `.in` template beside them by
     yazi/theme.toml       lnav/config.json   lazygit/config.yml
     lazydocker/config.yml wezterm/wezterm.lua btop/themes/ergon.theme
     bat/themes/ergon.tmTheme  swayosd/style.css  gtk/gtk4.css
-    gtk/settings4.ini
+    gtk/settings4.ini     qt6ct/qt6ct.conf   qt6ct/colors/ergon.conf
 
 `gtk/gtk4.css` is the one exception to "the active palette": it is
 `gtk/gtk.css.in` rendered twice, a light palette and a dark one in
@@ -144,6 +144,22 @@ Text size is the one input that is not the palette. `ergon display text N`
 size as the template was designed at 11 -- into `n * N / 11`, and sets GTK's
 `text-scaling-factor` to `N / 11`. `ergon text-size small|normal|large|larger|FACTOR`
 (or a fuzzel picker) is the same input as a factor of 11.
+
+### Monitors: modes, projectors, and what survives
+
+`ergon display` (and the Display entry of `ergon menu`) changes an output with
+`hyprctl eval`, so it lasts until the next login. Every rule it writes is a
+complete one (mode, position, scale, transform) because whether a partial
+`hl.monitor` keeps the fields it leaves out was never measured. `--save` (or
+`ergon display save`) also writes it to `~/.local/state/ergon/display.lua`,
+loaded after `hosts/<host>/hyprland.lua` and before this session's changes. A
+mirror is never saved. `SUPER+CTRL+M` cycles the focused output's scale through
+the steps its mode divides evenly; Hyprland would round any other.
+
+XWayland clients are drawn at the monitor's pixel size (`xwayland = {
+force_zero_scaling = true }`), which is sharp and small. `ergon display xscale`
+sets `GDK_SCALE` from the lowest monitor scale at login and after a scale
+change, for clients started afterwards; Tk, Java and Qt have their own knobs.
 
 ### What checks them, and what does not
 

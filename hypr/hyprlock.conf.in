@@ -55,7 +55,7 @@ label {
     text = cmd[update:30000] date +"%H:%M"
     color = rgb(@COOL_FG0:raw@)
     font_size = 96
-    font_family = JetBrainsMono Nerd Font
+    font_family = @FONT_MONO@
     position = 0, 260
     halign = center
     valign = center
@@ -66,7 +66,7 @@ label {
     text = cmd[update:60000] date +"%A %d %B"
     color = rgb(@COOL_DIM:raw@)
     font_size = 18
-    font_family = JetBrainsMono Nerd Font
+    font_family = @FONT_MONO@
     position = 0, 185
     halign = center
     valign = center
@@ -86,7 +86,7 @@ label {
     text = cmd[update:30000] printf '%s   %s' "$(hostname -s)" "$(ergon battery --short 2>/dev/null)"
     color = rgb(@COOL_DIMMER:raw@)
     font_size = 13
-    font_family = JetBrainsMono Nerd Font
+    font_family = @FONT_MONO@
     position = 0, -40
     halign = center
     valign = bottom

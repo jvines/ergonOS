@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Show the GPUs, their drivers, which one drives the screens, and how to offload
 # ergon:group=hardware
-# ergon:args=[--doctor]
+# ergon:args=[--doctor|--software|--trim|--vendors]
 #
 # ERGON-36. What the machine has, read from sysfs (no model names): every PCI
 # display controller, the kernel driver bound to it, the outputs connected to
@@ -15,6 +15,9 @@
 # The NVIDIA driver choice itself (open modules for Turing and newer, the
 # 580xx branch for Maxwell to Volta, none for older) is bin/ergon-hardware's;
 # this only reports it. --doctor prints state|name|note lines for ergon-doctor.
+#
+# --software says whether the compositor renders on the CPU (exit 0 if so);
+# --trim, run at session start, then turns animations, blur and shadow off (ERGON-136).
 set -uo pipefail
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
@@ -43,6 +46,49 @@ _outputs() {
   done
   echo "${out[*]:-}"
 }
+
+# ERGON-136. Is the compositor rendering on the CPU (llvmpipe)? Prints the
+# reason and exits 0 if so, 1 if a GPU draws. Checked in order:
+#   ERGON_SOFTWARE_RENDER=1|0   explicit override
+#   LIBGL_ALWAYS_SOFTWARE=1     the user forced it
+#   eglinfo (mesa-utils)        names llvmpipe/softpipe/swrast as the renderer
+#   Hyprland's own log          same names, once it has started
+#   sysfs                       no display controller with a driver bound
+_software() {
+  case ${ERGON_SOFTWARE_RENDER:-} in 1) echo "ERGON_SOFTWARE_RENDER=1"; return 0 ;; 0) return 1 ;; esac
+  [ "${LIBGL_ALWAYS_SOFTWARE:-}" = 1 ] && { echo "LIBGL_ALWAYS_SOFTWARE=1"; return 0; }
+  local r="" log
+  if command -v eglinfo >/dev/null 2>&1; then
+    r=$(timeout 10 eglinfo -B 2>/dev/null | grep -iom1 'llvmpipe\|softpipe\|swrast')
+    [ -z "$r" ] || { echo "eglinfo reports $r"; return 0; }
+  fi
+  for log in "${XDG_RUNTIME_DIR:-/nonexistent}"/hypr/*/hyprland.log; do
+    r=$(grep -iom1 'llvmpipe\|softpipe' "$log" 2>/dev/null) && [ -n "$r" ] && { echo "Hyprland's log names $r"; return 0; }
+  done
+  if [ -n "$(_gpus | awk '$5 != "none"')" ]; then return 1; fi
+  echo "no display controller has a driver bound"; return 0
+}
+
+# Hyprland's expensive effects, off. Blur and shadow are already off in
+# looknfeel.lua; they are named here too so a hosts/ or user.lua override that
+# turned them on does not undo this. Animations are the real saving.
+if [ "${1:-}" = --software ]; then _software; exit; fi
+if [ "${1:-}" = --trim ]; then
+  why=$(_software) || exit 0
+  hyprctl eval 'hl.config({ animations = { enabled = false }, decoration = { blur = { enabled = false }, shadow = { enabled = false } } })' >/dev/null 2>&1 \
+    && echo "software rendering ($why): animations, blur and shadow off"
+  exit 0
+fi
+
+# --vendors: the GPU vendors present, one word per line (nvidia, amd, intel),
+# for callers that pick packages by hardware (ergon-bundle's pacman.nvidia and
+# pacman.amd lists; ergon llm). Sysfs only, so it works before any driver.
+if [ "${1:-}" = --vendors ]; then
+  _gpus | while read -r _ ven _; do
+    case $ven in 0x10de) echo nvidia ;; 0x1002) echo amd ;; 0x8086) echo intel ;; esac
+  done | sort -u
+  exit 0
+fi
 
 hw=$("$ERGON/bin/ergon-hardware" detect 2>/dev/null)
 branch=$(sed -n 's/^  nvidia driver: //p' <<<"$hw"); nvid=$(sed -n 's/^  nvidia: *//p' <<<"$hw")

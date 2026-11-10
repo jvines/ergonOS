@@ -30,6 +30,7 @@
 # the NVIDIA env file; test/arch-vm/guest-desktop.sh mirrors onto a real
 # output.
 set -uo pipefail
+export ERGON_LANG=en   # the assertions read English; i18n follows the session locale (ERGON-158)
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 T=$(mktemp -d)
@@ -541,9 +542,10 @@ case "$1 $2" in
 esac
 EOF
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TEST_ROOT/log/makoctl"\n' > "$T/stub/makoctl"
-chmod +x "$T/stub/hyprctl" "$T/stub/makoctl"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$TEST_ROOT/log/systemctl"\n' > "$T/stub/systemctl"
+chmod +x "$T/stub/hyprctl" "$T/stub/makoctl" "$T/stub/systemctl"
 SAVED=$T/run/ergon/display.lua
-disp() { reset_logs; HYPRLAND_INSTANCE_SIGNATURE=t XDG_RUNTIME_DIR="$T/run" "$E/bin/ergon-display" "$@" > "$T/out" 2>&1; }
+disp() { reset_logs; HYPRLAND_INSTANCE_SIGNATURE=t XDG_RUNTIME_DIR="$T/run" XDG_STATE_HOME="$T/state" "$E/bin/ergon-display" "$@" > "$T/out" 2>&1; }
 mons() { printf '%s\n' "$1" > "$T/mons"; printf '%s\n' "${2:-$1}" > "$T/all"; }
 
 # A name is Lua source once it is inside the eval, so one that closes the
@@ -568,6 +570,7 @@ check "extend: a refused unmirror fails (rc $rc)" test "$rc" -ne 0
 check "  and keeps the saved mirror, which is still live" has "$SAVED" '"HDMI-A-1", mirror'
 check "  and do-not-disturb" not has "$T/log/makoctl" "do-not-disturb"
 disp extend
+check "  and the eval says mirror = \"\" outright, since Hyprland merges rules and omitting it keeps the mirror" has "$T/log/hyprctl" 'mirror = ""'
 check "extend: every saved mirror goes, unplugged outputs' too" not has "$SAVED" "mirror ="
 check "  and do-not-disturb ends" hasx "$T/log/makoctl" "mode -r do-not-disturb"
 
@@ -587,5 +590,104 @@ disp scale +
 check "  and 1366x768 goes 1 -> 2, past 1.25 and 1.6" \
   hasx "$SAVED" 'hl.monitor({ output = "LVDS-1", scale = "2" })'
 
+echo "== ergon-gpu --software / --trim (ERGON-136)"
+SW=$T/sw/root; mkdir -p "$SW" "$T/sw/gpu/drivers/amdgpu"
+pci "$T/sw/root" 0000:c1:00.0 0x030000 0x1002 0x1638 1
+ln -s "$T/sw/gpu/drivers/amdgpu" "$SW/sys/bus/pci/devices/0000:c1:00.0/driver"
+check "a bound amdgpu is not software rendering" bash -c '! "$@"' _ env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$SW" "$GPU" --software
+check "no display controller at all is" env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$T/sw/empty" "$GPU" --software
+printf '#!/usr/bin/env bash\necho "OpenGL renderer string: llvmpipe (LLVM 19)"\n' > "$T/stub/eglinfo"; chmod +x "$T/stub/eglinfo"
+check "eglinfo naming llvmpipe is, even with a GPU bound" env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$SW" PATH="$T/stub:/usr/bin:/bin" "$GPU" --software
+check "ERGON_SOFTWARE_RENDER=0 overrides it" bash -c '! "$@"' _ env ERGON_SOFTWARE_RENDER=0 ERGON_SYSROOT="$SW" PATH="$T/stub:/usr/bin:/bin" "$GPU" --software
+reset_logs
+HYPRLAND_INSTANCE_SIGNATURE=t env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$SW" PATH="$T/stub:/usr/bin:/bin" "$GPU" --trim > "$T/out" 2>&1
+check "--trim on llvmpipe turns animations, blur and shadow off" \
+  bash -c 'grep -q "animations = { enabled = false }" "$1" && grep -q "blur = { enabled = false }" "$1" && grep -q "shadow = { enabled = false }" "$1"' _ "$T/log/hyprctl"
+rm -f "$T/stub/eglinfo"; reset_logs
+HYPRLAND_INSTANCE_SIGNATURE=t env -u ERGON_SOFTWARE_RENDER XDG_RUNTIME_DIR="$T/sw" ERGON_SYSROOT="$SW" PATH="$T/stub:/usr/bin:/bin" "$GPU" --trim > "$T/out" 2>&1
+check "--trim with a real GPU touches nothing" bash -c '! [ -s "$1" ]' _ "$T/log/hyprctl"
+
+
+
+# Complete rules, so a later change to one field cannot reset another.
+FULL='{"name":"DP-1","focused":true,"width":2560,"height":1440,"refreshRate":143.912,"x":0,"y":0,"scale":1,"transform":0,"mirrorOf":"none","availableModes":["2560x1440@143.91Hz","2560x1440@59.95Hz","1920x1080@60.00Hz","1920x1080@59.94Hz"]}'
+mons "[$FULL]"
+disp scale cycle
+check "scale cycle keeps the mode and position, and takes the next step that divides" \
+  hasx "$SAVED" 'hl.monitor({ output = "DP-1", mode = "2560x1440@143.91", position = "0x0", scale = "1.25" })'
+check "  and tells the X11 toolkits (GDK_SCALE)" has "$T/log/hyprctl" 'hl.env("GDK_SCALE", "1")'
+check "  and the user manager" has "$T/log/systemctl" "GDK_SCALE=1"
+mons '[{"name":"DP-1","focused":true,"width":2560,"height":1440,"scale":4}]'
+disp scale cycle
+check "scale cycle wraps from the last step to the first" has "$SAVED" 'scale = "1"'
+mons '[{"name":"DP-1","focused":true,"width":1920,"height":1080,"scale":1.25}]'
+disp scale +
+check "1.5 is a step where the mode divides by it" has "$SAVED" 'scale = "1.5"'
+
+mons "[$FULL]"
+disp mode 1920x1080@60
+check "mode: a rate the output offers, matched by value" has "$SAVED" 'mode = "1920x1080@60"'
+disp mode 1920x1080
+check "  a bare size takes the first (fastest listed) rate" has "$SAVED" 'mode = "1920x1080@60"'
+disp mode 1280x720; rc=$?
+check "  a mode it does not offer is refused (rc $rc)" test "$rc" -ne 0
+disp mode '1920x1080@60"})os.execute("id'; rc=$?
+check "  and so is Lua in its place, which never reaches eval" test "$rc" -ne 0 -a ! -s "$T/log/hyprctl.eval"
+check "  nothing was evaluated for either" not has "$T/log/hyprctl" "eval"
+disp modes
+check "modes lists the offered ones as WxH@Hz" hasx "$T/out" "1920x1080@59.94"
+
+disp rotate 90
+check "rotate 90 is transform 1, the rest of the rule kept" \
+  hasx "$SAVED" 'hl.monitor({ output = "DP-1", mode = "2560x1440@143.91", position = "0x0", scale = "1", transform = 1 })'
+mons '[{"name":"DP-1","focused":true,"transform":3}]'
+disp rotate next
+check "rotate next after 270 is 0, said outright" has "$SAVED" "transform = 0"
+disp rotate 45; rc=$?
+check "rotate 45 is refused (rc $rc)" test "$rc" -ne 0
+disp position 1920x-10
+check "position takes XxY" has "$SAVED" 'position = "1920x-10"'
+
+# Extend beside the laptop: logical widths, so 1.6 on 2560 leaves 1600.
+EXT='[{"name":"eDP-1","focused":true,"width":2560,"height":1600,"scale":1.6,"x":0,"y":0,"transform":0,"mirrorOf":"none"},
+      {"name":"HDMI-A-1","width":1920,"height":1080,"scale":1,"x":0,"y":0,"transform":0,"mirrorOf":"0","id":1},
+      {"name":"DP-2","width":1280,"height":720,"scale":1,"x":0,"y":0,"transform":0,"mirrorOf":"none","id":2}]'
+mons "$EXT"
+disp extend right
+check "extend right: the projector goes after the laptop's logical width" has "$SAVED" 'output = "HDMI-A-1", position = "1600x0"'
+check "  the next after that" has "$SAVED" 'output = "DP-2", position = "3520x0"'
+check "  and unmirrors" not has "$SAVED" "mirror"
+# Hyprland's FALLBACK placeholder is in `monitors all` (disabled): it takes no
+# room. The VM suite caught it: the projector went to x=2240, not 1280.
+FB='[{"name":"eDP-1","focused":true,"width":2560,"height":1600,"scale":1.6,"x":0,"y":0,"transform":0,"mirrorOf":"none"},
+     {"name":"FALLBACK","disabled":true,"width":1920,"height":1080,"scale":2,"x":0,"y":0,"transform":0,"mirrorOf":"none","id":9},
+     {"name":"HDMI-A-1","width":1920,"height":1080,"scale":1,"x":0,"y":0,"transform":0,"mirrorOf":"none","id":1}]'
+mons "$FB"; rm -f "$SAVED"
+disp extend right
+check "extend right skips the disabled FALLBACK output" has "$SAVED" 'output = "HDMI-A-1", position = "1600x0"'
+check "  and writes no rule for it" not has "$SAVED" "FALLBACK"
+mons "$EXT"; rm -f "$SAVED"
+# No laptop panel: the screen plugged in first (lowest id) is the source, even
+# when the projector has the focus. Run 2746: focus on the projector moved the
+# screen right of it instead.
+NS='[{"name":"DP-1","id":0,"width":1280,"height":800,"scale":1,"x":0,"y":0,"transform":0,"mirrorOf":"none"},
+     {"name":"HDMI-A-1","id":1,"focused":true,"width":1920,"height":1080,"scale":2,"x":0,"y":0,"transform":0,"mirrorOf":"none"}]'
+mons "$NS"; rm -f "$SAVED"
+disp extend right
+check "extend right with no eDP: the first screen is the source, not the focused projector" has "$SAVED" 'output = "HDMI-A-1", position = "1280x0"'
+check "  and the screen itself is pinned at 0x0" has "$SAVED" 'output = "DP-1", position = "0x0"'
+mons "$EXT"; rm -f "$SAVED"
+disp extend left
+check "extend left: the projector goes before it" has "$SAVED" 'output = "HDMI-A-1", position = "-1920x0"'
+
+mons '[{"name":"eDP-1","focused":true,"width":1920,"height":1080,"refreshRate":60,"x":0,"y":0,"scale":1}]'
+rm -rf "$T/state"; disp scale + --save
+check "--save keeps the rule across sessions" has "$T/state/ergon/display.lua" 'output = "eDP-1", mode = "1920x1080@60", position = "0x0", scale = "1.25"'
+mons '[{"name":"eDP-1","focused":true,"width":1920,"height":1080,"scale":1}, {"name":"HDMI-A-1","width":1920,"height":1080,"scale":1}]' \
+     '[{"name":"eDP-1","id":0,"width":1920,"height":1080,"scale":1,"mirrorOf":"none"},{"name":"HDMI-A-1","id":1,"width":1920,"height":1080,"scale":1,"mirrorOf":"0"}]'
+rm -rf "$T/state"; disp mirror --save
+check "a mirror is never kept across sessions" not has "$T/state/ergon/display.lua" "mirror"
+disp save
+check "save writes the layout as it is, and still no mirror" has "$T/state/ergon/display.lua" 'output = "eDP-1", scale = "1" })'
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

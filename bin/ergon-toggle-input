@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# ergon:summary=Turn the touchpad or the touchscreen off and on
+# ergon:group=input
+# ergon:args=touchpad|touchscreen [on|off|toggle]
+# ergon:help=native
+#
+#   ergon toggle-input touchpad        flip it (SUPER+CTRL+P, or the laptop's touchpad key)
+#   ergon toggle-input touchscreen     flip it (SUPER+CTRL+SHIFT+P), for palm taps on a 2-in-1
+#
+# The device is found by capability (lib/input.sh), not by name, then matched to
+# the name Hyprland reports in `hyprctl devices`. It is switched with
+# hl.device({ enabled = ... }) through `hyprctl eval`. The compositor does not
+# report that flag back, so the state is a marker file in $XDG_RUNTIME_DIR: off
+# until logout or reboot, and a config reload re-enables the device (the marker
+# is then stale; the next toggle just says "on" while nothing changed).
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+. "$ERGON/lib/input.sh"
+
+case "${1:-}" in
+  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  touchpad|touchscreen) kind=$1 ;;
+  *) echo "usage: ergon toggle-input touchpad|touchscreen [on|off|toggle]" >&2; exit 2 ;;
+esac
+act=${2:-toggle}
+marker="${XDG_RUNTIME_DIR:-/tmp}/ergon/input-$kind.off"
+
+say() { notify-send -a ergon-input -u low -t 2500 "$1" "$2" >/dev/null 2>&1 || true; echo "$1: $2"; }
+
+known=$(hyprctl devices -j | jq -r '[.mice[]?, .touch[]?] | .[].name')
+names=()
+while IFS='|' read -r _ n; do
+  [ -n "$n" ] || continue
+  h=$(ergon_input_hypr_name "$n")
+  grep -qxF -- "$h" <<<"$known" && names+=("$h")
+done < <(ergon_input_nodes "$kind")
+[ "${#names[@]}" -gt 0 ] || { say "$kind" "none found"; exit 1; }
+
+case "$act" in
+  on) want=on ;; off) want=off ;;
+  toggle) if [ -e "$marker" ]; then want=on; else want=off; fi ;;
+  *) echo "ergon-toggle-input: unknown action '$act'" >&2; exit 2 ;;
+esac
+[ "$want" = on ] && enabled=true || enabled=false
+
+for h in "${names[@]}"; do
+  r=$(hyprctl eval "hl.device({ name = \"${h//\"/}\", enabled = $enabled })" 2>&1) || true
+  [ "$r" = ok ] || { say "$kind" "hyprland refused '$h': $r"; exit 1; }
+done
+mkdir -p "${marker%/*}"
+if [ "$want" = on ]; then rm -f "$marker"; else : > "$marker"; fi
+say "$kind" "$want"

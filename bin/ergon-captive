@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# ergon:summary=Sign in to hotel and conference Wi-Fi: detect a captive portal, open its page
+# ergon:group=hardware
+# ergon:args=[--open | --check | --once | --watch]
+# ergon:help=native
+#
+#   ergon captive           open the sign-in page now (the System menu entry)
+#   ergon captive --check   print NetworkManager's connectivity: full, portal, limited, none, unknown
+#   ergon captive --once    if the state is "portal" and was not announced yet: notify and open the page
+#   ergon captive --watch   what autostart runs: --once on every NetworkManager connectivity change
+#
+# ERGON-129. NetworkManager is the network stack here (iwd is not installed), and it
+# already does the detection: provisioning writes a [connectivity] check
+# (conf.d/20-ergon-connectivity.conf, a plain-HTTP fetch of ping.archlinux.org every
+# five minutes and on each connect) and `nmcli monitor` reports "portal" when a
+# network answers it with a login page instead. The page opened is the portal's own
+# redirect, or the check URL itself, which the portal hijacks. A custom DNS
+# (ergon dns) can stop a portal from redirecting; `ergon dns dhcp` undoes it.
+set -uo pipefail
+BIN="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+CHECK_URL=${ERGON_CAPTIVE_URL:-http://ping.archlinux.org/nm-check.txt}
+STATE="${XDG_RUNTIME_DIR:-/tmp}/ergon-captive-announced"
+
+state() { nmcli -g CONNECTIVITY general 2>/dev/null || echo unknown; }
+
+open_page() {
+  local url
+  url=$(curl -s -m 5 -o /dev/null -w '%{redirect_url}' "$CHECK_URL" 2>/dev/null)
+  case "$url" in http*) ;; *) url=$CHECK_URL ;; esac
+  "${ERGON_CAPTIVE_BROWSER:-$BIN/ergon-browser}" "$url"
+}
+
+once() {
+  if [ "$(state)" = portal ]; then
+    [ -e "$STATE" ] && return 0
+    : > "$STATE"
+    command -v notify-send >/dev/null 2>&1 && notify-send -a ergon-captive "Wi-Fi sign-in needed" "This network wants you to sign in. Opening the page."
+    open_page
+  else
+    rm -f "$STATE"
+  fi
+}
+
+case "${1:-}" in
+  -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  --check) state ;;
+  --once) once ;;
+  --watch)
+    while :; do
+      once
+      nmcli monitor 2>/dev/null | while IFS= read -r l; do
+        case "$l" in *"Connectivity is now"*) once ;; esac
+      done
+      sleep 5
+    done ;;
+  ""|--open) open_page ;;
+  *) echo "usage: ergon captive [--open | --check | --once | --watch]" >&2; exit 2 ;;
+esac

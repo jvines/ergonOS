@@ -1,0 +1,3 @@
+DESCRIPTION="Local LLMs with Ollama, on the GPU the machine has"
+SIZE_MB=150
+NOTE="ollama (CPU) always; plus ollama-cuda when an NVIDIA GPU is found, else ollama-rocm for an AMD one. ROCm on an integrated Radeon is routinely slower than the CPU, so on an APU remove ollama-rocm and keep the CPU build. Nothing is downloaded and nothing runs until you ask: ergon llm start, then ergon llm run MODEL, which pulls the model on first use (GBs). Models live in /var/lib/ollama (the service's) and are removed with ergon llm rm MODEL, not by removing this bundle."

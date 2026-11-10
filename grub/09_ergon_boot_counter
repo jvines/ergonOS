@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installed as /etc/grub.d/09_ergon_boot_guard by ergon-boot-guard.
+# Installed as /etc/grub.d/09_ergon_boot_counter by ergon-boot-guard.
 #
 # This is a SHELL script that grub-mkconfig runs to PRINT grub script. The text
 # between the quoted heredocs is GRUB's own language, evaluated at boot time --

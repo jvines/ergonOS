@@ -98,6 +98,17 @@ What stays open, and why each one is not optional:
   sshd is not enabled on a fresh install, and the fleet reaches this machine
   over the tailnet.
 
+`ergon ssh-enable` (ERGON-142) is the way to turn sshd on: it refuses until
+`~/.ssh/authorized_keys` holds a valid key, and it leaves these rules alone, so
+it is reachable over the tailnet and still not from the LAN.
+
+The captive-portal check (ERGON-129) makes NetworkManager fetch
+`http://ping.archlinux.org/nm-check.txt` on each connect and every five
+minutes. That is a plain HTTP request that tells archlinux.org this IP is
+online, and it is what lets `ergon captive` notice a hotel login page. Delete
+`/etc/NetworkManager/conf.d/20-ergon-connectivity.conf` to turn it off (the
+next provisioning run writes it back).
+
 mDNS (UDP 5353) is open, for driverless printer discovery and for this
 machine resolving a `*.local` name of its own (ERGON-40). Scoped by
 DESTINATION, not source or interface -- a laptop with no fixed name for "the
@@ -221,7 +232,29 @@ can replace what is on the ESP. A tampered kernel would see the passphrase the
 next time it is typed. GRUB's layout (`/boot` inside LUKS) had the same hole
 one step earlier -- GRUB itself lived on the plain ESP -- so this is not a new
 class of attack, and the answer to both is Secure Boot with your own keys,
-which this machine does not set up yet.
+which is opt-in (below).
+
+**Secure Boot with your own keys (opt-in, ERGON-124).** `ergon secureboot
+enable` makes a key set with sbctl (kept in `/var/lib/sbctl`, inside LUKS),
+signs systemd-boot, the UKIs and the snapshot kernels on the ESP, and enrols
+the keys together with Microsoft's, so GPU option ROMs and a Windows install
+beside this one keep working. It refuses unless the firmware is in setup mode:
+`systemctl reboot --firmware-setup`, then under Secure Boot pick "Reset to
+Setup Mode", "Clear Secure Boot keys" or "Delete all keys" (never "Restore
+factory keys"), save, boot, run it again, and afterwards turn Secure Boot on
+in the same menu. From then on sbctl's mkinitcpio hook signs each UKI as it is
+built, its pacman hook re-signs systemd-boot, ergon-boot-entries signs every
+snapshot kernel it copies, and provisioning re-signs the lot. `ergon secureboot
+status` and `ergon doctor` (`secure-boot`) show setup mode, on or off, and any
+unsigned file. Not covered: the snapshot entries' initramfs images are loaded
+unverified (the UKIs carry theirs inside the signature), and on a machine
+moved off GRUB the GRUB menu entry no longer boots. Nothing changes for a
+machine that never runs it.
+
+**If it will not boot after enabling:** turn Secure Boot off in the firmware
+(or reset to setup mode), boot, and run `ergon secureboot status`; it names
+the unsigned file, and `sudo ergon secureboot sync` signs it. Your data never
+depended on Secure Boot, only the check that the kernel is yours did.
 
 **Automatic login.** With `AUTOLOGIN=1` (the installer's default), greetd
 starts the session after the unlock without asking for a password, so the disk
@@ -244,10 +277,16 @@ without one: what Chromium, VS Code or Discord keep there is protected by the
 disk encryption, as the rest of `/home` is, and readable by any process
 running as you, as the rest of `/home` is.
 
-Installs from before ERGON-123 keep GRUB with `/boot` inside LUKS2 and a
+Installs from before ERGON-123 have GRUB with `/boot` inside LUKS2 and a
 random keyfile in the initramfs, so the passphrase is typed once at GRUB. That
-keyfile is encrypted at rest with everything else; ERGON-125 moves those
-machines to the layout above.
+keyfile is encrypted at rest with everything else. Those machines can move
+to the layout above (`ergon-boot-migrate run`, ERGON-125; opt-in: `BOOT_MIGRATE=1`
+in host.env lets provisioning do it). The keyfile leaves the initramfs before the first UKI
+is built, since on the ESP it would be the disk's key in clear, and the boot
+menu never offers a snapshot from before the move: its initramfs still holds
+the key. Its keyslot stays until you retire it (`ergon-boot-migrate --help`).
+GRUB stays too, as an entry in systemd-boot's menu and behind it in the
+firmware's boot order; from there it asks for the passphrase twice.
 
 ## TRIM passes through the disk encryption
 

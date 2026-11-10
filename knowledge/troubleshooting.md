@@ -221,7 +221,8 @@ Installs from ERGON-123 on: systemd-boot on the unencrypted ESP starts a UKI
 (`/efi/EFI/ergon/linux.efi`), Plymouth draws the passphrase prompt from the
 initramfs, sd-encrypt unlocks the root, and greetd's `initial_session` starts
 Hyprland through uwsm with no greeter. Logging out lands on tuigreet. Older
-installs boot GRUB, with `/boot` inside LUKS (ERGON-125 migrates them). An
+installs boot GRUB, with `/boot` inside LUKS, until they are moved (opt-in, BOOT_MIGRATE=1)
+(`ergon-boot-migrate check` says whether it can, and why not). An
 install with `ENCRYPT=0` (`/etc/ergon/install.env`) has no sd-encrypt hook and
 no `rd.luks` on the cmdline: `root=UUID=...` is the btrfs filesystem itself,
 and Plymouth shows the splash with no prompt.

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# ergon:summary=Turn sshd on, only once ~/.ssh/authorized_keys holds a key
+# ergon:group=system
+# ergon:args=[--status | --disable]
+# ergon:help=native
+#
+#   ergon ssh-enable            enable and start sshd; refuses while there is no key
+#   ergon ssh-enable --status   whether a key is authorized and whether sshd runs
+#   ergon ssh-enable --disable  stop and disable sshd
+#
+# ERGON-142. sshd is off on a fresh install and provisioning never enables it, so a
+# password-only login cannot be reached from the network by accident. A key (add your
+# other machine's public key to ~/.ssh/authorized_keys) is the precondition.
+# The firewall is not touched: ssh from the LAN stays dropped and the tailnet is
+# trusted, as knowledge/security.md describes. Opening the LAN is a provisioning change.
+set -uo pipefail
+AK="${ERGON_AUTHORIZED_KEYS:-$HOME/.ssh/authorized_keys}"
+
+# Valid keys in the file, counted by ssh-keygen itself, not by guessing at the format.
+keys() { if [ -s "$AK" ]; then ssh-keygen -lf "$AK" 2>/dev/null | grep -c . || true; else echo 0; fi; }
+root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
+
+case "${1:-}" in
+  -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+  --status)
+    echo "authorized keys: $(keys)"
+    echo "sshd: $(systemctl is-enabled sshd 2>/dev/null || echo disabled) / $(systemctl is-active sshd 2>/dev/null || echo inactive)" ;;
+  --disable) root systemctl disable --now sshd ;;
+  "")
+    if [ "$(keys)" -lt 1 ]; then
+      echo "ergon-ssh-enable: no key in $AK, so sshd stays off." >&2
+      echo "Append the public key of the machine you will connect from, then run this again." >&2
+      exit 1
+    fi
+    root systemctl enable --now sshd || exit 1
+    echo "sshd is on. The firewall still drops ssh from the LAN; the tailnet reaches it (knowledge/security.md)." ;;
+  *) echo "usage: ergon ssh-enable [--status | --disable]" >&2; exit 2 ;;
+esac

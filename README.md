@@ -52,7 +52,8 @@ whether to log in automatically (default yes; `AUTOLOGIN=0` for the
 password greeter, now or later in `hosts/<host>/host.env`). It asks first
 whether to encrypt the disk (default yes; `ENCRYPT=0` installs btrfs with no
 LUKS, so the machine boots to the desktop with no prompt at all). Machines
-installed before this keep GRUB with `/boot` inside LUKS.
+installed before this can be moved to it (`ergon-boot-migrate run`, or `BOOT_MIGRATE=1`
+in host.env so provisioning does it), with GRUB kept in the boot menu.
 
 Installing somewhere with no usable network is a different problem: `pacstrap`
 has to reach a mirror regardless. Copy the repo onto the USB alongside the ISO

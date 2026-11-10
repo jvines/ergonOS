@@ -10,7 +10,10 @@ hl.env("HYPRCURSOR_SIZE", "24")
 -- Toolkits: Wayland first, XWayland only as a fallback.
 hl.env("GDK_BACKEND", "wayland,x11,*")
 hl.env("QT_QPA_PLATFORM", "wayland;xcb")
-hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
+-- qt6ct (ERGON-139): Qt6 applications take the palette from qt6ct/. One name only:
+-- Qt does not read a colon list here (measured with qt6ct 0.11), and a plugin it
+-- cannot find leaves the application unthemed, so Qt5 apps are the gap.
+hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")
 hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 hl.env("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
 hl.env("SDL_VIDEODRIVER", "wayland")

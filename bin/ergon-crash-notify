@@ -11,6 +11,8 @@
 # own _UID, notify. systemd-coredump logs every dump under the MESSAGE_ID below
 # with structured COREDUMP_* fields (systemd.journal-fields(7)).
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
 DUMPED=fc2e22bc6ee647b6b90729ab34a250b1     # "Process N (comm) of user U dumped core."
 WINDOW=${ERGON_CRASH_WINDOW:-60}            # seconds; one popup per program per window
@@ -41,7 +43,7 @@ journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID="$DUMPED" _UID="$
   # Its own app name, so mako (group-by=app-name) never folds it into a held,
   # critical memory-kill toast. The body claims no core: systemd-coredump logs
   # this MESSAGE_ID also when none was stored ("without generating a coredump").
-  notify-send -a ergon-crash-notify -u normal "$name crashed${sig}" \
-    "\`coredumpctl info ${pid:-$name}\` has the details." \
+  notify-send -a ergon-crash-notify -u normal "$(_t "%s crashed%s" "$name" "$sig")" \
+    "$(_t "\`coredumpctl info %s\` has the details." "${pid:-$name}")" \
     || printf 'could not deliver the notification for %s (no session bus?)\n' "$name" >&2
 done

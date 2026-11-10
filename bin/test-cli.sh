@@ -30,6 +30,7 @@
 # command's incidental `mkdir -p "$STATE"` (ergon-svc, ergon-offline) lands in
 # throwaway space rather than this machine's real ~/.local/state.
 set -uo pipefail
+export ERGON_LANG=en   # the assertions read English; i18n follows the session locale (ERGON-158)
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ERGON_BIN="$REPO/bin/ergon"

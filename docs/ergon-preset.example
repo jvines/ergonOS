@@ -1,0 +1,10 @@
+# Copy to the root of the install USB as `ergon-preset` (see lib/preset.sh).
+# Data, not shell. Every key is optional; the environment overrides this file
+# and the installer still asks, with these as the defaults.
+LOCALE=es_CL.UTF-8
+KEYMAP=la-latin1
+TIMEZONE=America/Santiago
+# Rank the mirrors for these countries (reflector). Unset: the ISO's own list.
+MIRROR_COUNTRY=CL
+# Time servers for systemd-timesyncd on the installed system. Unset: Arch's.
+NTP=cl.pool.ntp.org 0.cl.pool.ntp.org

@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# ergon:summary=Pick the DNS servers: network default (DHCP), Cloudflare, Quad9 or your own
+# ergon:group=hardware
+# ergon:args=[show | dhcp | cloudflare | quad9 | custom IP...]
+# ergon:help=native
+#
+#   ergon dns                  fuzzel pick
+#   ergon dns show             what each saved Wi-Fi/Ethernet profile uses
+#   ergon dns dhcp             back to what the network hands out (the default)
+#   ergon dns cloudflare       1.1.1.1 / 1.0.0.1 and their IPv6 pair
+#   ergon dns quad9            9.9.9.9 / 149.112.112.112 and their IPv6 pair
+#   ergon dns custom IP...     your own, IPv4 and/or IPv6
+#
+# ERGON-130. NetworkManager owns DNS here (it feeds systemd-resolved), so this sets
+# ipv4.dns / ipv6.dns and ignore-auto-dns on every saved Wi-Fi and Ethernet profile and
+# re-applies the connections that are up. `dhcp` clears exactly those fields, so it is
+# the way back. A hotel or conference network that hijacks DNS for its sign-in page
+# needs `ergon dns dhcp` first.
+set -uo pipefail
+
+profiles() { nmcli -t -f UUID,TYPE connection show 2>/dev/null | awk -F: '$2=="802-11-wireless"||$2=="802-3-ethernet"{print $1}'; }
+
+apply() {  # $1 v4 list (comma) $2 v6 list; both empty = DHCP
+  local u d ign=yes
+  [ -n "$1$2" ] || ign=no
+  while read -r u; do
+    [ -n "$u" ] || continue
+    nmcli connection modify "$u" ipv4.dns "$1" ipv4.ignore-auto-dns "$ign" ipv6.dns "$2" ipv6.ignore-auto-dns "$ign" || return 1
+  done < <(profiles)
+  while read -r d; do
+    [ -n "$d" ] && nmcli device reapply "$d" >/dev/null 2>&1
+  done < <(nmcli -t -f DEVICE,STATE device status 2>/dev/null | awk -F: '$2=="connected"{print $1}')
+  return 0
+}
+
+custom() {
+  local a v4="" v6=""
+  [ $# -gt 0 ] || { echo "ergon-dns: custom needs at least one address" >&2; return 2; }
+  for a in "$@"; do
+    case "$a" in
+      *:*) [[ $a =~ ^[0-9a-fA-F:]+$ ]] || { echo "ergon-dns: bad address $a" >&2; return 2; }; v6+="${v6:+,}$a" ;;
+      *) [[ $a =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "ergon-dns: bad address $a" >&2; return 2; }; v4+="${v4:+,}$a" ;;
+    esac
+  done
+  apply "$v4" "$v6"
+}
+
+show() {
+  local u dns
+  while read -r u; do
+    [ -n "$u" ] || continue
+    dns=$(nmcli -g ipv4.dns,ipv6.dns connection show "$u" | paste -sd' ')
+    printf '%s: %s\n' "$(nmcli -g connection.id connection show "$u")" "${dns// /}"
+  done < <(profiles) | sed 's/: *$/: DHCP/'
+}
+
+menu() {
+  command -v fuzzel >/dev/null 2>&1 || { show; return; }
+  local sel
+  sel=$(printf 'DHCP (network default)\nCloudflare\nQuad9\nCustom\n' | fuzzel --dmenu --prompt 'dns  ') || return 0
+  case "$sel" in
+    DHCP*) exec "$0" dhcp ;;
+    Cloudflare) exec "$0" cloudflare ;;
+    Quad9) exec "$0" quad9 ;;
+    Custom) sel=$(fuzzel --dmenu --lines 0 --prompt 'dns servers, space separated  ' </dev/null) || return 0
+            # shellcheck disable=SC2086
+            exec "$0" custom $sel ;;
+  esac
+}
+
+case "${1:-}" in
+  -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+  "") menu ;;
+  show) show ;;
+  dhcp) apply "" "" ;;
+  cloudflare) apply "1.1.1.1,1.0.0.1" "2606:4700:4700::1111,2606:4700:4700::1001" ;;
+  quad9) apply "9.9.9.9,149.112.112.112" "2620:fe::fe,2620:fe::9" ;;
+  custom) shift; custom "$@" ;;
+  *) echo "usage: ergon dns [show | dhcp | cloudflare | quad9 | custom IP...]" >&2; exit 2 ;;
+esac

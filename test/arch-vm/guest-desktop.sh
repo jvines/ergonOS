@@ -132,6 +132,12 @@ else
   bad "provision-arch.sh failed"
   tail -25 /tmp/prov.log | sed 's/^/     /'
 fi
+# ERGON-126: a GRUB machine printed both of these while provisioning exited 0.
+if _w=$(grep -F '!!' /tmp/prov.log | grep -E 'boot guard not installed|did not reach grub.cfg|boot entries not installed|boot migration'); then
+  bad "provisioning warned about the boot chain: $_w"
+else
+  ok "provisioning installed the boot entries and the boot guard without a warning"
+fi
 # Arch news published AFTER the install: informant was not there when the
 # ERGON_SKIP_NEWS gate ran, so its hook would abort every later pacman
 # transaction (aur --rebuild, ergon update). The operator reads it; so does this.
@@ -2343,6 +2349,12 @@ assert_flame() {
 }
 # Best-effort screenshot into the writable out share (grim cannot capture where
 # the VM has no dmabuf path, which is a note, never a failure).
+# Text evidence beside the screenshots: stdin to /out/NAME.txt.
+diag() {
+  mountpoint -q /out 2>/dev/null || { mkdir -p /out; mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; } || true
+  if mountpoint -q /out 2>/dev/null; then cat > "/out/$1.txt"; chmod 666 "/out/$1.txt" 2>/dev/null || true; else cat >/dev/null; fi
+}
+
 shot() {
   mountpoint -q /out 2>/dev/null || { mkdir -p /out; mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; } || true
   mountpoint -q /out 2>/dev/null || { note "no out share: no $1 screenshot"; return 0; }
@@ -3009,6 +3021,8 @@ _nb=$(hq binds -j | jq '[.[].description | select(IN("Toggle split", "Toggle gro
 [ "${_nb:-0}" = 7 ] && ok "the seven layout and monitor binds registered" \
                      || bad "only ${_nb:-0} of the seven layout and monitor binds registered"
 _dsp_src=$(hq monitors -j | jq -r '.[0].name' 2>/dev/null)
+_dsp_orig=$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | "\(.x)x\(.y) \(.scale) \(.transform)"')
+_dsp_gdk=$(su "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user show-environment" 2>/dev/null | sed -n 's/^GDK_SCALE=//p')
 _dsp_out=$(hq output create headless ERGON-PROJ)
 mirror_of() { hq monitors all -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .mirrorOf' 2>/dev/null; }
 mirrored() {  # mirrored yes|no, polled: a rule from eval lands on the next refresh
@@ -3036,10 +3050,40 @@ else
       || { bad "ERGON-PROJ still mirrors after extend"; sed 's/^/     /' /tmp/display.log; }
     usr "makoctl mode" 2>/dev/null | grep -qx do-not-disturb \
       && bad "  but leaves mako in do-not-disturb" || ok "  and lets notifications through again"
+    # ERGON-132: the projector beside the screen, not on it. Its x is the
+    # source's logical width, whatever scale the VM is at.
+    # From the screen, not the projector: with no eDP, extend works from the
+    # focused output, and creating ERGON-PROJ can leave the focus on it.
+    hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1; sleep 0.5
+    { echo "== before"; hq monitors all -j; } | diag display-extend-right
+    usr "ergon-display extend right" >> /tmp/display.log 2>&1
+    sleep 2
+    _dx=$(hq monitors -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .x')
+    _sw=$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | ((.width / .scale) | round)')
+    [ -n "$_dx" ] && [ "$_dx" = "$_sw" ] && ok "ergon display extend right puts the second output at x=$_sw" \
+      || { bad "extend right: ERGON-PROJ at x='$_dx', expected '$_sw'"; { echo '== before'; cat /out/display-extend-right.txt 2>/dev/null; echo '== after'; hq monitors all -j; echo '== display.log'; cat /tmp/display.log; } > /tmp/dx.txt; diag display-extend-right < /tmp/dx.txt; }
+    shot display-extend-right
+    usr "ergon-display scale cycle" >> /tmp/display.log 2>&1 \
+      && ok "ergon display scale cycle steps the focused output" || bad "scale cycle failed (see /tmp/display.log)"
+    usr "ergon-display rotate 90 $_dsp_src" >> /tmp/display.log 2>&1; sleep 1
+    [ "$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | .transform')" = 1 ] \
+      && ok "ergon display rotate 90 turns the output" || bad "rotate 90: transform is not 1 (see /tmp/display.log)"
+    usr "ergon-display rotate 0 $_dsp_src" >> /tmp/display.log 2>&1
+    [ "$(hq getoption xwayland:force_zero_scaling -j | jq -r '.bool // .int // empty')" = true ] \
+      && ok "xwayland:force_zero_scaling is on (X11 apps are not upscaled)" || bad "xwayland:force_zero_scaling is off"
   else
     bad "  but ERGON-PROJ does not mirror $_dsp_src (mirrorOf '$(mirror_of)')"
     sed 's/^/     /' /tmp/display.log
   fi
+  # Leave the source as found, whatever failed above: scale, transform and
+  # position, the GDK_SCALE the scale steps set, and the saved rules ergon
+  # display wrote (display.lua is replayed by every later reload, and a
+  # rotated or rescaled output cropped the ERGON-104 QR scan and the font shots).
+  read -r _o_pos _o_scale _o_tr <<<"$_dsp_orig"
+  hq "eval 'hl.monitor({ output = \"$_dsp_src\", position = \"$_o_pos\", scale = \"$_o_scale\", transform = $_o_tr })'" >/dev/null
+  rm -f "/run/user/1000/ergon/display.lua" "$(getent passwd "$U" | cut -d: -f6)/.local/state/ergon/display.lua"
+  if [ -n "$_dsp_gdk" ]; then hq "eval 'hl.env(\"GDK_SCALE\", \"$_dsp_gdk\")'" >/dev/null
+  else su "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user unset-environment GDK_SCALE" 2>/dev/null || true; fi
   hq output remove ERGON-PROJ >/dev/null
 fi
 
@@ -3140,7 +3184,8 @@ o_active() { hq activewindow -j 2>/dev/null | jq -r "$1" 2>/dev/null; }
 _ob=$(hq binds -j 2>/dev/null)
 for _d in "Copy (every app)" "Paste (every app)" "Cut (every app)" "Next window" "Previous window" \
           "Swap with left window" "Swap with right window" "Swap with window above" "Swap with window below" \
-          "Emoji picker (copy and type)"; do
+          "Emoji picker (copy and type)" "Select all (every app, not terminals)" \
+          "Notification: invoke default action (focus the sender)" "Notification: pick an action" "Notification history"; do
   jq -e --arg d "$_d" 'any(.[]; .description == $d)' <<<"$_ob" >/dev/null 2>&1 \
     && ok "bind registered: $_d" || bad "bind not registered: $_d"
 done
@@ -3228,6 +3273,23 @@ if o_win ergon-t1 && o_win ergon-t2; then
   else bad "SUPER+V: the client read '$(head -c 60 /tmp/o-keys.out 2>/dev/null | tr '\n' ' ')' (focused '$(o_active .class)')"; fi
   note "SUPER+X (cut) is not pressed: a terminal has nothing to cut, and no GTK/Qt app is in the image"
   pkill -u "$U" -f 'app-id=ergon-t[34]' 2>/dev/null; sleep 1
+
+  # --- ERGON-149: SUPER+A sends Ctrl+A to apps, nothing to a terminal -------
+  # ergon-float is a terminal class binds.lua knows; a ^A (readline: line start)
+  # reaching it would show as ^A in the cat -v sink.
+  rm -f /tmp/o-keys.out
+  o_win ergon-float /tmp/o-keys.sh; sleep 1
+  o_focus ergon-float || note "could not focus ergon-float"
+  o_key 125:1 30:1 30:0 125:0
+  o_key 28:1 28:0; sleep 1
+  if grep -q '\^A' /tmp/o-keys.out 2>/dev/null; then bad "SUPER+A sent Ctrl+A into a terminal"
+  else ok "SUPER+A leaves a terminal alone (no ^A reached it)"; fi
+  pkill -u "$U" -f 'app-id=ergon-float' 2>/dev/null; sleep 1
+
+  # --- ERGON-145: helper-window rules float -------------------------------
+  o_win org.keepassxc.KeePassXC && sleep 1
+  [ "$(o_field org.keepassxc.KeePassXC .floating)" = true ] && ok "window rule: KeePassXC opens floating" || bad "window rule: KeePassXC did not float"
+  pkill -u "$U" -f "app-id=org.keepassxc.KeePassXC" 2>/dev/null
 
   # --- ERGON-90: layout cycle ------------------------------------------------
   o_dsp 'hl.dsp.focus({ workspace = 7 })'
@@ -3454,6 +3516,18 @@ usr "pkill -x firefox" >/dev/null 2>&1; pkill -u "$U" -f ergon-stubbrowser 2>/de
 rm -f "$_stub_desktop" /tmp/stubbrowser.sh
 if [ -e "$_mime_bak.none" ]; then rm -f "$H/.config/mimeapps.list"; else cp -p "$_mime_bak" "$H/.config/mimeapps.list"; fi
 
+# --- ERGON-129/130/141/142: net login helpers on the guest ------------------
+if command -v nmcli >/dev/null 2>&1; then
+  usr "timeout 10 ergon-captive --check" >/tmp/cap129.out 2>&1 </dev/null
+  grep -qE '^(full|portal|limited|none|unknown)$' /tmp/cap129.out && ok "ERGON-129: ergon captive --check answers ($(cat /tmp/cap129.out))" || bad "ERGON-129: captive --check: $(head -c 200 /tmp/cap129.out)"
+  [ -f /etc/NetworkManager/conf.d/20-ergon-connectivity.conf ] && ok "ERGON-129: NetworkManager connectivity check provisioned" || bad "ERGON-129: no connectivity conf"
+  usr "timeout 10 ergon-dns show" >/dev/null 2>&1 </dev/null && ok "ERGON-130: ergon dns show runs on real nmcli" || bad "ERGON-130: ergon dns show failed"
+fi
+usr "timeout 10 ergon-ssh-enable --status" >/tmp/ssh142.out 2>&1 </dev/null
+grep -q 'authorized keys' /tmp/ssh142.out && ok "ERGON-142: ergon ssh-enable --status runs" || bad "ERGON-142: $(head -c 200 /tmp/ssh142.out)"
+systemctl is-enabled sshd >/dev/null 2>&1 && bad "ERGON-142: sshd is enabled on a fresh install" || ok "ERGON-142: sshd is not enabled on a fresh install"
+usr "timeout 10 ergon-git-identity --show" >/dev/null 2>&1 </dev/null && ok "ERGON-141: ergon git-identity --show runs" || bad "ERGON-141: git-identity --show failed"
+
 # --- ERGON-95: ergon-wifi on real nmcli output -------------------------------
 if command -v nmcli >/dev/null 2>&1; then
   _wl=$(usr "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list" 2>&1); _wl_rc=$?
@@ -3518,6 +3592,13 @@ if command -v yazi >/dev/null 2>&1; then
   else ok "yazi started with keymap.toml ([mgr]) and theme.toml and printed no config error"; fi
   note "yazi $(yazi --version 2>&1 | head -1)"
   usr "pkill -x yazi" >/dev/null 2>&1
+  # ERGON-122: a yazi SIGABRT showed in one preview VM with no backtrace kept.
+  # yazi builds with panic=abort, so any Rust panic lands here as SIGABRT; say
+  # what it was if it happens again (signal, panic message, top frames).
+  sleep 1
+  if coredumpctl --no-pager list yazi >/dev/null 2>&1; then
+    bad "ERGON-122: yazi dumped core: $(coredumpctl --no-pager info yazi 2>&1 | grep -E 'Signal:|Message:|#[0-5] ' | head -8 | tr '\n' '|' | head -c 900)"
+  else ok "ERGON-122: yazi left no coredump"; fi
 else note "ERGON-96: yazi is not installed in the guest"; fi
 
 # --- ERGON-94: ergon drive on the guest's real lsblk ------------------------
@@ -3534,6 +3615,11 @@ note "ERGON-94: the harness hot-adds no second disk, so a removable disk being l
 
 # --- ERGON-104: ergon-qr reads a real QR off the screen; ergon-webcam refuses with no camera
 echo "--- ERGON-104 ---"
+# Nothing from an earlier block may sit over or under the QR: a notification, an
+# open launcher, a screensaver, a stray imv. (imv-wayland: -x imv never matches.)
+usr "makoctl dismiss -a" >/dev/null 2>&1 </dev/null
+usr "ergon-screensaver stop" >/dev/null 2>&1 </dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null; sleep 1
 for _c in zbarimg ffmpeg qrencode grim; do
   command -v "$_c" >/dev/null && ok "$_c is installed" || bad "$_c is missing"
 done
@@ -3555,9 +3641,11 @@ if [ -n "$_qrwin" ]; then
   _clip=$(usr 'timeout 3 wl-paste -n' 2>/dev/null </dev/null)
   if [ "$_qr_rc" = 0 ] && [ "$_clip" = 'https://ergon.example/qr104' ]; then
     ok "ergon-qr decoded the QR shown on screen ($_qrwin) to the clipboard"
-  else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"; fi
+  else bad "ergon-qr rc $_qr_rc, clipboard '$(head -c 60 <<<"$_clip")', output: $(head -c 200 <<<"$_qr")"
+    note "ERGON-104: monitors $(usr 'hyprctl monitors all -j' 2>/dev/null </dev/null | jq -c '[.[] | {name,x,y,width,height,scale,transform,mirrorOf}]' 2>/dev/null); window $_qrwin; clients $(usr 'hyprctl clients -j' 2>/dev/null </dev/null | jq -c '[.[] | {class,monitor,at,size}]' 2>/dev/null)"
+    [ -d /out ] && timeout 20 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -g '$_qrwin' /out/qr104-region.png" >/dev/null 2>&1 </dev/null; fi
 else bad "harness: imv showed no window for the QR image"; fi
-pkill -u "$U" -x imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png /tmp/qr104.out
+pkill -u "$U" -f imv 2>/dev/null; rm -rf /tmp/qr104bin /tmp/qr104.png /tmp/qr104.out
 if ls /sys/class/video4linux/video* >/dev/null 2>&1; then
   note "ERGON-104: the guest has a V4L2 node, so the no-camera refusal is not exercised"
 else
@@ -3570,7 +3658,7 @@ note "ERGON-104: a real webcam recording and the Open button on mako are unprove
 
 # --- ERGON-105..116: locale, ssh-agent, remind, zoom, width, db, speedtest, text size, keymap
 echo "--- ERGON-105..116 ---"
-pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null
 # 106: the session has an agent socket, systemd owns it, and a key round-trips.
 _henv106=$(tr '\0' '\n' < "/proc/$(pgrep -x Hyprland | head -1)/environ" 2>/dev/null)
 grep -qx 'SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket' <<<"$_henv106" && ok "ERGON-106: the compositor carries SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket from the shipped uwsm drop-in" \
@@ -3629,6 +3717,70 @@ if [[ "$_z0" =~ ^[0-9.]+$ ]]; then
   else note "ERGON-108: no ydotool socket; the zoom binds are unpressed"; fi
   usr "ergon-zoom reset" >/dev/null 2>&1 </dev/null
 else bad "ERGON-108: zoom_factor is not numeric: '$_z0' ($(hq 'getoption cursor:zoom_factor -j' | head -c 150))"; fi
+
+# 109/150/151/155/140: ergon toggle, through the real compositor.
+# getoption's JSON shape depends on the type: gaps are .css ("0 0 0 0"), rounding
+# is .int, a bool may be .int or .bool. Normalise to a number; true/false -> 1/0.
+_opt() { hq "getoption $1 -j" | jq -r '[.int, .float, .bool, .value, (.css // null | if . then split(" ")[0] else null end)] | map(select(. != null)) | .[0] | if . == null then empty elif . == true then 1 elif . == false then 0 else . end' 2>/dev/null; }
+# `usr "a; b"` puts the session environment on the FIRST command only, so each
+# toggle gets its own call.
+_tog() { local t; for t in "$@"; do usr "ergon-toggle $t" >/dev/null 2>&1 </dev/null; done; }
+_tog "gaps off" "rounding off" "animations off" "opacity off"
+_g=$(_opt general:gaps_in); _r=$(_opt decoration:rounding); _a=$(_opt animations:enabled)
+[ "$_g" = 0 ] && [ "$_r" = 0 ] && [ "$_a" = 0 ] \
+  && ok "ERGON-109/155: toggles off reach the compositor (gaps_in $_g, rounding $_r, animations $_a)" \
+  || bad "ERGON-109/155: gaps_in '$_g' rounding '$_r' animations '$_a', want 0 0 0 ($(hq 'getoption general:gaps_in -j' | head -c 120))"
+hq reload >/dev/null 2>&1; sleep 2
+[ "$(_opt general:gaps_in)" = 0 ] && [ "$(_opt decoration:rounding)" = 0 ] \
+  && ok "ERGON-109: the choice survives a config reload" || bad "ERGON-109: a reload undid the toggles (gaps_in '$(_opt general:gaps_in)')"
+_tog "gaps on" "rounding on" "animations on" "opacity on"
+[ "$(_opt general:gaps_in)" = 4 ] && [ "$(_opt decoration:rounding)" = 4 ] \
+  && ok "ERGON-109: toggled back on, the themed look returns" || bad "ERGON-109: gaps_in '$(_opt general:gaps_in)' rounding '$(_opt decoration:rounding)' after on"
+_tog "widescreen on"
+hq "getoption layout:single_window_aspect_ratio -j" | grep -q '16' \
+  && ok "ERGON-150: widescreen sets the single-window aspect ratio" || bad "ERGON-150: aspect ratio not set: $(hq 'getoption layout:single_window_aspect_ratio -j' | head -c 150)"
+_tog "widescreen off"
+if [ -S "$YSOCK" ]; then
+  # SUPER+ALT+B: evdev LEFTMETA 125, LEFTALT 56, B 48.
+  _wb() { pgrep -u "$(id -u "$U")" -x waybar >/dev/null; }
+  _wb && { o_key 125:1 56:1 48:1 48:0 56:0 125:0; o_until 6 bash -c '! pgrep -x waybar >/dev/null' \
+    && ok "ERGON-151: SUPER+ALT+B hides the bar" || bad "ERGON-151: waybar still running after SUPER+ALT+B"
+    o_key 125:1 56:1 48:1 48:0 56:0 125:0; o_until 8 _wb \
+    && ok "ERGON-151: SUPER+ALT+B brings the bar back" || bad "ERGON-151: the bar did not come back"; } \
+    || note "ERGON-151: no waybar running; the bar key is unpressed"
+fi
+# 140: the screensaver, as a picture for Jose to approve.
+usr "ergon-screensaver start" >/dev/null 2>&1 </dev/null; sleep 3
+hq clients -j | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \
+  && ok "ERGON-140: the screensaver window is open" || bad "ERGON-140: no ergon-screensaver window"
+if mountpoint -q /out 2>/dev/null; then
+  _mon=$(hq monitors -j 2>/dev/null | jq -r '.[0].name // empty')
+  timeout 30 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -o '$_mon' /out/screensaver.png" >/dev/null 2>&1 \
+    && chmod 666 /out/screensaver.png 2>/dev/null \
+    || note "ERGON-140: grim cannot capture in this VM (no dmabuf); no screensaver.png"
+fi
+usr "ergon-screensaver stop" >/dev/null 2>&1 </dev/null; sleep 1
+hq clients -j | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \
+  && bad "ERGON-140: the screensaver window survived stop" || ok "ERGON-140: stop closes the screensaver"
+# 93/143/111/138: the new binds registered, the clock runs, toggling a device the VM
+# does not have fails cleanly, and restart refuses an unknown subsystem.
+for _d in "Touchpad on/off" "Touchscreen on/off" "Time, date, battery and world clock"; do
+  hq binds -j | jq -e --arg d "$_d" 'any(.[]; .description == $d)' >/dev/null 2>&1 \
+    && ok "ERGON-93/143/111: bind '$_d' is registered" || bad "ERGON-93/143/111: no bind described '$_d'"
+done
+usr "ergon clock" 2>&1 </dev/null | grep -q 'UTC' && ok "ERGON-111: ergon clock prints the time" || bad "ERGON-111: ergon clock printed no UTC line"
+usr "ergon toggle-input touchscreen off; echo rc=\$?" 2>&1 </dev/null | grep -qE 'rc=[01]' && ok "ERGON-143: toggle-input exits cleanly with or without a touchscreen" || bad "ERGON-143: toggle-input crashed"
+usr "ergon restart nonsense; echo rc=\$?" 2>&1 </dev/null | grep -q 'rc=2' && ok "ERGON-138: ergon restart refuses an unknown subsystem" || bad "ERGON-138: ergon restart nonsense did not exit 2"
+
+# 93/143/111/138: the new binds registered, the clock runs, toggling a device the VM
+# does not have fails cleanly, and restart refuses an unknown subsystem.
+for _d in "Touchpad on/off" "Touchscreen on/off" "Time, date, battery and world clock"; do
+  hq binds -j | jq -e --arg d "$_d" 'any(.[]; .description == $d)' >/dev/null 2>&1 \
+    && ok "ERGON-93/143/111: bind '$_d' is registered" || bad "ERGON-93/143/111: no bind described '$_d'"
+done
+usr "ergon clock" 2>&1 </dev/null | grep -q 'UTC' && ok "ERGON-111: ergon clock prints the time" || bad "ERGON-111: ergon clock printed no UTC line"
+usr "ergon toggle-input touchscreen off; echo rc=\$?" 2>&1 </dev/null | grep -qE 'rc=[01]' && ok "ERGON-143: toggle-input exits cleanly with or without a touchscreen" || bad "ERGON-143: toggle-input crashed"
+usr "ergon restart nonsense; echo rc=\$?" 2>&1 </dev/null | grep -q 'rc=2' && ok "ERGON-138: ergon restart refuses an unknown subsystem" || bad "ERGON-138: ergon restart nonsense did not exit 2"
 
 # 113: ergon-window width save and restore through the binds.
 if [ -S "$YSOCK" ]; then
@@ -3708,6 +3860,27 @@ usr "timeout -k 5 90 ergon text-size normal" >/tmp/ts116.out 2>&1 </dev/null
 [ "$(_gen_sz)" = "11,11,12,13" ] && ok "ERGON-116: text-size normal restored 11,11,12,13" || bad "ERGON-116: after normal the sizes are $(_gen_sz)"
 rm -f /tmp/ts116.out
 
+# 131: font family. A non-default installed monospace family, then a palette
+# switch, and the generated configs must still carry it. The screenshot shows
+# the bar and launcher in that family after the switch.
+_fam=$(usr "ergon font --list 2>/dev/null </dev/null" | grep -v '(current)' | head -1)
+if [ -n "$_fam" ]; then
+  usr "timeout -k 5 90 ergon font mono '$_fam'" >/tmp/ft131.out 2>&1 </dev/null
+  grep -qxF "font=$_fam:size=11" "$G/foot/foot.ini" 2>/dev/null && ok "ERGON-131: ergon font mono '$_fam' reached foot.ini" || bad "ERGON-131: foot.ini lacks '$_fam': $(tail -c 150 /tmp/ft131.out)"
+  grep -qF "font-family: \"$_fam\"," "$G/waybar/style.css" 2>/dev/null && ok "ERGON-131: and the waybar stylesheet" || bad "ERGON-131: waybar/style.css lacks '$_fam'"
+  _pal=$(usr "ergon theme --list 2>/dev/null | head -20" </dev/null | tr -s ' ' '\n' | grep -E '^(gruvbox|nord|cool)$' | head -1)
+  [ -n "$_pal" ] && usr "timeout -k 5 120 ergon theme $_pal" >/dev/null 2>&1 </dev/null
+  grep -qxF "font=$_fam:size=11" "$G/foot/foot.ini" 2>/dev/null && ok "ERGON-131: the font survived a palette switch" || bad "ERGON-131: foot.ini lost '$_fam' after theme ${_pal:-?}"
+  # The switch restarts waybar: wait for it, and open the launcher, so the shot
+  # shows the bar and fuzzel in the chosen family.
+  for _i in $(seq 20); do pgrep -u "$U" -x waybar >/dev/null && break; sleep 0.5; done; sleep 3
+  usr "makoctl dismiss -a" >/dev/null 2>&1; usr fuzzel >/dev/null 2>&1 &
+  sleep 2; shot font-after-palette-switch; pkill -u "$U" -x fuzzel 2>/dev/null || true
+  usr "timeout -k 5 90 ergon font mono default" >/dev/null 2>&1 </dev/null
+  grep -qxF "font=JetBrainsMono Nerd Font:size=11" "$G/foot/foot.ini" 2>/dev/null && ok "ERGON-131: ergon font mono default restored the shipped family" || bad "ERGON-131: default family not restored"
+else note "ERGON-131: no second monospace family installed in the guest; font picker unproven here"; fi
+rm -f /tmp/ft131.out
+
 # 105: a locale with a decimal comma must not change doctor's package count.
 if locale -a 2>/dev/null | grep -qi '^es_CL\.utf-\?8$'; then
   _r_c=$(doctor_row arch-date su - "$U" -c "LC_ALL=C XDG_RUNTIME_DIR=/run/user/1000 timeout -k 2 120 $G/bin/ergon-doctor --json </dev/null")
@@ -3726,7 +3899,7 @@ else bad "ERGON-112: /etc/vconsole.conf KEYMAP='$_vk' is empty or not Latin: $(h
 
 # --- ERGON-118, 106b, 67, 36, 55: web apps + LocalSend, ssh-key block order, marimo scaffold, GPU report, welcome notebook
 echo "--- ERGON-118, 106b, 67, 36, 55 ---"
-pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x imv 2>/dev/null
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f imv 2>/dev/null
 _A="$H/.local/share/applications"
 _net() { timeout -k 2 10 curl -sS -o /dev/null -m 6 https://pypi.org/simple/ >/dev/null 2>&1 </dev/null; }
 _close_class() {  # _close_class <class>: closes every client of that class
@@ -3784,11 +3957,16 @@ if [ -n "$_ycls" ] && [ -n "$_yurl" ] && command -v chromium >/dev/null; then
     # Traced, into its own file: the first Chromium still writes to wa118l.out.
     usr "timeout -k 3 30 bash -x \$(command -v ergon-webapp) launch $_yurl" >/tmp/wa118l2.out 2>&1 </dev/null; _l2=$?
     _act0=$(o_active .class)
-    sleep 3
+    # Focus lands asynchronously (the dispatch returns before the compositor
+    # has moved it, and Chromium may re-raise itself after): poll for the
+    # condition up to 10s instead of sampling once after a fixed sleep
+    # (ERGON-120). The assertion is unchanged: that class active, one client.
+    _act_is_y() { [ "$(o_active .class)" = "$_ycls" ]; }
+    o_until 10 _act_is_y; sleep 1
     _n2=$(hq clients -j | jq --arg c "$_ycls" '[.[] | select(.class == $c)] | length')
     _act=$(o_active .class)
     if [ "$_n1" = 1 ] && [ "$_n2" = 1 ] && [ "$_act" = "$_ycls" ]; then ok "ERGON-118: a second launch of the same URL focused the window (still 1 client, active class $_act, rc $_l2)"
-    else bad "ERGON-118: second launch: clients $_n1 -> $_n2, active '$_act0' at once and '$_act' 3s later, rc $_l2; trace: $(grep -vE '^(libva|\[)' /tmp/wa118l2.out | tr '\n' '|' | tail -c 800)"; fi
+    else bad "ERGON-118: second launch: clients $_n1 -> $_n2, active '$_act0' at once and '$_act' after waiting up to 10s, rc $_l2; trace: $(grep -vE '^(libva|\[)' /tmp/wa118l2.out | tr '\n' '|' | tail -c 800)"; fi
     if [ "$_act" != "$_ycls" ]; then
       # Diagnostics: trace the launcher's lookup, then try the focus dispatch by hand.
       _yaddr=$(hq clients -j | jq -r --arg c "$_ycls" '.[] | select(.class == $c) | .address' | head -1)
@@ -3832,7 +4010,7 @@ if [ "$_l53ok" = 1 ] && [ -z "$_l53u" ]; then
 else bad "ERGON-118: nft 53317 rules: '$(head -c 300 <<<"$_l53")'"; fi
 if pacman -Q localsend-bin >/dev/null 2>&1; then
   ok "ERGON-118: localsend-bin is installed ($(pacman -Q localsend-bin))"
-  pkill -u "$U" -x imv 2>/dev/null
+  pkill -u "$U" -f imv 2>/dev/null
   # the package's own launcher says what to run
   _lsx=$(grep -h '^Exec=' /usr/share/applications/*ocalsend*.desktop /usr/share/applications/*ocalSend*.desktop 2>/dev/null | head -1)
   _lsx=${_lsx#Exec=}; _lsx=${_lsx%% *}
@@ -4123,6 +4301,7 @@ esac
 # (5) the menu offers it
 usr "ergon-menu --dump" >/tmp/e99.out 2>&1 </dev/null
 grep -q 'Channel' /tmp/e99.out && ok "ergon-menu --dump lists Channel" || bad "ergon-menu --dump has no Channel entry"
+grep -q "Extend right" /tmp/e99.out && ok "ergon-menu --dump lists the display entries" || bad "ergon-menu --dump has no Extend right entry"
 
 # restore: the tested channel, host.env as found
 if [ -f "$_e99_bak" ]; then cp -p "$_e99_bak" "$_e99_hostenv"; else rm -f "$_e99_hostenv"; rmdir "$(dirname "$_e99_hostenv")" 2>/dev/null; fi
@@ -4168,6 +4347,107 @@ else
   note "ERGON-70: no user manager for $U to probe"
 fi
 
+
+# --- ERGON-135/139/152: realtime audio, Qt6 palette, the share picker --------
+echo "--- session extras: rtkit, qt6ct, screen-share picker ---"
+# ERGON-135: rtkit is installed, answers on the system bus, polkit grants it to an active session, and PipeWire ended
+# up with realtime or raised priority on at least one thread.
+pacman -Q rtkit >/dev/null 2>&1 && ok "rtkit is installed" || bad "rtkit is not installed: PipeWire cannot get realtime priority"
+_rtp=$(busctl --system get-property org.freedesktop.RealtimeKit1 /org/freedesktop/RealtimeKit1 org.freedesktop.RealtimeKit1 MaxRealtimePriority 2>&1)
+case "$_rtp" in "i "[1-9]*) ok "  and RealtimeKit1 answers on the system bus ($_rtp)" ;; *) bad "  RealtimeKit1 does not answer: $_rtp" ;; esac
+# rtkit's polkit actions default to allow_any=no, allow_active=yes: a pipewire in
+# no active logind session is refused by design. A real login (greetd -> uwsm) is
+# one; this harness's linger-started user manager is not (no seat, no Display
+# session). So the policy is asserted from polkit, and the threads are judged
+# only where the user has the graphical session a login would have.
+for _a in acquire-real-time acquire-high-priority; do
+  _pk=$(pkaction --action-id org.freedesktop.RealtimeKit1.$_a --verbose 2>/dev/null | sed -n 's/^[[:space:]]*implicit active:[[:space:]]*//p' | tr -d '[:space:]')
+  case "$_pk" in yes|auth_*_keep) ok "  polkit lets an active session $_a ($_pk)" ;; *) bad "  polkit's implicit active for RealtimeKit1.$_a is '$_pk': PipeWire cannot get priority even from a real login" ;; esac
+done
+_pwp=$(pgrep -u "$U" -x pipewire | head -1)
+_pwt=$([ -n "$_pwp" ] && ps -L -o cls=,rtprio=,ni= -p "$_pwp" | sort -u | tr -s ' ' | tr '\n' ';')
+if [ -z "$_pwp" ]; then
+  note "ERGON-135: pipewire is not running here; the priority of its threads was not read"
+elif ps -L -o cls=,ni= -p "$_pwp" | awk '$1 ~ /^(FF|RR)$/ || $2 < 0 { f=1 } END { exit !f }'; then
+  ok "  pipewire has a thread at realtime class or negative nice: $_pwt"
+elif [ -n "$(loginctl show-user "$U" -p Display --value 2>/dev/null)" ]; then
+  # PipeWire asks rtkit once, at start. Linger starts it at boot, before this
+  # harness's session exists; a real login starts it inside the session. So
+  # restart it here, where a login would have started it, and judge that one.
+  usr "systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service" >/dev/null 2>&1; sleep 3
+  _pwp=$(pgrep -u "$U" -x pipewire | head -1)
+  _pwt=$([ -n "$_pwp" ] && ps -L -o cls=,rtprio=,ni= -p "$_pwp" | sort -u | tr -s ' ' | tr '\n' ';')
+  if [ -n "$_pwp" ] && ps -L -o cls=,ni= -p "$_pwp" | awk '$1 ~ /^(FF|RR)$/ || $2 < 0 { f=1 } END { exit !f }'; then
+    ok "  pipewire restarted inside the session has a realtime or negative-nice thread: $_pwt"
+  else
+    # polkit grants rtkit to an ACTIVE session only. Judge it where the
+    # harness's session is one; elsewhere record why, with PipeWire's own words.
+    _sid=$(loginctl show-user "$U" -p Display --value 2>/dev/null)
+    _act=$(loginctl show-session "$_sid" -p Active --value 2>/dev/null)
+    # A seat too: polkit's allow_active means an active session ON A SEAT. The
+    # harness logs in on the serial console (Type=tty, ttyS0, no seat); greetd
+    # logs in on seat0. Run 2746 showed rtkit asked and refusing the seatless one.
+    [ -n "$(loginctl show-session "$_sid" -p Seat --value 2>/dev/null)" ] || _act="no seat"
+    _why=$(usr "journalctl --user -b --no-pager -q -u pipewire.service" 2>/dev/null | grep -iE 'rtkit|realtime|sched|priority' | tail -3 | tr '\n' ' ')
+    if [ "$_act" = yes ]; then
+      bad "  no pipewire thread has realtime priority in active session $_sid, restarted inside it: $_pwt (pipewire: ${_why:-nothing logged})"
+      { echo "== session"; loginctl show-session "$_sid"; echo "== threads"; ps -L -o tid,cls,rtprio,ni,comm -p "$_pwp"
+        echo "== limits"; cat /proc/"$_pwp"/limits; echo "== pipewire log"; journalctl -b --no-pager -q _COMM=pipewire | tail -30
+        echo "== rtkit log"; journalctl -b --no-pager -q -u rtkit-daemon | tail -30
+        echo "== module-rt config"; grep -rn -A8 'module-rt' /usr/share/pipewire/pipewire.conf 2>/dev/null | head -30
+        echo "== polkit"; journalctl -b --no-pager -q -u polkit | tail -10; } 2>&1 | diag rtkit-135
+    else
+      note "ERGON-135: session $_sid is not an active seat session (${_act:-?}), so polkit refuses rtkit by design; threads $_pwt; pipewire: ${_why:-nothing logged}"
+    fi
+  fi
+else
+  note "ERGON-135: no graphical logind session for $U in this harness, so polkit treats pipewire as inactive and rtkit refuses it by design; threads: $_pwt"
+fi
+
+# ERGON-139: the Qt6 platform theme is rendered from the palette and reaches
+# the session; a Qt6 app is on screen for the gate's screenshot.
+_qs="$H/.config/qt6ct/colors/ergon.conf"
+_n=$(awk -F= '/^(active|disabled|inactive)_colors=/ { n = split($2, a, ","); if (n != 21) bad_n = 1; c++ } END { print (c == 3 && !bad_n) ? "ok" : "bad" }' "$_qs" 2>/dev/null)
+[ "$_n" = ok ] && ok "qt6ct colour scheme rendered: three states of 21 colours" || bad "qt6ct colour scheme missing or malformed: $_qs"
+_win=$(awk -F'[=,]' '/^active_colors=/ { gsub(/ /, "", $12); print tolower(substr($12, 4)) }' "$_qs" 2>/dev/null)
+_gtk=$(sed -n 's/^@define-color window_bg_color #\([0-9A-Fa-f]*\);.*/\1/p' "$H/ergonOS/gtk/gtk.css" 2>/dev/null | head -1 | tr 'A-F' 'a-f')
+[ -n "$_win" ] && [ "$_win" = "$_gtk" ] && ok "  its Window colour is GTK's window_bg_color ($_win)" || bad "  Window colour '$_win' is not the palette's '$_gtk'"
+grep -qx "color_scheme_path=$_qs" "$H/.config/qt6ct/qt6ct.conf" 2>/dev/null && ok "  qt6ct.conf points at it" || bad "  qt6ct.conf does not point at $_qs"
+_wb=$(pgrep -u "$U" -x waybar | head -1)
+if [ -n "$_wb" ] && tr '\0' '\n' </proc/"$_wb"/environ | grep -qx 'QT_QPA_PLATFORMTHEME=qt6ct'; then ok "  and a session client sees QT_QPA_PLATFORMTHEME=qt6ct"
+else bad "  QT_QPA_PLATFORMTHEME=qt6ct did not reach the session (waybar pid '${_wb:-none}')"; fi
+# Through the compositor, so it gets the session environment (QT_QPA_PLATFORMTHEME);
+# a `usr` child does not, and qt6ct then says it is not configured.
+usr "makoctl dismiss -a" >/dev/null 2>&1
+hq "dispatch 'hl.dsp.exec_cmd(\"qt6ct\")'" >/dev/null 2>&1
+sleep 5
+if pgrep -u "$U" -x qt6ct >/dev/null; then ok "  qt6ct (a Qt6 app) opens"; shot qt6-themed; else bad "  qt6ct did not stay open"; fi
+pkill -u "$U" -x qt6ct 2>/dev/null
+
+# ERGON-152: the screen-share picker. xdg-desktop-portal-hyprland ships
+# hyprland-share-picker (Qt6, so the palette above themes it) and the portal
+# offers monitors and windows as sources.
+command -v hyprland-share-picker >/dev/null && ok "hyprland-share-picker is installed" || bad "no hyprland-share-picker: screen sharing has no picker"
+ldd "$(command -v hyprland-share-picker)" 2>/dev/null | grep -q 'not found' && bad "  hyprland-share-picker has unresolved libraries" || ok "  and links"
+_src=$(usr "busctl --user get-property org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop org.freedesktop.portal.ScreenCast AvailableSourceTypes" 2>&1 </dev/null)
+case "$_src" in
+  "u "*) [ $(( ${_src#u } & 3 )) = 3 ] && ok "  the ScreenCast portal offers monitors and windows ($_src)" || bad "  the ScreenCast portal offers only: $_src" ;;
+  *) note "ERGON-152: ScreenCast portal not answering in this VM: $(head -c 150 <<<"$_src")" ;;
+esac
+# The picker as xdph starts it: windows arrive in XDPH_WINDOW_SHARING_LIST as
+# handle[HC>]class[HT>]title[HE>]address[HA>]; outputs it reads from Qt itself.
+_wl=$(hq clients -j | jq -r '.[] | "\(.pid)[HC>]\(.class)[HT>]\(.title)[HE>]\(.address)[HA>]"' | tr -d "\n" | tr -d "\"'\`\$\\\\")
+usr "XDPH_WINDOW_SHARING_LIST='$_wl' hyprland-share-picker" >/tmp/picker.out 2>&1 </dev/null &
+sleep 5
+# The picker is Hyprtoolkit (OpenGL ES only, no CPU path; xdph 1.5 is not Qt) and
+# asserts on EGL_ANDROID_native_fence_sync, which mesa's kms_swrast lacks. The VM
+# has virtio-gpu without 3D, so there it aborts: no env var changes that. Where the
+# GPU is real it must stay open.
+if pgrep -u "$U" -x hyprland-share-picker >/dev/null; then ok "  the picker opens with ${_wl:+windows and }outputs"; shot share-picker
+elif grep -q 'swrast' /tmp/picker.out || usr "ergon-gpu --software" >/dev/null 2>&1 </dev/null; then
+  note "ERGON-152: the picker needs a GPU EGL stack and this VM renders in software ($(grep -m1 -o 'falling back to [a-z_]*' /tmp/picker.out)); not exercised here"
+else bad "  the picker did not stay open: $(head -c 200 /tmp/picker.out)"; fi
+pkill -u "$U" -x hyprland-share-picker 2>/dev/null
 # --- the lock screen (ERGON-127) -------------------------------------------
 # Lock for real, look, unlock. hyprlock draws the blurred wallpaper image; the
 # assertion is that it started and stayed up on that config. SIGUSR1 is its
@@ -4190,6 +4470,19 @@ fi
 grep -qiE "cannot load|failed to load|no such file" /tmp/hyprlock.log 2>/dev/null \
   && bad "  hyprlock could not load its background: $(grep -iE 'cannot load|failed to load|no such file' /tmp/hyprlock.log | head -1)" \
   || ok "  and reported no failure loading the image"
+
+# --- ERGON-147: Vaultwarden client, Tailscale login, menu entries -------------
+usr "ergon-menu --dump" >/tmp/e147.out 2>&1 </dev/null
+grep -q "Vault" /tmp/e147.out && grep -q "Tailscale" /tmp/e147.out \
+  && ok "ergon-menu --dump lists Vault and Tailscale" || bad "ergon-menu --dump lacks Vault or Tailscale"
+for _p in bitwarden rbw; do
+  pacman -Q "$_p" >/dev/null 2>&1 && ok "$_p is installed" || bad "$_p is not installed"
+done
+usr "ergon-vault url </dev/null; ergon-tailscale --help >/dev/null" >/dev/null 2>&1 \
+  && ok "ergon-vault url and ergon-tailscale --help run" || bad "ergon-vault or ergon-tailscale does not run"
+_pol=/etc/firefox/policies/policies.json
+jq -e ".policies.ExtensionSettings[\"{446900e4-71c2-419f-a6a7-df9c091e268b}\"]" "$_pol" >/dev/null 2>&1 \
+  && ok "Firefox policy installs the Bitwarden extension" || bad "no Bitwarden extension in $_pol"
 
 [ "$F" -gt 0 ] && dump_log
 finish

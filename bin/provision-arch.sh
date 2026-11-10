@@ -195,6 +195,12 @@ PACCACHE_ARGS='-rk3'
 EOF
 ok "snapshot + cache timers"
 
+# ERGON-125: a GRUB install moves to systemd-boot and UKIs, keeping GRUB as a
+# menu entry and in the firmware's boot order. Before the two steps below, so
+# they set up the layout it ends in. A machine it cannot move is told why and
+# keeps GRUB, as does BOOT_MIGRATE=0 in host.env.
+"$ERGON/bin/ergon-boot-migrate" run --auto || warn "boot migration stopped (see above); this machine still boots GRUB"
+
 # Snapshots in the boot menu. GRUB installs: grub-btrfsd regenerates its
 # submenu. systemd-boot installs (ERGON-123): ergon-boot-entries copies each
 # recent snapshot's kernel to the ESP and writes its entry, from a path unit
@@ -222,6 +228,8 @@ esac
 # The boot splash and passphrase prompt, in the palette the desktop uses
 # (ERGON-123). The initramfs is rebuilt once, below, with the floppy blacklist.
 "$ERGON/bin/ergon-plymouth" install --no-rebuild || warn "boot splash not installed (see above)"
+# ERGON-124: opt-in. Without keys from `ergon secureboot enable` this does nothing.
+"$ERGON/bin/ergon-secureboot" sync || warn "Secure Boot: boot files not signed (ergon secureboot status)"
 
 # Snapshots live on the disk they protect. The backup timers go in now; they do
 # nothing until `ergon backup init REPO` says where, and ergon doctor warns
@@ -623,6 +631,16 @@ for u in NetworkManager docker bluetooth fwupd power-profiles-daemon avahi-daemo
     sudo systemctl enable --now "$u" >/dev/null 2>&1 && ok "$u" || skip "$u (not installed)"
   fi
 done
+# ERGON-129. NetworkManager only reports "portal" if it is told what to fetch.
+# ergon captive (autostart) reacts to that state. The check is a plain-HTTP fetch of
+# ping.archlinux.org: on connect and every 300 s, see knowledge/security.md.
+if _changed /etc/NetworkManager/conf.d/20-ergon-connectivity.conf <<'NMC'
+[connectivity]
+uri=http://ping.archlinux.org/nm-check.txt
+response=NetworkManager is online
+interval=300
+NMC
+then sudo nmcli general reload conf >/dev/null 2>&1; ok "NetworkManager connectivity check (captive portals)"; else skip "NetworkManager connectivity check already set"; fi
 # Group membership, NOT the daemon, is gated on DOCKER_GROUP (see "docker
 # group" below, after hosts/$HOST/host.env exists to read it from) -- the
 # daemon enables unconditionally because sudo docker needs it running either
@@ -758,8 +776,8 @@ say "desktop session"
 # Where the answer comes from, first that answers: AUTOLOGIN in host.env, then
 # ERGON_AUTOLOGIN, then what arch-bootstrap.sh was told (/etc/ergon/install.env).
 # Without any of them it is on only for an encrypted root on the systemd-boot
-# layout: a GRUB install keeps the greeter it has, and an unencrypted disk
-# never logs anyone in unasked.
+# layout: a GRUB install keeps the greeter it has (after ergon-boot-migrate
+# too), and an unencrypted disk never logs anyone in unasked.
 _host=$(hostname -s 2>/dev/null || cat /etc/hostname)
 _autologin() {
   local v
@@ -767,7 +785,7 @@ _autologin() {
   [ -n "$v" ] || v=${ERGON_AUTOLOGIN:-}
   [ -n "$v" ] || v=$(sed -n 's/^AUTOLOGIN=\([01]\).*/\1/p' /etc/ergon/install.env 2>/dev/null | tail -1)
   if [ -z "$v" ]; then
-    if [ "$(ergon_boot_layout)" = systemd-boot ] && [ -e /dev/mapper/cryptroot ]; then v=1; else v=0; fi
+    if [ "$(ergon_boot_layout)" = systemd-boot ] && [ -e /dev/mapper/cryptroot ] && [ ! -f /var/lib/ergon/boot-migrated ]; then v=1; else v=0; fi
   fi
   [ "$v" = 1 ] && echo 1 || echo 0
 }
@@ -1096,6 +1114,13 @@ if command -v tailscale >/dev/null 2>&1 \
       || warn "could not set the tailscale operator; run: sudo tailscale set --operator=$ME"
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# ERGON-147: the Bitwarden extension, installed in Firefox by policy (and given
+# VAULT_URL as its server when host.env sets one).
+say "vault"
+"$ERGON/bin/ergon-vault" firefox \
+  && ok "Bitwarden extension policy for Firefox" || warn "could not write the Firefox policy"
 
 # ---------------------------------------------------------------------------
 say "bundles"

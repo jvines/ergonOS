@@ -40,13 +40,17 @@ ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pw
 . "$ERGON/lib/bootloader.sh"
 COUNTER_SRC="$ERGON/grub/09_ergon_boot_counter"
 FALLBACK_SRC="$ERGON/grub/99_ergon_boot_fallback"
-COUNTER=/etc/grub.d/09_ergon_boot_counter
-FALLBACK=/etc/grub.d/99_ergon_boot_fallback
+R="${ERGON_BOOTROOT:-}"   # a fixture root, for bin/test-boot-entries.sh
+COUNTER=$R/etc/grub.d/09_ergon_boot_counter
+FALLBACK=$R/etc/grub.d/99_ergon_boot_fallback
+# Root-only: grub-mkconfig writes it under umask 077. Read it with sudo, or the
+# check below fails for the user provisioning runs as (ERGON-126).
+GRUBCFG=$R/boot/grub/grub.cfg
 # The one-file version put the fallback entry BEFORE the normal ones, where it
 # became entry 0 and GRUB booted it every time. Left behind, it would still do
 # that, so it is removed on every install.
-OLD_SNIPPET=/etc/grub.d/09_ergon_boot_guard
-UNIT=/etc/systemd/system/ergon-boot-ok.service
+OLD_SNIPPET=$R/etc/grub.d/09_ergon_boot_guard
+UNIT=$R/etc/systemd/system/ergon-boot-ok.service
 TRIES="${ERGON_GUARD_TRIES:-2}"
 SNAPDIR="${ERGON_GUARD_SNAPDIR:-/.snapshots}"
 LAYOUT=$(ergon_boot_layout)
@@ -171,11 +175,11 @@ install)
   sudo install -Dm755 "$COUNTER_SRC" "$COUNTER"
   sudo install -Dm755 "$FALLBACK_SRC" "$FALLBACK"
   _write_unit "$COUNTER"
-  sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 \
+  sudo grub-mkconfig -o "$GRUBCFG" >/dev/null 2>&1 \
     || die "grub-mkconfig failed; the snippets are in place but grub.cfg was not rebuilt"
   # The whole mechanism is this entry existing. Assert it rather than trusting
   # that a script in /etc/grub.d ran.
-  grep -q 'ergon-fallback' /boot/grub/grub.cfg || die "the fallback entry did not reach grub.cfg"
+  sudo grep -q ergon-fallback "$GRUBCFG" || die "the fallback entry did not reach grub.cfg"
   ok "boot guard: after $TRIES failed boots, the last known-good snapshot boots instead"
   ;;
 
@@ -285,7 +289,7 @@ status)
     [ -f "$ESP/loader/entries/ergon-fallback.conf" ] \
       && ok "the fallback entry is on the ESP" || warn "no fallback entry on the ESP yet (no known-good snapshot)"
   else
-    grep -q 'ergon-fallback' /boot/grub/grub.cfg 2>/dev/null \
+    sudo grep -q ergon-fallback "$GRUBCFG" 2>/dev/null \
       && ok "the fallback entry is in grub.cfg" || warn "no fallback entry in grub.cfg (grub-mkconfig?)"
   fi
   ;;
@@ -306,7 +310,7 @@ disable)
   else
     sudo rm -f "$COUNTER" "$FALLBACK" "$OLD_SNIPPET"
     sudo systemctl daemon-reload 2>/dev/null || true
-    sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || warn "grub-mkconfig failed"
+    sudo grub-mkconfig -o "$GRUBCFG" >/dev/null 2>&1 || warn "grub-mkconfig failed"
     ok "boot guard removed (the grubenv on the EFI partition is left alone)"
   fi
   ;;

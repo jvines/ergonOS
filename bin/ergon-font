@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# ergon:summary=Choose the terminal/bar font or the GTK font from what is installed
+# ergon:group=theme
+# ergon:args=[mono|ui] [--list | FAMILY]
+#
+# ERGON-131. One command changes the font family in the terminals, the bar, the
+# launcher, notifications and lock screen (mono) or in GTK apps (ui).
+#
+#   ergon font                    pick a monospace family from a menu
+#   ergon font --list             installed monospace families, current marked
+#   ergon font mono "Fira Code"   set it (must be installed)
+#   ergon font ui "Inter"         the GTK interface font
+#   ergon font mono default       back to JetBrainsMono Nerd Font
+#
+# The family goes where the text size does: ergon-theme keeps it per user in
+# ~/.local/state/ergon/font.env and renders every themed config from it, so a
+# palette switch or `ergon text-size` keeps your choice and nothing tracked is
+# edited. Wezterm keeps "Symbols Nerd Font Mono" as its fallback, so bar and
+# prompt icons still draw with a font that has no Nerd glyphs.
+# New terminals, the bar and the launcher follow now; open terminals keep theirs.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+die() { printf 'ergon font: %s\n' "$*" >&2; exit 2; }
+command -v fc-list >/dev/null 2>&1 || die "fc-list (fontconfig) is not installed"
+
+slot=mono
+case "${1:-}" in mono|ui) slot=$1; shift ;; esac
+want=${1:-}
+
+# Installed families, first name only (fc-list gives "Name,Alias" lists).
+families() {
+  if [ "$slot" = mono ]; then fc-list :spacing=mono family; else fc-list : family; fi \
+    | cut -d, -f1 | sed 's/^ *//; s/ *$//' | grep -v '^$' | sort -u
+}
+cur=$("$ERGON/bin/ergon-theme" --font "$slot")
+
+if [ "$want" = --list ]; then
+  families | while IFS= read -r f; do
+    [ "$f" = "$cur" ] && printf '%s  (current)\n' "$f" || printf '%s\n' "$f"
+  done
+  exit 0
+fi
+
+if [ -z "$want" ]; then
+  command -v fuzzel >/dev/null 2>&1 || die "no fuzzel for the menu; give a family or --list"
+  sel=$("$0" "$slot" --list | fuzzel --dmenu --prompt "$slot font  ") || exit 0
+  want=${sel%  (current)}
+  [ -n "$want" ] || exit 0
+fi
+
+if [ "$want" = default ]; then
+  [ "$slot" = mono ] && want="JetBrainsMono Nerd Font" || want="Noto Sans"
+elif ! families | grep -qxF -- "$want"; then
+  die "'$want' is not an installed $slot family (ergon font $slot --list)"
+fi
+"$ERGON/bin/ergon-theme" --font "$slot" "$want"
+printf '%s font: %s. New terminals, the bar and the launcher follow now.\n' "$slot" "$want"

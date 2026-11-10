@@ -91,6 +91,14 @@ jobs:
       - name: Boot entries
         run: cd "$CI_DIR" && ./bin/test-boot-entries.sh
 
+      # ERGON-125: a GRUB install moves to systemd-boot, keeping GRUB.
+      - name: Boot migration
+        run: cd "$CI_DIR" && ./bin/test-boot-migrate.sh
+
+      # ERGON-124: opt-in Secure Boot, sbctl stubbed.
+      - name: Secure Boot
+        run: cd "$CI_DIR" && ./bin/test-secureboot.sh
+
       - name: Report scrubber
         run: cd "$CI_DIR" && ./bin/test-report.sh
 
@@ -181,9 +189,33 @@ jobs:
       - name: A palette switch reaches the running desktop
         run: cd "$CI_DIR" && ./bin/test-theme.sh
 
+      # Every palette in theme/ is well formed, readable, and renders every template.
+      - name: Every palette is complete, legible and renders
+        run: cd "$CI_DIR" && ./bin/test-palettes.sh
+
+      # ERGON-158: the UI follows the locale (Spanish), English unchanged.
+      - name: Translations follow the locale and fall back to English
+        run: cd "$CI_DIR" && ./bin/test-i18n.sh
+
       # `ergon text-size`: one factor, every surface, kept across a palette switch.
       - name: Text size scales every surface and survives a theme switch
         run: cd "$CI_DIR" && ./bin/test-text-size.sh
+
+      # `ergon font`: the family reaches every themed surface and survives a switch.
+      - name: Font family reaches every surface and survives a theme switch
+        run: cd "$CI_DIR" && ./bin/test-font.sh
+
+      # `ergon reset`: backs up, resets choices, never touches the override files.
+      - name: Desktop reset backs up first and leaves user overrides alone
+        run: cd "$CI_DIR" && ./bin/test-reset.sh
+
+      # The llm bundle: backend follows the GPU, ledger records it, nothing downloads.
+      - name: Local LLM bundle picks its backend by GPU
+        run: cd "$CI_DIR" && ./bin/test-llm.sh
+
+      # Install-media presets: parsing, precedence, reflector, bootstrap wiring.
+      - name: Install preset and regional mirrors
+        run: cd "$CI_DIR" && ./bin/test-preset.sh
 
       # And the background follows the palette, which is the half the step above
       # does not touch. The wallpaper is the largest surface on the screen and
@@ -237,6 +269,10 @@ jobs:
       - name: The tiling key cycles a workspace's layout
         run: cd "$CI_DIR" && ./bin/test-tiling.sh
 
+      # ERGON-109/140/150/151/155: desktop toggles and the screensaver, stubs.
+      - name: Desktop toggles persist and the screensaver starts and stops
+        run: cd "$CI_DIR" && ./bin/test-toggle.sh
+
       # ERGON-108: cursor zoom steps, stub hyprctl.
       - name: The zoom keys step cursor:zoom_factor
         run: cd "$CI_DIR" && ./bin/test-zoom.sh
@@ -244,6 +280,14 @@ jobs:
       # ERGON-108: cursor zoom steps, stub hyprctl.
       - name: The zoom keys step cursor:zoom_factor
         run: cd "$CI_DIR" && ./bin/test-zoom.sh
+
+      # ERGON-93/110/111/138/143: input toggles, restart, clock, transcode; stubs and a fake /sys.
+      - name: Input toggles, subsystem restart, clock and transcode
+        run: cd "$CI_DIR" && ./bin/test-input-restart.sh
+
+      # ERGON-133: SUPER+RETURN opens in the focused terminal's directory.
+      - name: A new terminal opens where the focused one is
+        run: cd "$CI_DIR" && ./bin/test-term-here.sh
 
       # ERGON-103: links go to the default browser and raise its window, stubs.
       - name: Links open in the default browser and raise it
@@ -253,6 +297,10 @@ jobs:
       - name: Web apps are created, listed and removed, only ours
         run: cd "$CI_DIR" && ./bin/test-webapp.sh
 
+      # ERGON-147: Vaultwarden client config, Tailscale login, opt-in app bundles, stubs.
+      - name: Vault and Tailscale commands, opt-in app bundles
+        run: cd "$CI_DIR" && ./bin/test-apps.sh
+
       # ERGON-106: the session SSH agent; static, plus an archlinux container if docker is there.
       - name: Session SSH agent is exported, enabled and reachable
         run: cd "$CI_DIR" && ./bin/test-ssh-agent.sh
@@ -260,6 +308,10 @@ jobs:
       # ERGON-106: ergon ssh-key and the AddKeysToAgent include; real openssh in a temp HOME.
       - name: ergon ssh-key makes, loads, lists and copies keys; AddKeysToAgent include
         run: cd "$CI_DIR" && ./bin/test-ssh-key.sh
+
+      # ERGON-129/130/141/142: captive portal, DNS choice, git identity, sshd gate; stubs, no root.
+      - name: Captive portal, DNS, git identity and the sshd gate behave
+        run: cd "$CI_DIR" && ./bin/test-net-login.sh
 
       # ERGON-87: the emoji list parsed from Unicode's own file; the pick copied and typed.
       - name: The emoji picker copies and types the pick

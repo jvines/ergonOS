@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Render every themed config from the palette
 # ergon:group=theme
-# ergon:args=[--check] [--no-apply] [--text [N]] [palette]
+# ergon:args=[--check] [--no-apply] [--text [N]] [--font mono|ui [FAMILY]] [palette]
 # Expands the palette into every committed config that carries colours.
 #
 #   ergon-theme                   # render, report what changed
@@ -163,6 +163,48 @@ if ! TEXT_SIZE=$(read_type "$(type_src)"); then
   TEXT_SIZE=
 fi
 
+# Font families (ERGON-131), in a file of their own for the same reason as the
+# size: not a palette, and a family name must never become a sed program or a
+# Lua string. FONT_MONO (terminals, bar, launcher, notifications, lock screen)
+# and FONT_UI (GTK) live in $STATE/font.env; unset keys keep the defaults
+# below. The charset is the whole validation: no quote, slash, bar, ampersand
+# or backslash can get through it. That the family is INSTALLED is
+# `ergon font`'s check, not this script's -- a render must work on a machine
+# whose font was removed afterwards, if only to let you pick another.
+FONT_FILE="$STATE/font.env"
+FONT_MONO="JetBrainsMono Nerd Font"; FONT_UI="Noto Sans"
+font_ok() { printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,59}$'; }
+read_fonts() {  # read_fonts FILE -> sets FONT_MONO / FONT_UI, or refuses
+  local k v
+  while IFS='=' read -r k v || [ -n "$k" ]; do
+    case "$k" in
+      ''|'#'*) continue ;;
+      FONT_MONO|FONT_UI) font_ok "$v" || { echo "$k is not a plain family name: '$v'" >&2; return 1; }
+                         printf -v "$k" '%s' "$v" ;;
+      *) echo "bad key in $1: $k" >&2; return 1 ;;
+    esac
+  done < "$1"
+}
+if [ "${1:-}" = "--font" ]; then
+  _slot=${2:-}; _name=${3:-}
+  case "$_slot" in mono) _key=FONT_MONO ;; ui) _key=FONT_UI ;; *) echo "usage: --font mono|ui [FAMILY]" >&2; exit 2 ;; esac
+  [ ! -f "$FONT_FILE" ] || read_fonts "$FONT_FILE" || exit 1
+  [ -n "$_name" ] || { printf '%s\n' "${!_key}"; exit 0; }
+  [ "$CHECK" = 0 ] || { echo "--check only reads; it cannot set --font" >&2; exit 2; }
+  font_ok "$_name" || { echo "'$_name' is not a plain family name" >&2; exit 1; }
+  mkdir -p "$STATE"
+  { [ ! -f "$FONT_FILE" ] || { grep -v "^$_key=" "$FONT_FILE" || true; }; printf '%s=%s\n' "$_key" "$_name"; } > "$FONT_FILE.new"
+  mv -f "$FONT_FILE.new" "$FONT_FILE"
+  shift 3
+fi
+# Read here, before a palette is recorded, like the size: a hand-edited
+# font.env stops the render rather than reaching a template. --gsettings runs
+# at every session start and costs only the font, never the colour scheme.
+if [ -f "$FONT_FILE" ] && ! read_fonts "$FONT_FILE"; then
+  [ "$GSETTINGS_ONLY" = 1 ] || exit 1
+  FONT_MONO="JetBrainsMono Nerd Font"; FONT_UI="Noto Sans"
+fi
+
 # --next / --prev step through theme/*.env in name order, wrapping. This is how
 # a palette is CHOSEN: comparing six of them by editing a name in a command is
 # not comparing them, and the difference between two neighbouring palettes is
@@ -310,6 +352,7 @@ sync_gsettings() {
   gsettings set org.gnome.desktop.interface color-scheme "$_cs"       2>/dev/null || true
   gsettings set org.gnome.desktop.interface gtk-theme   "$GTK_THEME"  2>/dev/null || true
   gsettings set org.gnome.desktop.interface icon-theme  "$ICON_THEME" 2>/dev/null || true
+  gsettings set org.gnome.desktop.interface font-name "$FONT_UI 11" 2>/dev/null || true
   [ -z "$TEXT_SCALE" ] \
     || gsettings set org.gnome.desktop.interface text-scaling-factor "$TEXT_SCALE" 2>/dev/null || true
 }
@@ -317,9 +360,14 @@ if [ "$GSETTINGS_ONLY" = 1 ]; then sync_gsettings; exit 0; fi
 
 {
   printf 's|@COOL_MODE@|%s|g\n'        "$MODE"
+  printf 's|@FONT_MONO@|%s|g\n'    "$FONT_MONO"
+  printf 's|@FONT_UI@|%s|g\n'      "$FONT_UI"
   printf 's|@COOL_PREFER_DARK@|%s|g\n' "$PREFER_DARK"
   printf 's|@COOL_GTK_THEME@|%s|g\n'   "$GTK_THEME"
   printf 's|@COOL_ICON_THEME@|%s|g\n'  "$ICON_THEME"
+  # ERGON-139: qt5ct and qt6ct take an absolute colour-scheme path, and only
+  # this script knows whose $HOME it is rendering for.
+  printf 's|@COOL_HOME@|%s|g\n' "$(printf %s "$HOME" | sed 's/[&|\\]/\\&/g')"
 } >> "$SEDPROG"
 
 # gtk-4.0 gets BOTH modes, in @media (prefers-color-scheme) blocks that GTK4
@@ -382,7 +430,7 @@ while IFS= read -r tpl; do
   out="${tpl%.in}"
   new=$(sed -f "$SEDPROG" "$tpl")
 
-  if leftover=$(printf '%s\n' "$new" | grep -oE '@(COOL_[A-Z0-9_]+(:raw)?|TYPE:[^@]*)@' | sort -u); then
+  if leftover=$(printf '%s\n' "$new" | grep -oE '@(COOL_[A-Z0-9_]+(:raw)?|TYPE:[^@]*|FONT_[A-Z]+)@' | sort -u); then
     echo "!! $tpl references undefined colours or sizes:" >&2
     # Unquoted on purpose: grep -o gives one placeholder per line and the
     # split is what puts each on its own printf iteration.
@@ -574,8 +622,9 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
   # gap between the keybind and a repainted desktop rather than two.
   pkill -x waybar         >/dev/null 2>&1 || true
   pkill -x swayosd-server >/dev/null 2>&1 || true
+  bar=$("$ERGON/bin/ergon-toggle" get bar 2>/dev/null || echo on)   # ERGON-151: a bar you switched off stays off
   sleep 0.5
-  hyprctl dispatch 'hl.dsp.exec_raw("waybar")'         >/dev/null 2>&1 || true
+  [ "$bar" = off ] || hyprctl dispatch 'hl.dsp.exec_raw("waybar")'         >/dev/null 2>&1 || true
   hyprctl dispatch 'hl.dsp.exec_raw("swayosd-server")' >/dev/null 2>&1 || true
 
   # mako does have a reload, and it keeps the notifications already on screen.
