@@ -17,7 +17,7 @@ local config = wezterm.config_builder()
 -- ---------------------------------------------------------------------------
 -- Type
 config.font = wezterm.font_with_fallback({
-  "JetBrainsMono Nerd Font",  -- packages/pacman: ttf-jetbrains-mono-nerd
+  "@FONT_MONO@",  -- default ttf-jetbrains-mono-nerd; `ergon font` changes it
   "Symbols Nerd Font Mono",
   "Noto Color Emoji",
 })

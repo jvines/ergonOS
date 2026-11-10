@@ -185,6 +185,22 @@ jobs:
       - name: Text size scales every surface and survives a theme switch
         run: cd "$CI_DIR" && ./bin/test-text-size.sh
 
+      # `ergon font`: the family reaches every themed surface and survives a switch.
+      - name: Font family reaches every surface and survives a theme switch
+        run: cd "$CI_DIR" && ./bin/test-font.sh
+
+      # `ergon reset`: backs up, resets choices, never touches the override files.
+      - name: Desktop reset backs up first and leaves user overrides alone
+        run: cd "$CI_DIR" && ./bin/test-reset.sh
+
+      # The llm bundle: backend follows the GPU, ledger records it, nothing downloads.
+      - name: Local LLM bundle picks its backend by GPU
+        run: cd "$CI_DIR" && ./bin/test-llm.sh
+
+      # Install-media presets: parsing, precedence, reflector, bootstrap wiring.
+      - name: Install preset and regional mirrors
+        run: cd "$CI_DIR" && ./bin/test-preset.sh
+
       # And the background follows the palette, which is the half the step above
       # does not touch. The wallpaper is the largest surface on the screen and
       # the only themed one that is not rendered from a .in template, so nothing

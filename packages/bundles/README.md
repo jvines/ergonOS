@@ -33,6 +33,8 @@ One directory per bundle, each file optional, and nothing else in it:
     aur       AUR packages, built by makepkg
     python    PyPI requirements, installed into the pyfleet venv
     git       NAME @ git+https://...@REF  or  NAME @ git+ssh://...@REF
+    pacman.nvidia, pacman.amd   more pacman packages, installed only where bin/ergon-gpu
+              finds that GPU (NVIDIA wins when both are present); see llm
 
 `meta` is **data, not shell**: `KEY=word` or `KEY="text"`, with no `$`, backtick
 or backslash inside the quotes. It is never sourced, so `ergon-bundle list` runs

@@ -48,7 +48,7 @@ hl.config({
       border_inactive = inactive_border,
     },
     groupbar = {
-      font_family = "JetBrainsMono Nerd Font",
+      font_family = "@FONT_MONO@",
       font_size = 11,
       height = 18,
       indicator_height = 2,

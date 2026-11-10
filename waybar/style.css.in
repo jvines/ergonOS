@@ -6,7 +6,7 @@
  */
 
 * {
-  font-family: "JetBrainsMono Nerd Font", "Font Awesome 7 Free", monospace;
+  font-family: "@FONT_MONO@", "Font Awesome 7 Free", monospace;
   font-size: @TYPE:13@px;
   min-height: 0;
   border: none;

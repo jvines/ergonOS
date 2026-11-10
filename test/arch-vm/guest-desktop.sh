@@ -3814,6 +3814,23 @@ usr "timeout -k 5 90 ergon text-size normal" >/tmp/ts116.out 2>&1 </dev/null
 [ "$(_gen_sz)" = "11,11,12,13" ] && ok "ERGON-116: text-size normal restored 11,11,12,13" || bad "ERGON-116: after normal the sizes are $(_gen_sz)"
 rm -f /tmp/ts116.out
 
+# 131: font family. A non-default installed monospace family, then a palette
+# switch, and the generated configs must still carry it. The screenshot shows
+# the bar and launcher in that family after the switch.
+_fam=$(usr "ergon font --list 2>/dev/null </dev/null" | grep -v '(current)' | head -1)
+if [ -n "$_fam" ]; then
+  usr "timeout -k 5 90 ergon font mono '$_fam'" >/tmp/ft131.out 2>&1 </dev/null
+  grep -qxF "font=$_fam:size=11" "$G/foot/foot.ini" 2>/dev/null && ok "ERGON-131: ergon font mono '$_fam' reached foot.ini" || bad "ERGON-131: foot.ini lacks '$_fam': $(tail -c 150 /tmp/ft131.out)"
+  grep -qF "font-family: \"$_fam\"," "$G/waybar/style.css" 2>/dev/null && ok "ERGON-131: and the waybar stylesheet" || bad "ERGON-131: waybar/style.css lacks '$_fam'"
+  _pal=$(usr "ergon theme --list 2>/dev/null | head -20" </dev/null | tr -s ' ' '\n' | grep -E '^(gruvbox|nord|cool)$' | head -1)
+  [ -n "$_pal" ] && usr "timeout -k 5 120 ergon theme $_pal" >/dev/null 2>&1 </dev/null
+  grep -qxF "font=$_fam:size=11" "$G/foot/foot.ini" 2>/dev/null && ok "ERGON-131: the font survived a palette switch" || bad "ERGON-131: foot.ini lost '$_fam' after theme ${_pal:-?}"
+  shot font-after-palette-switch
+  usr "timeout -k 5 90 ergon font mono default" >/dev/null 2>&1 </dev/null
+  grep -qxF "font=JetBrainsMono Nerd Font:size=11" "$G/foot/foot.ini" 2>/dev/null && ok "ERGON-131: ergon font mono default restored the shipped family" || bad "ERGON-131: default family not restored"
+else note "ERGON-131: no second monospace family installed in the guest; font picker unproven here"; fi
+rm -f /tmp/ft131.out
+
 # 105: a locale with a decimal comma must not change doctor's package count.
 if locale -a 2>/dev/null | grep -qi '^es_CL\.utf-\?8$'; then
   _r_c=$(doctor_row arch-date su - "$U" -c "LC_ALL=C XDG_RUNTIME_DIR=/run/user/1000 timeout -k 2 120 $G/bin/ergon-doctor --json </dev/null")
