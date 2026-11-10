@@ -338,3 +338,11 @@ bind("SUPER + ALT + W", "Previous workspace layout", "ergon-tiling back")
 bind("SUPER + CTRL + Z",         "Zoom in around the cursor",  "ergon-zoom in",    { repeating = true })
 bind("SUPER + CTRL + SHIFT + Z", "Zoom out",                   "ergon-zoom out",   { repeating = true })
 bind("SUPER + CTRL + ALT + Z",   "Reset zoom",                 "ergon-zoom reset")
+
+-- Input devices and the time toast (ERGON-93, 143, 111). The devices are found by
+-- capability in ergon-toggle-input; the touchpad key many laptops have is bound
+-- too, `locked` so it also works over the lock screen.
+bind("SUPER + CTRL + P",         "Touchpad on/off",        "ergon-toggle-input touchpad")
+bind("XF86TouchpadToggle",       "Touchpad on/off",        "ergon-toggle-input touchpad", { locked = true })
+bind("SUPER + CTRL + SHIFT + P", "Touchscreen on/off",     "ergon-toggle-input touchscreen")
+bind("SUPER + CTRL + T",         "Time, date, battery and world clock", "ergon-clock")

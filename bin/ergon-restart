@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# ergon:summary=Restart a stuck subsystem: audio, bluetooth, wifi or trackpad
+# ergon:group=system
+# ergon:args=audio|bluetooth|wifi|trackpad
+# ergon:help=native
+#
+#   ergon restart audio       pipewire, pipewire-pulse and wireplumber (user units)
+#   ergon restart bluetooth   bluetooth.service, then unblock and power the adapter
+#   ergon restart wifi        NetworkManager (the service ergon-wifi drives), rfkill unblocked
+#   ergon restart trackpad    unbind and rebind the touchpad's own bus device, which
+#                             also frees a stuck button; nothing else loses input
+#
+# The system ones use sudo, as the rest of ergon does; the session menu runs
+# them in a terminal so the prompt is visible. The trackpad is found by
+# capability (lib/input.sh): walk up from its input node to the first i2c, serio
+# or usb device that has a driver, and rebind that, instead of rmmod-ing a
+# module (hid_multitouch, psmouse) that a touchscreen or mouse may share.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+. "$ERGON/lib/input.sh"
+
+say() { notify-send -a ergon-restart -u low -t 3000 "Restart" "$1" >/dev/null 2>&1 || true; echo "$1"; }
+
+trackpad() {
+  local node d dev bus drv
+  node=$(ergon_input_nodes touchpad | head -1 | cut -d'|' -f1)
+  [ -n "$node" ] || { echo "ergon-restart: no touchpad found" >&2; return 1; }
+  d=$(readlink -f "$node")
+  while [ "$d" != "/" ] && [ "$d" != "." ]; do
+    d=$(dirname "$d")
+    [ -L "$d/driver" ] || continue
+    bus=$(basename "$(readlink -f "$d/subsystem")")
+    case "$bus" in i2c|serio|usb) ;; *) continue ;; esac
+    dev=$(basename "$d"); drv=$(readlink -f "$d/driver")
+    sudo sh -c 'echo "$1" > "$2/unbind" && sleep 1 && echo "$1" > "$2/bind"' sh "$dev" "$drv"
+    say "trackpad rebound ($bus $dev)"
+    return 0
+  done
+  echo "ergon-restart: no bus device to rebind for $node" >&2; return 1
+}
+
+case "${1:-}" in
+  audio)
+    systemctl --user restart pipewire.service pipewire-pulse.service wireplumber.service
+    say "audio restarted" ;;
+  bluetooth)
+    sudo systemctl restart bluetooth.service
+    sudo rfkill unblock bluetooth
+    sleep 1
+    bluetoothctl power on >/dev/null 2>&1 || true
+    say "bluetooth restarted" ;;
+  wifi)
+    sudo rfkill unblock wifi
+    sudo systemctl restart NetworkManager.service
+    say "wifi restarted" ;;
+  trackpad) trackpad ;;
+  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: ergon restart audio|bluetooth|wifi|trackpad" >&2; exit 2 ;;
+esac

@@ -245,6 +245,10 @@ jobs:
       - name: The zoom keys step cursor:zoom_factor
         run: cd "$CI_DIR" && ./bin/test-zoom.sh
 
+      # ERGON-93/110/111/138/143: input toggles, restart, clock, transcode; stubs and a fake /sys.
+      - name: Input toggles, subsystem restart, clock and transcode
+        run: cd "$CI_DIR" && ./bin/test-input-restart.sh
+
       # ERGON-103: links go to the default browser and raise its window, stubs.
       - name: Links open in the default browser and raise it
         run: cd "$CI_DIR" && ./bin/test-browser.sh

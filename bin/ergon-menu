@@ -71,13 +71,13 @@ launch() {
   exec "$@"
 }
 
-run_in_terminal() {  # $1: a bare `ergon` subcommand name
+run_in_terminal() {  # args: an `ergon` subcommand and its arguments
   # $BINDIR/ergon by full path, not `ergon` off PATH: the menu already read
   # its command list from THIS checkout, so the terminal it opens runs the
   # same one rather than whatever `ergon` a differently-scoped PATH finds.
   launch "$BINDIR/ergon-term" sh -c \
-    '"$0" "$1" || true; echo; echo "-- press enter to close --"; read -r _' \
-    "$BINDIR/ergon" "$1"
+    '"$0" "$@" || true; echo; echo "-- press enter to close --"; read -r _' \
+    "$BINDIR/ergon" "$@"
 }
 
 show_topic() {  # $1: an `ergon explain` topic name
@@ -89,7 +89,7 @@ show_topic() {  # $1: an `ergon explain` topic name
     if command -v glow >/dev/null 2>&1; then "$0" explain "$1" | glow -p -
     elif command -v less >/dev/null 2>&1; then "$0" explain "$1" | less -R
     else "$0" explain "$1"; echo; echo "-- press enter to close --"; read -r _
-    fi' "$BINDIR/ergon" "$1"
+    fi' "$BINDIR/ergon" "$@"
 }
 
 web_app_menu() {
@@ -102,12 +102,23 @@ web_app_menu() {
   esac
 }
 
+restart_menu() {
+  local sel
+  sel=$(printf 'audio\nbluetooth\nwifi\ntrackpad\n' | pick restart) || exit 0
+  run_in_terminal restart "$sel"   # sudo asks for the password, so a real terminal
+}
+
 system_menu() {
   local sel
-  sel=$(printf 'Session\nWi-Fi\nWeb app\nTimezone\nLanguage\nChannel\n' | pick system) || exit 0
+  sel=$(printf 'Session\nWi-Fi\nRestart\nTouchpad\nTouchscreen\nWorld clock\nTranscode\nWeb app\nTimezone\nLanguage\nChannel\n' | pick system) || exit 0
   case "$sel" in
     Session)  exec "$BINDIR/ergon-session" ;;
     Wi-Fi)    exec "$BINDIR/ergon-wifi" ;;
+    Restart)  restart_menu ;;
+    Touchpad) exec "$BINDIR/ergon-toggle-input" touchpad ;;
+    Touchscreen) exec "$BINDIR/ergon-toggle-input" touchscreen ;;
+    "World clock") exec "$BINDIR/ergon-clock" ;;
+    Transcode) run_in_terminal transcode ;;   # asks for a file, then a target
     "Web app") web_app_menu ;;
     Timezone) run_in_terminal timezone ;;   # asks questions, so a real terminal
     Language) run_in_terminal language ;;   # asks questions too
@@ -200,7 +211,7 @@ help_menu() {
 # `ergon --list` (not --groups/--group, which this function itself calls --
 # see that test for why comparing it to itself would be circular).
 dump() {
-  printf 'System\n  session menu (ergon session)\n  Wi-Fi (ergon wifi)\n  Timezone (ergon timezone)\n  Language (ergon language)\n  Channel (ergon channel)\n'
+  printf 'System\n  session menu (ergon session)\n  Wi-Fi (ergon wifi)\n  Restart (ergon restart: audio, bluetooth, wifi, trackpad)\n  Touchpad, Touchscreen (ergon toggle-input)\n  World clock (ergon clock)\n  Transcode (ergon transcode)\n  Timezone (ergon timezone)\n  Language (ergon language)\n  Channel (ergon channel)\n'
   printf 'Style\n  Palette\n'
   "$BINDIR/ergon-theme" --list | unmarked | sed 's/^/    /'
   printf '  Background\n'
