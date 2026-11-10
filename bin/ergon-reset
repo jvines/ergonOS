@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# ergon:summary=Reset the desktop to the shipped defaults, after backing up what you had
+# ergon:group=system
+# ergon:args=[--yes] [--dry-run]
+#
+# ERGON-154. Palette, text size, font and background go back to what the
+# repository ships; the generated configs are re-rendered and re-linked.
+#
+#   ergon reset              show what will change, ask, back up, reset
+#   ergon reset --dry-run    only show it
+#   ergon reset --yes        no question (for scripts)
+#
+# What it resets: the choices kept per user in ~/.local/state/ergon -- palette,
+# type.env (ERGON-37), font.env (ERGON-131) and background -- because those are
+# the only things that make a rendered desktop differ from the shipped one.
+# Everything generated is rebuilt from the templates by install.sh.
+#
+# What it never touches: the override files in ~/.config/ergon (waybar.css,
+# user.lua, mako, ...; ERGON-27). They are yours. They are COPIED into the
+# backup so the backup is complete, and left where they are, so they apply
+# again on top of the defaults. Also untouched: $HOME data, packages, bundles
+# and their ledger, hosts/<host>/host.env. For packages see `ergon sync`.
+#
+# The backup is ~/.local/share/ergon/reset-<UTC timestamp>/, made BEFORE
+# anything is removed; if it cannot be written nothing is reset.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"
+UCONF="${XDG_CONFIG_HOME:-$HOME/.config}/ergon"
+BACKUP="${XDG_DATA_HOME:-$HOME/.local/share}/ergon/reset-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+FILES=(palette type.env font.env background)
+
+YES=0; DRY=0
+for a in "$@"; do
+  case "$a" in
+    --yes|-y) YES=1 ;; --dry-run) DRY=1 ;;
+    *) echo "usage: ergon reset [--yes] [--dry-run]" >&2; exit 2 ;;
+  esac
+done
+
+todo=(); for f in "${FILES[@]}"; do [ -e "$STATE/$f" ] && todo+=("$f"); done
+echo "ergon reset: back to the shipped desktop"
+if [ "${#todo[@]}" = 0 ]; then echo "   your choices (state): none set, already the defaults"
+else for f in "${todo[@]}"; do printf '   will reset   %s  (%s)\n' "$f" "$(head -c 60 "$STATE/$f" | head -1)"; done; fi
+echo "   will re-render and re-link the themed configs"
+echo "   untouched    $UCONF (your override files)"
+echo "   backup       $BACKUP"
+[ "$DRY" = 0 ] || exit 0
+
+if [ "$YES" = 0 ]; then
+  [ -t 0 ] || { echo "ergon reset: not a terminal; pass --yes to proceed" >&2; exit 1; }
+  read -r -p "Reset? [y/N] " ans
+  case "$ans" in y|Y|yes) ;; *) echo "nothing changed"; exit 0 ;; esac
+fi
+
+# Back up first. A failed copy stops everything: no backup, no reset.
+mkdir -p "$BACKUP/state" || { echo "ergon reset: cannot create $BACKUP" >&2; exit 1; }
+for f in "${todo[@]}"; do cp -a "$STATE/$f" "$BACKUP/state/" || { echo "ergon reset: backup of $f failed; nothing reset" >&2; exit 1; }; done
+if [ -d "$UCONF" ]; then cp -a "$UCONF" "$BACKUP/user-config" || { echo "ergon reset: backup of $UCONF failed; nothing reset" >&2; exit 1; }; fi
+
+for f in "${todo[@]}"; do rm -f "$STATE/$f"; done
+"$ERGON/install.sh" >/dev/null
+# install.sh renders without applying; this reloads what is on screen.
+"$ERGON/bin/ergon-theme" >/dev/null 2>&1 || true
+echo "ergon reset: done. Previous choices are in $BACKUP"
