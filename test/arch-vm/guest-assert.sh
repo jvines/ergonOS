@@ -128,6 +128,8 @@ check "provision-arch.sh is runnable" "[ -x '$R/bin/provision-arch.sh' ]"
 check "the ergon commands came too"  "[ -x '$R/bin/ergon-bundle' ]"
 # ERGON-125: the GRUB-to-systemd-boot move recognises a new install and leaves it be.
 check "ergon-boot-migrate: nothing to migrate here" "'$R/bin/ergon-boot-migrate' check | grep -q 'nothing to migrate'"
+# ERGON-124 is opt-in: an install that never ran it has no sbctl and no keys.
+check "Secure Boot is not set up unasked" "! pacman -Q sbctl && '$R/bin/ergon-secureboot' status | grep -q 'not set up'"
 # Owned by the user, or everything that writes into the tree needs sudo.
 check "the copy belongs to the user" "[ \"\$(stat -c %U '$R')\" = \"$U\" ]"
 

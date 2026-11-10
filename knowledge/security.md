@@ -221,7 +221,29 @@ can replace what is on the ESP. A tampered kernel would see the passphrase the
 next time it is typed. GRUB's layout (`/boot` inside LUKS) had the same hole
 one step earlier -- GRUB itself lived on the plain ESP -- so this is not a new
 class of attack, and the answer to both is Secure Boot with your own keys,
-which this machine does not set up yet.
+which is opt-in (below).
+
+**Secure Boot with your own keys (opt-in, ERGON-124).** `ergon secureboot
+enable` makes a key set with sbctl (kept in `/var/lib/sbctl`, inside LUKS),
+signs systemd-boot, the UKIs and the snapshot kernels on the ESP, and enrols
+the keys together with Microsoft's, so GPU option ROMs and a Windows install
+beside this one keep working. It refuses unless the firmware is in setup mode:
+`systemctl reboot --firmware-setup`, then under Secure Boot pick "Reset to
+Setup Mode", "Clear Secure Boot keys" or "Delete all keys" (never "Restore
+factory keys"), save, boot, run it again, and afterwards turn Secure Boot on
+in the same menu. From then on sbctl's mkinitcpio hook signs each UKI as it is
+built, its pacman hook re-signs systemd-boot, ergon-boot-entries signs every
+snapshot kernel it copies, and provisioning re-signs the lot. `ergon secureboot
+status` and `ergon doctor` (`secure-boot`) show setup mode, on or off, and any
+unsigned file. Not covered: the snapshot entries' initramfs images are loaded
+unverified (the UKIs carry theirs inside the signature), and on a machine
+moved off GRUB the GRUB menu entry no longer boots. Nothing changes for a
+machine that never runs it.
+
+**If it will not boot after enabling:** turn Secure Boot off in the firmware
+(or reset to setup mode), boot, and run `ergon secureboot status`; it names
+the unsigned file, and `sudo ergon secureboot sync` signs it. Your data never
+depended on Secure Boot, only the check that the kernel is yours did.
 
 **Automatic login.** With `AUTOLOGIN=1` (the installer's default), greetd
 starts the session after the unlock without asking for a password, so the disk

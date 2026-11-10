@@ -228,6 +228,8 @@ esac
 # The boot splash and passphrase prompt, in the palette the desktop uses
 # (ERGON-123). The initramfs is rebuilt once, below, with the floppy blacklist.
 "$ERGON/bin/ergon-plymouth" install --no-rebuild || warn "boot splash not installed (see above)"
+# ERGON-124: opt-in. Without keys from `ergon secureboot enable` this does nothing.
+"$ERGON/bin/ergon-secureboot" sync || warn "Secure Boot: boot files not signed (ergon secureboot status)"
 
 # Snapshots live on the disk they protect. The backup timers go in now; they do
 # nothing until `ergon backup init REPO` says where, and ergon doctor warns

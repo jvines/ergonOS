@@ -96,7 +96,13 @@ stage() {  # stage <n>
     # Leave room for a kernel update to rebuild both UKIs.
     [ "$free" -gt $(( need + 256 * 1024 * 1024 )) ] || { warn "ESP too full for snapshot $1's kernel"; return 1; }
     mkdir -p "$STORE/$key"
-    cp "$b/vmlinuz-$KERNEL" "$STORE/$key/vmlinuz.tmp" && mv "$STORE/$key/vmlinuz.tmp" "$STORE/$key/vmlinuz"
+    cp "$b/vmlinuz-$KERNEL" "$STORE/$key/vmlinuz.tmp"
+    # With Secure Boot keys (ergon-secureboot) the firmware checks this kernel
+    # when systemd-boot loads it: signed before it is in place, or no entry.
+    if command -v sbctl >/dev/null && grep -q '"installed":true' <<<"$(sbctl status --json 2>/dev/null | tr -d ' \n')"; then
+      sbctl sign "$STORE/$key/vmlinuz.tmp" >/dev/null || { warn "could not sign snapshot $1's kernel"; rm -rf "${STORE:?}/$key"; return 1; }
+    fi
+    mv "$STORE/$key/vmlinuz.tmp" "$STORE/$key/vmlinuz"
     cp "$b/initramfs-$KERNEL.img" "$STORE/$key/initramfs.tmp" && mv "$STORE/$key/initramfs.tmp" "$STORE/$key/initramfs.img"
   fi
   printf '%s\n' "$key"

@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# ergon:summary=Opt-in Secure Boot with this machine's own keys (sbctl)
+# ergon:group=system
+# ergon:args=status | enable | sync
+# ergon:help=native
+#
+# The ESP is unencrypted, so someone holding the powered-off laptop could swap
+# the kernel for one that records the passphrase. Secure Boot with your own
+# keys closes that: the firmware boots only what this machine signed. Nothing
+# here runs unless you ask; a machine that never runs `enable` is unchanged.
+#
+#   status   setup mode, Secure Boot on or off, and any unsigned boot file
+#   enable   create keys, sign systemd-boot and the UKIs, enrol the keys.
+#            Microsoft's keys are enrolled too, so GPU option ROMs and a
+#            Windows next to this keep booting. Only from setup mode
+#   sync     re-sign everything; provisioning runs it, and it does nothing
+#            until `enable` has made keys
+#
+# After `enable`, sbctl's own hooks re-sign: its mkinitcpio post hook signs
+# each UKI as it is built, its pacman hook re-signs systemd-boot.
+# ergon-boot-entries signs the snapshot kernels it copies to the ESP.
+# Recovery and caveats: ergon explain security.
+set -euo pipefail
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+# shellcheck source=../lib/bootloader.sh
+. "$ERGON/lib/bootloader.sh"
+STUB="${ERGON_BOOTROOT:-}/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
+
+ok()   { printf '   ok   %s\n' "$*"; }
+warn() { printf '   !!   %s\n' "$*" >&2; }
+die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
+
+case "${1:-status}" in -h|--help|help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+[ "$(ergon_boot_layout)" = systemd-boot ] \
+  || { echo "   this machine boots GRUB; Secure Boot here needs the systemd-boot layout (ergon-boot-migrate)"; exit 0; }
+# Nothing to do, and no sudo prompt, on a machine that never opted in.
+[ "${1:-status}" != sync ] || command -v sbctl >/dev/null || exit 0
+ergon_esp_access || exec sudo "$0" "$@"
+ESP=$(ergon_esp) || die "no EFI partition mounted"
+
+# installed (keys made) | setup_mode | secure_boot
+state() { grep -q "\"$1\":true" <<<"$(sbctl status --json 2>/dev/null | tr -d ' \n')"; }
+
+# Everything the firmware or systemd-boot loads. -s keeps a file in sbctl's
+# list, so its hooks re-sign it; the systemd-boot in /usr gets a .signed copy,
+# which bootctl and systemd-boot-update install in its place.
+sign_all() {
+  local f
+  [ ! -f "$STUB" ] || sbctl sign -s -o "$STUB.signed" "$STUB" >/dev/null
+  for f in "$ESP/EFI/systemd/systemd-bootx64.efi" "$ESP/EFI/BOOT/BOOTX64.EFI" "$ESP"/EFI/ergon/*.efi; do
+    [ -f "$f" ] && { sbctl sign -s "$f" >/dev/null || return 1; }
+  done
+  for f in "$ESP"/EFI/ergon/snap/*/vmlinuz; do
+    [ -f "$f" ] && { sbctl sign "$f" >/dev/null || return 1; }
+  done
+  return 0
+}
+
+# Ours only: verify also lists GRUB on a migrated machine, and Windows.
+unsigned() { sbctl verify 2>/dev/null | grep -i 'not signed' | grep -E 'EFI/(ergon|systemd|BOOT)/' || true; }
+
+case "${1:-status}" in
+status)
+  if ! command -v sbctl >/dev/null || ! state installed; then
+    ok "Secure Boot: not set up (opt-in: ergon secureboot enable)"; exit 0
+  fi
+  state secure_boot && ok "Secure Boot is on" || warn "keys are made but Secure Boot is off in the firmware"
+  state setup_mode && warn "the firmware is in setup mode: the keys are not enrolled"
+  u=$(unsigned)
+  [ -z "$u" ] && ok "every boot file on the ESP is signed" || { warn "unsigned: $u"; exit 1; }
+  state secure_boot || exit 1
+  ;;
+
+enable)
+  command -v sbctl >/dev/null || pacman -S --needed --noconfirm sbctl >/dev/null || die "could not install sbctl"
+  if state installed && state secure_boot; then
+    sign_all || die "signing failed"; exec "$0" status
+  fi
+  if ! state setup_mode; then
+    die "the firmware is not in setup mode, so it will not take new keys. To enter it:
+          1. systemctl reboot --firmware-setup
+          2. under Secure Boot, choose 'Reset to Setup Mode', 'Clear Secure Boot keys'
+             or 'Delete all keys' (not 'Restore factory keys'); save and boot back
+          3. run ergon secureboot enable again"
+  fi
+  state installed || sbctl create-keys >/dev/null || die "sbctl create-keys failed"
+  sign_all || die "signing failed; nothing was enrolled"
+  [ -z "$(unsigned)" ] || die "still unsigned: $(unsigned); nothing was enrolled"
+  # --microsoft: without it, a GPU or NIC whose option ROM Microsoft signed
+  # stops initialising, and on some laptops that is the display.
+  sbctl enroll-keys --microsoft >/dev/null || die "sbctl enroll-keys failed; the firmware is still in setup mode"
+  ok "keys enrolled (with Microsoft's); systemd-boot, the UKIs and the snapshot kernels are signed"
+  echo "   now: systemctl reboot --firmware-setup, and turn Secure Boot on"
+  ;;
+
+sync)
+  command -v sbctl >/dev/null && state installed || exit 0
+  sign_all && ok "Secure Boot: boot files signed" || die "Secure Boot: signing failed"
+  ;;
+
+*) die "unknown command '$1' (status|enable|sync)" ;;
+esac

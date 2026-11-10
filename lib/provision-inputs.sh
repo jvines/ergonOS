@@ -36,6 +36,7 @@ ERGON_PROVISION_INPUTS=(
   bin/ergon-boot-guard
   bin/ergon-boot-entries
   bin/ergon-boot-migrate
+  bin/ergon-secureboot
   bin/ergon-plymouth
   lib/bootloader.sh
   plymouth

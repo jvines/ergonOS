@@ -95,6 +95,10 @@ jobs:
       - name: Boot migration
         run: cd "$CI_DIR" && ./bin/test-boot-migrate.sh
 
+      # ERGON-124: opt-in Secure Boot, sbctl stubbed.
+      - name: Secure Boot
+        run: cd "$CI_DIR" && ./bin/test-secureboot.sh
+
       - name: Report scrubber
         run: cd "$CI_DIR" && ./bin/test-report.sh
 
