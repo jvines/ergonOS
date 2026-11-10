@@ -667,6 +667,16 @@ disp extend right
 check "extend right skips the disabled FALLBACK output" has "$SAVED" 'output = "HDMI-A-1", position = "1600x0"'
 check "  and writes no rule for it" not has "$SAVED" "FALLBACK"
 mons "$EXT"; rm -f "$SAVED"
+# No laptop panel: the screen plugged in first (lowest id) is the source, even
+# when the projector has the focus. Run 2746: focus on the projector moved the
+# screen right of it instead.
+NS='[{"name":"DP-1","id":0,"width":1280,"height":800,"scale":1,"x":0,"y":0,"transform":0,"mirrorOf":"none"},
+     {"name":"HDMI-A-1","id":1,"focused":true,"width":1920,"height":1080,"scale":2,"x":0,"y":0,"transform":0,"mirrorOf":"none"}]'
+mons "$NS"; rm -f "$SAVED"
+disp extend right
+check "extend right with no eDP: the first screen is the source, not the focused projector" has "$SAVED" 'output = "HDMI-A-1", position = "1280x0"'
+check "  and the screen itself is not moved" not has "$SAVED" 'output = "DP-1", position'
+mons "$EXT"; rm -f "$SAVED"
 disp extend left
 check "extend left: the projector goes before it" has "$SAVED" 'output = "HDMI-A-1", position = "-1920x0"'
 

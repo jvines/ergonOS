@@ -10,7 +10,7 @@
 #                                 (eDP-*), or the focused one on a desktop
 #   ergon display extend          undo both
 #   ergon display extend right    ... and put the other outputs to the right of
-#                                 the internal one (or left): the projector
+#                                 the internal one, else the first-connected screen (or left): the projector
 #   ergon display mode WxH[@Hz]   a resolution and refresh rate the output offers
 #   ergon display modes           ... and which those are
 #   ergon display rotate 90       0, 90, 180, 270, or next
@@ -276,7 +276,7 @@ case "$1" in
     rc=0
     case "${2:-}" in
       right|left)
-        src=$(hyprctl monitors -j | jq -r '(map(select(.name | startswith("eDP"))) + map(select(.focused)) + .)[0].name // empty')
+        src=$(hyprctl monitors -j | jq -r '(map(select(.name | startswith("eDP"))) + sort_by(.id))[0].name // empty')
         [ -n "$src" ] && name_ok "$src" || { echo "no output to extend from" >&2; exit 1; }
         while read -r t xy; do
           [ -n "$t" ] || continue

@@ -4408,6 +4408,10 @@ elif [ -n "$(loginctl show-user "$U" -p Display --value 2>/dev/null)" ]; then
     # harness's session is one; elsewhere record why, with PipeWire's own words.
     _sid=$(loginctl show-user "$U" -p Display --value 2>/dev/null)
     _act=$(loginctl show-session "$_sid" -p Active --value 2>/dev/null)
+    # A seat too: polkit's allow_active means an active session ON A SEAT. The
+    # harness logs in on the serial console (Type=tty, ttyS0, no seat); greetd
+    # logs in on seat0. Run 2746 showed rtkit asked and refusing the seatless one.
+    [ -n "$(loginctl show-session "$_sid" -p Seat --value 2>/dev/null)" ] || _act="no seat"
     _why=$(usr "journalctl --user -b --no-pager -q -u pipewire.service" 2>/dev/null | grep -iE 'rtkit|realtime|sched|priority' | tail -3 | tr '\n' ' ')
     if [ "$_act" = yes ]; then
       bad "  no pipewire thread has realtime priority in active session $_sid, restarted inside it: $_pwt (pipewire: ${_why:-nothing logged})"
@@ -4417,7 +4421,7 @@ elif [ -n "$(loginctl show-user "$U" -p Display --value 2>/dev/null)" ]; then
         echo "== module-rt config"; grep -rn -A8 'module-rt' /usr/share/pipewire/pipewire.conf 2>/dev/null | head -30
         echo "== polkit"; journalctl -b --no-pager -q -u polkit | tail -10; } 2>&1 | diag rtkit-135
     else
-      note "ERGON-135: session $_sid is not active (Active=${_act:-?}), so polkit refuses rtkit by design; threads $_pwt; pipewire: ${_why:-nothing logged}"
+      note "ERGON-135: session $_sid is not an active seat session (${_act:-?}), so polkit refuses rtkit by design; threads $_pwt; pipewire: ${_why:-nothing logged}"
     fi
   fi
 else
