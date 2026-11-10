@@ -3708,8 +3708,13 @@ if [[ "$_z0" =~ ^[0-9.]+$ ]]; then
 else bad "ERGON-108: zoom_factor is not numeric: '$_z0' ($(hq 'getoption cursor:zoom_factor -j' | head -c 150))"; fi
 
 # 109/150/151/155/140: ergon toggle, through the real compositor.
-_opt() { hq "getoption $1 -j" | jq -r '.int // .float // empty' 2>/dev/null; }
-usr "ergon-toggle gaps off; ergon-toggle rounding off; ergon-toggle animations off; ergon-toggle opacity off" >/dev/null 2>&1 </dev/null
+# getoption's JSON shape depends on the type: gaps are .css ("0 0 0 0"), rounding
+# is .int, a bool may be .int or .bool. Normalise to a number; true/false -> 1/0.
+_opt() { hq "getoption $1 -j" | jq -r '[.int, .float, .bool, .value, (.css // null | if . then split(" ")[0] else null end)] | map(select(. != null)) | .[0] | if . == null then empty elif . == true then 1 elif . == false then 0 else . end' 2>/dev/null; }
+# `usr "a; b"` puts the session environment on the FIRST command only, so each
+# toggle gets its own call.
+_tog() { local t; for t in "$@"; do usr "ergon-toggle $t" >/dev/null 2>&1 </dev/null; done; }
+_tog "gaps off" "rounding off" "animations off" "opacity off"
 _g=$(_opt general:gaps_in); _r=$(_opt decoration:rounding); _a=$(_opt animations:enabled)
 [ "$_g" = 0 ] && [ "$_r" = 0 ] && [ "$_a" = 0 ] \
   && ok "ERGON-109/155: toggles off reach the compositor (gaps_in $_g, rounding $_r, animations $_a)" \
@@ -3717,13 +3722,13 @@ _g=$(_opt general:gaps_in); _r=$(_opt decoration:rounding); _a=$(_opt animations
 hq reload >/dev/null 2>&1; sleep 2
 [ "$(_opt general:gaps_in)" = 0 ] && [ "$(_opt decoration:rounding)" = 0 ] \
   && ok "ERGON-109: the choice survives a config reload" || bad "ERGON-109: a reload undid the toggles (gaps_in '$(_opt general:gaps_in)')"
-usr "ergon-toggle gaps on; ergon-toggle rounding on; ergon-toggle animations on; ergon-toggle opacity on" >/dev/null 2>&1 </dev/null
+_tog "gaps on" "rounding on" "animations on" "opacity on"
 [ "$(_opt general:gaps_in)" = 4 ] && [ "$(_opt decoration:rounding)" = 4 ] \
   && ok "ERGON-109: toggled back on, the themed look returns" || bad "ERGON-109: gaps_in '$(_opt general:gaps_in)' rounding '$(_opt decoration:rounding)' after on"
-usr "ergon-toggle widescreen on" >/dev/null 2>&1 </dev/null
-hq "getoption dwindle:single_window_aspect_ratio -j" | grep -q '16' \
-  && ok "ERGON-150: widescreen sets the single-window aspect ratio" || bad "ERGON-150: aspect ratio not set: $(hq 'getoption dwindle:single_window_aspect_ratio -j' | head -c 150)"
-usr "ergon-toggle widescreen off" >/dev/null 2>&1 </dev/null
+_tog "widescreen on"
+hq "getoption layout:single_window_aspect_ratio -j" | grep -q '16' \
+  && ok "ERGON-150: widescreen sets the single-window aspect ratio" || bad "ERGON-150: aspect ratio not set: $(hq 'getoption layout:single_window_aspect_ratio -j' | head -c 150)"
+_tog "widescreen off"
 if [ -S "$YSOCK" ]; then
   # SUPER+ALT+B: evdev LEFTMETA 125, LEFTALT 56, B 48.
   _wb() { pgrep -u "$(id -u "$U")" -x waybar >/dev/null; }
