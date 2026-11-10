@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# ergon:summary=Idle screensaver: a large drifting clock in the palette's colours
+# ergon:group=power
+# ergon:args=[start | stop | run | frame HH:MM]
+#
+# hypridle starts it after 3 minutes idle and stops it on the first input
+# (hypr/hypridle.conf), ahead of the dim at 4 and the lock at 10 (ERGON-140).
+# `start` opens a fullscreen foot running `run`; `stop` closes it. Switch it off
+# with `ergon toggle screensaver off`. A key press in the window also ends it.
+#
+# The look is one function, `frame`: block digits for the time at a given
+# column and row, in the terminal's own ANSI colours, so the palette (foot.ini)
+# is what colours it. To change what it shows, change `frame`; `run` only moves
+# it to a new spot each minute (so no pixel sits lit) and cycles the colour.
+set -euo pipefail
+
+self=$(readlink -f "${BASH_SOURCE[0]}")
+pidfile="${XDG_RUNTIME_DIR:-/tmp}/ergon-screensaver.pid"
+
+# 3x5 glyphs, row-major, 1 = lit. Indexed 0-9 then ':'.
+glyphs=(111101101101111 010110010010111 111001111100111 111001111001111 101101111001001
+        111100111001111 111100111101111 111001001001001 111101111101111 111101111001111 000010000010000)
+
+# frame HH:MM COL ROW COLOR -> escape codes drawing the time with its top-left at COL,ROW.
+frame() {
+  local t=$1 col=$2 row=$3 color=$4 i r c ch g x out=""
+  for ((r = 0; r < 5; r++)); do
+    out+=$(printf '\e[%d;%dH' $((row + r)) "$col")
+    for ((i = 0; i < ${#t}; i++)); do
+      ch=${t:i:1}; [ "$ch" = : ] && g=${glyphs[10]} || g=${glyphs[$ch]}
+      for ((c = 0; c < 3; c++)); do
+        x=${g:r*3+c:1}
+        [ "$x" = 1 ] && out+=$(printf '\e[%dm██\e[0m' "$color") || out+='  '
+      done
+      out+='  '
+    done
+  done
+  printf '%s' "$out"
+}
+
+run() {
+  trap 'printf "\e[?25h\e[?1049l"' EXIT
+  printf '\e[?1049h\e[?25l'
+  local cols rows t col row n=0 colors=(96 94 95 36 34 35)
+  while :; do
+    cols=$(tput cols); rows=$(tput lines)
+    t=$(date +%H:%M)
+    # 4 digits + colon, each 3 cells of 2 columns plus 2 of gap: 5 * 8 columns.
+    col=$(( 1 + RANDOM % (cols > 42 ? cols - 40 : 1) )); row=$(( 1 + RANDOM % (rows > 6 ? rows - 5 : 1) ))
+    printf '\e[2J'
+    frame "$t" "$col" "$row" "${colors[n++ % ${#colors[@]}]}"
+    # Hold this minute; any key ends it.
+    if read -r -s -n1 -t $((61 - 10#$(date +%S))); then exit 0; fi
+  done
+}
+
+case "${1:-start}" in
+  frame) frame "${2:?time}" "${3:-1}" "${4:-1}" "${5:-36}"; echo ;;
+  run)   run ;;
+  start)
+    [ "$("${self%/*}/ergon-toggle" get screensaver 2>/dev/null || echo on)" = off ] && exit 0
+    "$0" stop
+    setsid foot --fullscreen --app-id=ergon-screensaver "$self" run >/dev/null 2>&1 &
+    echo $! > "$pidfile"
+    ;;
+  stop)
+    pid=$(cat "$pidfile" 2>/dev/null || true)
+    # Only a process that is still ours: the pid may have been reused.
+    if [ -n "$pid" ] && grep -aq ergon-screensaver "/proc/$pid/cmdline" 2>/dev/null; then kill "$pid" 2>/dev/null || true; fi
+    rm -f "$pidfile"
+    ;;
+  -h|--help) sed -n "2,13p" "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "ergon-screensaver: unknown argument '$1'" >&2; exit 2 ;;
+esac

@@ -30,7 +30,11 @@ hl.on("hyprland.start", function()
   hl.exec_cmd("systemctl --user start hyprpolkitagent.service")
 
   -- The desktop surfaces.
-  hl.exec_cmd("waybar")
+  -- Unless `ergon toggle bar` switched it off (ERGON-151).
+  local tg = io.open((os.getenv("XDG_STATE_HOME") or ((os.getenv("HOME") or "") .. "/.local/state")) .. "/ergon/toggles")
+  local bar_off = tg and ("\n" .. tg:read("a")):match("\nbar=off") or false
+  if tg then tg:close() end
+  if not bar_off then hl.exec_cmd("waybar") end
   hl.exec_cmd("mako")
   -- ergon-wallpaper STARTS hyprpaper; there is deliberately no bare
   -- `hyprpaper` line here any more. It renders the image if missing, writes a

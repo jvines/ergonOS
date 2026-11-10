@@ -574,8 +574,9 @@ if [ "$APPLY" = 1 ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v h
   # gap between the keybind and a repainted desktop rather than two.
   pkill -x waybar         >/dev/null 2>&1 || true
   pkill -x swayosd-server >/dev/null 2>&1 || true
+  bar=$("$ERGON/bin/ergon-toggle" get bar 2>/dev/null || echo on)   # ERGON-151: a bar you switched off stays off
   sleep 0.5
-  hyprctl dispatch 'hl.dsp.exec_raw("waybar")'         >/dev/null 2>&1 || true
+  [ "$bar" = off ] || hyprctl dispatch 'hl.dsp.exec_raw("waybar")'         >/dev/null 2>&1 || true
   hyprctl dispatch 'hl.dsp.exec_raw("swayosd-server")' >/dev/null 2>&1 || true
 
   # mako does have a reload, and it keeps the notifications already on screen.

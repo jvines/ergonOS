@@ -117,7 +117,7 @@ system_menu() {
 
 style_menu() {
   local sel
-  sel=$(printf 'Palette\nBackground\n' | pick style) || exit 0
+  sel=$(printf 'Palette\nBackground\nToggles\n' | pick style) || exit 0
   case "$sel" in
     Palette)
       sel=$("$BINDIR/ergon-theme" --list | pick palette) || exit 0
@@ -125,6 +125,11 @@ style_menu() {
       ;;
     Background)
       background_menu
+      ;;
+    Toggles)
+      # "name  on|off" lines straight from ergon-toggle; picking one flips it.
+      sel=$("$BINDIR/ergon-toggle" list | pick toggle) || exit 0
+      exec "$BINDIR/ergon-toggle" "$(awk '{print $1}' <<<"$sel")"
       ;;
   esac
 }
@@ -203,6 +208,8 @@ dump() {
   printf 'System\n  session menu (ergon session)\n  Wi-Fi (ergon wifi)\n  Timezone (ergon timezone)\n  Language (ergon language)\n  Channel (ergon channel)\n'
   printf 'Style\n  Palette\n'
   "$BINDIR/ergon-theme" --list | unmarked | sed 's/^/    /'
+  printf '  Toggles\n'
+  "$BINDIR/ergon-toggle" list | awk '{print "    " $1}'
   printf '  Background\n'
   # Non-fatal: --list itself refuses (exit 1, its error on stderr, nothing on
   # stdout) on a machine with neither imagemagick nor a background on disk
