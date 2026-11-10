@@ -104,10 +104,13 @@ web_app_menu() {
 
 system_menu() {
   local sel
-  sel=$(printf 'Session\nWi-Fi\nWeb app\nTimezone\nLanguage\nChannel\n' | pick system) || exit 0
+  sel=$(printf 'Session\nWi-Fi\nSign in to Wi-Fi\nDNS\nSSH server\nWeb app\nTimezone\nLanguage\nChannel\n' | pick system) || exit 0
   case "$sel" in
     Session)  exec "$BINDIR/ergon-session" ;;
     Wi-Fi)    exec "$BINDIR/ergon-wifi" ;;
+    "Sign in to Wi-Fi") exec "$BINDIR/ergon-captive" ;;
+    DNS)      exec "$BINDIR/ergon-dns" ;;
+    "SSH server") run_in_terminal ssh-enable ;;   # refuses or asks sudo, so a terminal
     "Web app") web_app_menu ;;
     Timezone) run_in_terminal timezone ;;   # asks questions, so a real terminal
     Language) run_in_terminal language ;;   # asks questions too
@@ -205,7 +208,7 @@ help_menu() {
 # `ergon --list` (not --groups/--group, which this function itself calls --
 # see that test for why comparing it to itself would be circular).
 dump() {
-  printf 'System\n  session menu (ergon session)\n  Wi-Fi (ergon wifi)\n  Timezone (ergon timezone)\n  Language (ergon language)\n  Channel (ergon channel)\n'
+  printf 'System\n  session menu (ergon session)\n  Wi-Fi (ergon wifi)\n  Sign in to Wi-Fi (ergon captive)\n  DNS (ergon dns)\n  SSH server (ergon ssh-enable)\n  Timezone (ergon timezone)\n  Language (ergon language)\n  Channel (ergon channel)\n'
   printf 'Style\n  Palette\n'
   "$BINDIR/ergon-theme" --list | unmarked | sed 's/^/    /'
   printf '  Toggles\n'

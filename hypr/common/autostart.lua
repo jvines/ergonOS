@@ -92,4 +92,9 @@ hl.on("hyprland.start", function()
   -- mako, which is started above. It returns at once, so it cannot hold up
   -- anything here; ERGON_WELCOME=0 in the session environment turns it off.
   hl.exec_cmd("ergon-welcome --first-run")
+
+  -- ERGON-141: git name and email, asked once if git has none (fuzzel input).
+  -- ERGON-129: watch NetworkManager and open the sign-in page of a captive portal.
+  hl.exec_cmd("ergon-git-identity --first-run")
+  hl.exec_cmd("ergon-captive --watch")
 end)

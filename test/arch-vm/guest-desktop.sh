@@ -3454,6 +3454,18 @@ usr "pkill -x firefox" >/dev/null 2>&1; pkill -u "$U" -f ergon-stubbrowser 2>/de
 rm -f "$_stub_desktop" /tmp/stubbrowser.sh
 if [ -e "$_mime_bak.none" ]; then rm -f "$H/.config/mimeapps.list"; else cp -p "$_mime_bak" "$H/.config/mimeapps.list"; fi
 
+# --- ERGON-129/130/141/142: net login helpers on the guest ------------------
+if command -v nmcli >/dev/null 2>&1; then
+  usr "timeout 10 ergon-captive --check" >/tmp/cap129.out 2>&1 </dev/null
+  grep -qE '^(full|portal|limited|none|unknown)$' /tmp/cap129.out && ok "ERGON-129: ergon captive --check answers ($(cat /tmp/cap129.out))" || bad "ERGON-129: captive --check: $(head -c 200 /tmp/cap129.out)"
+  [ -f /etc/NetworkManager/conf.d/20-ergon-connectivity.conf ] && ok "ERGON-129: NetworkManager connectivity check provisioned" || bad "ERGON-129: no connectivity conf"
+  usr "timeout 10 ergon-dns show" >/dev/null 2>&1 </dev/null && ok "ERGON-130: ergon dns show runs on real nmcli" || bad "ERGON-130: ergon dns show failed"
+fi
+usr "timeout 10 ergon-ssh-enable --status" >/tmp/ssh142.out 2>&1 </dev/null
+grep -q 'authorized keys' /tmp/ssh142.out && ok "ERGON-142: ergon ssh-enable --status runs" || bad "ERGON-142: $(head -c 200 /tmp/ssh142.out)"
+systemctl is-enabled sshd >/dev/null 2>&1 && bad "ERGON-142: sshd is enabled on a fresh install" || ok "ERGON-142: sshd is not enabled on a fresh install"
+usr "timeout 10 ergon-git-identity --show" >/dev/null 2>&1 </dev/null && ok "ERGON-141: ergon git-identity --show runs" || bad "ERGON-141: git-identity --show failed"
+
 # --- ERGON-95: ergon-wifi on real nmcli output -------------------------------
 if command -v nmcli >/dev/null 2>&1; then
   _wl=$(usr "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list" 2>&1); _wl_rc=$?

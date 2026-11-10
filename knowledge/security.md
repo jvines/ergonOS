@@ -98,6 +98,17 @@ What stays open, and why each one is not optional:
   sshd is not enabled on a fresh install, and the fleet reaches this machine
   over the tailnet.
 
+`ergon ssh-enable` (ERGON-142) is the way to turn sshd on: it refuses until
+`~/.ssh/authorized_keys` holds a valid key, and it leaves these rules alone, so
+it is reachable over the tailnet and still not from the LAN.
+
+The captive-portal check (ERGON-129) makes NetworkManager fetch
+`http://ping.archlinux.org/nm-check.txt` on each connect and every five
+minutes. That is a plain HTTP request that tells archlinux.org this IP is
+online, and it is what lets `ergon captive` notice a hotel login page. Delete
+`/etc/NetworkManager/conf.d/20-ergon-connectivity.conf` to turn it off (the
+next provisioning run writes it back).
+
 mDNS (UDP 5353) is open, for driverless printer discovery and for this
 machine resolving a `*.local` name of its own (ERGON-40). Scoped by
 DESTINATION, not source or interface -- a laptop with no fixed name for "the

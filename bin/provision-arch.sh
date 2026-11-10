@@ -623,6 +623,16 @@ for u in NetworkManager docker bluetooth fwupd power-profiles-daemon avahi-daemo
     sudo systemctl enable --now "$u" >/dev/null 2>&1 && ok "$u" || skip "$u (not installed)"
   fi
 done
+# ERGON-129. NetworkManager only reports "portal" if it is told what to fetch.
+# ergon captive (autostart) reacts to that state. The check is a plain-HTTP fetch of
+# ping.archlinux.org: on connect and every 300 s, see knowledge/security.md.
+if _changed /etc/NetworkManager/conf.d/20-ergon-connectivity.conf <<'NMC'
+[connectivity]
+uri=http://ping.archlinux.org/nm-check.txt
+response=NetworkManager is online
+interval=300
+NMC
+then sudo nmcli general reload conf >/dev/null 2>&1; ok "NetworkManager connectivity check (captive portals)"; else skip "NetworkManager connectivity check already set"; fi
 # Group membership, NOT the daemon, is gated on DOCKER_GROUP (see "docker
 # group" below, after hosts/$HOST/host.env exists to read it from) -- the
 # daemon enables unconditionally because sudo docker needs it running either
