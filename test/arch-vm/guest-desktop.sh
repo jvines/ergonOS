@@ -3716,6 +3716,25 @@ fi
 usr "ergon-screensaver stop" >/dev/null 2>&1 </dev/null; sleep 1
 hq clients -j | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \
   && bad "ERGON-140: the screensaver window survived stop" || ok "ERGON-140: stop closes the screensaver"
+# 93/143/111/138: the new binds registered, the clock runs, toggling a device the VM
+# does not have fails cleanly, and restart refuses an unknown subsystem.
+for _d in "Touchpad on/off" "Touchscreen on/off" "Time, date, battery and world clock"; do
+  hq binds -j | jq -e --arg d "$_d" 'any(.[]; .description == $d)' >/dev/null 2>&1 \
+    && ok "ERGON-93/143/111: bind '$_d' is registered" || bad "ERGON-93/143/111: no bind described '$_d'"
+done
+usr "ergon clock" 2>&1 </dev/null | grep -q 'UTC' && ok "ERGON-111: ergon clock prints the time" || bad "ERGON-111: ergon clock printed no UTC line"
+usr "ergon toggle-input touchscreen off; echo rc=\$?" 2>&1 </dev/null | grep -qE 'rc=[01]' && ok "ERGON-143: toggle-input exits cleanly with or without a touchscreen" || bad "ERGON-143: toggle-input crashed"
+usr "ergon restart nonsense; echo rc=\$?" 2>&1 </dev/null | grep -q 'rc=2' && ok "ERGON-138: ergon restart refuses an unknown subsystem" || bad "ERGON-138: ergon restart nonsense did not exit 2"
+
+# 93/143/111/138: the new binds registered, the clock runs, toggling a device the VM
+# does not have fails cleanly, and restart refuses an unknown subsystem.
+for _d in "Touchpad on/off" "Touchscreen on/off" "Time, date, battery and world clock"; do
+  hq binds -j | jq -e --arg d "$_d" 'any(.[]; .description == $d)' >/dev/null 2>&1 \
+    && ok "ERGON-93/143/111: bind '$_d' is registered" || bad "ERGON-93/143/111: no bind described '$_d'"
+done
+usr "ergon clock" 2>&1 </dev/null | grep -q 'UTC' && ok "ERGON-111: ergon clock prints the time" || bad "ERGON-111: ergon clock printed no UTC line"
+usr "ergon toggle-input touchscreen off; echo rc=\$?" 2>&1 </dev/null | grep -qE 'rc=[01]' && ok "ERGON-143: toggle-input exits cleanly with or without a touchscreen" || bad "ERGON-143: toggle-input crashed"
+usr "ergon restart nonsense; echo rc=\$?" 2>&1 </dev/null | grep -q 'rc=2' && ok "ERGON-138: ergon restart refuses an unknown subsystem" || bad "ERGON-138: ergon restart nonsense did not exit 2"
 
 # 113: ergon-window width save and restore through the binds.
 if [ -S "$YSOCK" ]; then

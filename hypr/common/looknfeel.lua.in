@@ -135,3 +135,15 @@ hl.config({
 -- Native since 0.51. hyprgrass is not a package (only hyprgrass-git, which
 -- depends on hyprland-git and would replace the official build).
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+
+-- More gestures (ERGON-137), each under pcall so an action this Hyprland does not
+-- know costs that one gesture and never the config. 4 fingers: drag the window,
+-- swipe down for fullscreen, up to float it. Native actions from the gestures
+-- docs (move, fullscreen, float); 3 fingers stay on workspaces.
+for _, g in ipairs({
+  { fingers = 4, direction = "horizontal", action = "move" },
+  { fingers = 4, direction = "down",       action = "fullscreen" },
+  { fingers = 4, direction = "up",         action = "float" },
+}) do
+  pcall(hl.gesture, g)
+end

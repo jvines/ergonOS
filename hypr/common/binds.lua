@@ -367,3 +367,10 @@ bind("SUPER + CTRL + ALT + Z",   "Reset zoom",                 "ergon-zoom reset
 -- Desktop switches (ERGON-109/150/151/155/140): `ergon toggle` is the one mechanism,
 -- the Style > Toggles menu reaches all of them. Only the bar has a key.
 bind("SUPER + ALT + B", "Toggle the status bar", "ergon-toggle bar")
+-- Input devices and the time toast (ERGON-93, 143, 111). The devices are found by
+-- capability in ergon-toggle-input; the touchpad key many laptops have is bound
+-- too, `locked` so it also works over the lock screen.
+bind("SUPER + CTRL + P",         "Touchpad on/off",        "ergon-toggle-input touchpad")
+bind("XF86TouchpadToggle",       "Touchpad on/off",        "ergon-toggle-input touchpad", { locked = true })
+bind("SUPER + CTRL + SHIFT + P", "Touchscreen on/off",     "ergon-toggle-input touchscreen")
+bind("SUPER + CTRL + T",         "Time, date, battery and world clock", "ergon-clock")
