@@ -197,6 +197,10 @@ jobs:
       - name: Local LLM bundle picks its backend by GPU
         run: cd "$CI_DIR" && ./bin/test-llm.sh
 
+      # Install-media presets: parsing, precedence, reflector, bootstrap wiring.
+      - name: Install preset and regional mirrors
+        run: cd "$CI_DIR" && ./bin/test-preset.sh
+
       # And the background follows the palette, which is the half the step above
       # does not touch. The wallpaper is the largest surface on the screen and
       # the only themed one that is not rendered from a .in template, so nothing
