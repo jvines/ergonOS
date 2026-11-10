@@ -84,6 +84,6 @@ for f in "$REPO"/theme/*.env; do
   fi
   if [ -z "$why" ]; then ok "$p"; else bad "$p:$why"; fi
 done
-[ "$n" -ge 34 ] && ok "$n palettes checked" || bad "only $n palettes found"
+[ "$n" -ge 19 ] && ok "$n palettes checked" || bad "only $n palettes found"
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

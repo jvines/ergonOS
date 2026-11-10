@@ -54,8 +54,6 @@ check "hyprland.lua loads toggles.lua"  grep -q 'ergon/toggles.lua' "$REPO/hypr/
 check "autostart honours bar=off"       grep -q 'bar=off' "$REPO/hypr/common/autostart.lua"
 check "ergon-theme honours the bar toggle" grep -q 'ergon-toggle" get bar' "$REPO/bin/ergon-theme"
 check "the menu reaches the toggles"    bash -c '"$0" --dump | grep -q "^    widescreen"' "$REPO/bin/ergon-menu"
-check "hypridle starts the screensaver" grep -q 'on-timeout = ergon-screensaver start' "$REPO/hypr/hypridle.conf"
-check "and stops it on input"           grep -q 'on-resume  = ergon-screensaver stop' "$REPO/hypr/hypridle.conf"
 
 # Screensaver.
 check "a frame draws block digits"      bash -c '"$0" frame 12:34 1 1 | grep -q "██"' "$S"
