@@ -87,7 +87,8 @@ eq "refusal ran no systemctl" "$(grep -c systemctl "$LOG")" 0
 ssh-keygen -q -t ed25519 -N '' -f "$T/k" && cp "$T/k.pub" "$ERGON_AUTHORIZED_KEYS"
 "$B/ergon-ssh-enable" >/dev/null; eq "with a key: enabled" "$(grep systemctl "$LOG")" "systemctl enable --now sshd"
 : > "$LOG"; "$B/ergon-ssh-enable" --disable; eq "--disable" "$(grep systemctl "$LOG")" "systemctl disable --now sshd"
-if grep -nE 'enable[^#]*\bsshd\b' "$REPO/bin/provision-arch.sh" "$REPO/bin/arch-bootstrap.sh" | grep -v '^\S*:\s*#' | grep -q .; then bad "provisioning enables sshd"; else ok "provisioning never enables sshd"; fi
+_en=$(grep -nE 'enable[^#]*\bsshd\b' "$REPO/bin/provision-arch.sh" "$REPO/bin/arch-bootstrap.sh" | grep -v '^\S*:\s*#' || true)
+if [ -n "$_en" ]; then bad "provisioning enables sshd: $_en"; else ok "provisioning never enables sshd"; fi
 
 echo "== provisioning (ERGON-129)"
 grep -q 'uri=http://ping.archlinux.org/nm-check.txt' "$REPO/bin/provision-arch.sh" && ok "connectivity check provisioned" || bad "no connectivity conf"
