@@ -117,7 +117,7 @@ rm -f /etc/systemd/logind.conf.d/10-lid.conf /etc/systemd/sleep.conf.d/10-hibern
 #
 # ERGON_ARCHIVE_DATE: the Arch day bin/test-arch-vm.sh installed this disk from.
 # su - starts a clean environment, so it goes on the command line.
-su - "$U" -c "ERGON=$H/ergonOS ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_BUNDLES=\"notebooks dictation\" ERGON_HARDWARE=framework-13-amd ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} bash $H/ergonOS/bin/provision-arch.sh" >/tmp/prov.log 2>&1 &
+su - "$U" -c "ERGON=$H/ergonOS ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_BUNDLES=\"notebooks dictation\" ERGON_HARDWARE=framework-13-amd ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} ERGON_ARCHIVE_URL=${ERGON_ARCHIVE_URL:-https://archive.archlinux.org/repos} bash $H/ergonOS/bin/provision-arch.sh" >/tmp/prov.log 2>&1 &
 _prov=$!
 _t0=$(date +%s)
 while kill -0 "$_prov" 2>/dev/null; do
@@ -306,7 +306,7 @@ fi
 if [ -z "${ERGON_ARCHIVE_DATE:-}" ]; then
   bad "the harness passed no ERGON_ARCHIVE_DATE: this run tested whatever the mirrors had, which is no day to record"
 else
-  _day="https://archive.archlinux.org/repos/${ERGON_ARCHIVE_DATE//-//}"
+  _day="${ERGON_ARCHIVE_URL:-https://archive.archlinux.org/repos}/${ERGON_ARCHIVE_DATE//-//}"
   _srv=$(pacman-conf --repo core Server 2>&1; pacman-conf --repo extra Server 2>&1)
   if [ "$_srv" = "$_day/core/os/x86_64"$'\n'"$_day/extra/os/x86_64" ]; then
     ok "pacman reads core and extra from Arch as of $ERGON_ARCHIVE_DATE"
@@ -361,7 +361,7 @@ if su - "$U" -c "set -e
     git -C /tmp/ergon-ahead -c user.email=vm@ergon.invalid -c user.name=vm commit -qam 'packages: a provisioning input changes'
     git -C /tmp/ergon-ahead push -q origin HEAD" > /tmp/sync-setup.log 2>&1
 then
-  su - "$U" -c "ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} $G/bin/ergon-sync --yes" > /tmp/sync.log 2>&1
+  su - "$U" -c "ERGON_SKIP_AUR=1 ERGON_SKIP_NEWS=1 ERGON_ARCHIVE_DATE=${ERGON_ARCHIVE_DATE:-} ERGON_ARCHIVE_URL=${ERGON_ARCHIVE_URL:-https://archive.archlinux.org/repos} $G/bin/ergon-sync --yes" > /tmp/sync.log 2>&1
   ahead=$(su - "$U" -c "git -C $G rev-parse HEAD")
   if grep -qx "commit=$ahead" "$STAMP" 2>/dev/null; then
     ok "ergon sync re-provisioned for an incoming change to packages/pacman"

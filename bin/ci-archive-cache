@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# (Re)start the CI caching proxy for archive.archlinux.org on this host.
+# Idempotent: recreates the container from test/arch-vm/archive-cache/nginx.conf.
+# Reached by VM guests as http://172.17.0.1:9129/repos (the docker bridge gateway).
+set -euo pipefail
+here=$(cd "$(dirname "$0")/.." && pwd)
+name=ergon-archive-cache
+dir=${ERGON_ARCHIVE_CACHE_DIR:-$HOME/ci-cache/archive}
+port=${ERGON_ARCHIVE_CACHE_PORT:-9129}
+mkdir -p "$dir"
+# A copy outside the checkout: worktrees come and go, the container stays.
+conf=$(dirname "$dir")/archive-nginx.conf
+cp "$here/test/arch-vm/archive-cache/nginx.conf" "$conf"
+# nginx:alpine runs workers as uid 101; the cache dir must be writable by it.
+chmod 777 "$dir" 2>/dev/null || true
+docker rm -f "$name" >/dev/null 2>&1 || true
+docker run -d --name "$name" --label cl.jvines.owner=ergon-archive-cache \
+  --restart unless-stopped --memory 512m \
+  -p "$port:80" \
+  -v "$conf:/etc/nginx/nginx.conf:ro" \
+  -v "$dir:/cache" \
+  nginx:1.27-alpine
+echo "$name up on :$port, cache in $dir"
