@@ -185,6 +185,10 @@ jobs:
       - name: Text size scales every surface and survives a theme switch
         run: cd "$CI_DIR" && ./bin/test-text-size.sh
 
+      # `ergon font`: the family reaches every themed surface and survives a switch.
+      - name: Font family reaches every surface and survives a theme switch
+        run: cd "$CI_DIR" && ./bin/test-font.sh
+
       # And the background follows the palette, which is the half the step above
       # does not touch. The wallpaper is the largest surface on the screen and
       # the only themed one that is not rendered from a .in template, so nothing
