@@ -30,6 +30,7 @@
 # the NVIDIA env file; test/arch-vm/guest-desktop.sh mirrors onto a real
 # output.
 set -uo pipefail
+export ERGON_LANG=en   # the assertions read English; i18n follows the session locale (ERGON-158)
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 T=$(mktemp -d)

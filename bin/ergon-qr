@@ -19,6 +19,8 @@
 # Deliberately NOT written into ~/screenshots-outgoing: that directory is
 # mirrored across the fleet, and a scratch capture is not for shipping.
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
 notify() { notify-send "$@" 2>/dev/null || true; }
 
@@ -33,7 +35,7 @@ geom=$(slurp) || exit 0          # Esc or empty selection: not an error
 result=$(grim -g "$geom" - | zbarimg -q --raw -Sdisable -Sqrcode.enable - 2>/dev/null || true)
 
 if [ -z "$result" ]; then
-  notify -u critical "ergon-qr" "no QR code found in the selection"
+  notify -u critical "ergon-qr" "$(_t "no QR code found in the selection")"
   exit 1
 fi
 
@@ -48,7 +50,7 @@ case "$result" in
       # -A implies --wait, so backgrounded: the caller gets control back at
       # once. "default" is the only action key a mako click can reach (see
       # ergon-record). The URL reaches the opener as its own argv element.
-      ( action=$(notify-send -t 15000 -A "default=Open" "ergon-qr" "copied — $result") || true
+      ( action=$(notify-send -t 15000 -A "default=Open" "ergon-qr" "$(_t "copied — %s" "$result")") || true
         if [ "$action" = default ]; then
           if command -v ergon-browser >/dev/null 2>&1; then exec ergon-browser "$result"
           else exec xdg-open "$result"; fi
@@ -58,4 +60,4 @@ case "$result" in
     fi ;;
 esac
 
-notify "ergon-qr" "copied — $(printf '%s' "$result" | wc -c) characters"
+notify "ergon-qr" "$(_t "copied — %s characters" "$(printf '%s' "$result" | wc -c)")"

@@ -16,6 +16,7 @@
 # in packages/pacman; hiding /usr/bin/glow here takes a symlink farm of /usr/bin.
 # Whether the window really maps is the VM suite's (guest-desktop.sh).
 set -uo pipefail
+export ERGON_LANG=en   # the assertions read English; i18n follows the session locale (ERGON-158)
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 W="$REPO/bin/ergon-welcome"

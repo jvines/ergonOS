@@ -181,6 +181,14 @@ jobs:
       - name: A palette switch reaches the running desktop
         run: cd "$CI_DIR" && ./bin/test-theme.sh
 
+      # Every palette in theme/ is well formed, readable, and renders every template.
+      - name: Every palette is complete, legible and renders
+        run: cd "$CI_DIR" && ./bin/test-palettes.sh
+
+      # ERGON-158: the UI follows the locale (Spanish), English unchanged.
+      - name: Translations follow the locale and fall back to English
+        run: cd "$CI_DIR" && ./bin/test-i18n.sh
+
       # `ergon text-size`: one factor, every surface, kept across a palette switch.
       - name: Text size scales every surface and survives a theme switch
         run: cd "$CI_DIR" && ./bin/test-text-size.sh

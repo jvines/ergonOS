@@ -19,6 +19,8 @@
 # SIGINT, not SIGTERM: ffmpeg finalises the container on INT and leaves an
 # unplayable file on TERM.
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
 OUT="${ERGON_WEBCAM_DIR:-$HOME/Videos}"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/ergon"
@@ -36,12 +38,12 @@ if [ -n "$pid" ] && [[ "$cmd" == *"ffmpeg -nostdin"* ]]; then
   for _ in $(seq 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
   file=$(cat "$FILEF" 2>/dev/null || true)
   rm -f "$PIDF" "$FILEF"
-  notify "ergon-webcam" "stopped — $(basename "${file:-$OUT}")"
+  notify "ergon-webcam" "$(_t "stopped — %s" "$(basename "${file:-$OUT}")")"
   exit 0
 fi
 rm -f "$PIDF" "$FILEF"
 
-command -v ffmpeg >/dev/null || { notify -u critical "ergon-webcam" "ffmpeg is not installed"; echo "ergon-webcam: ffmpeg is not installed" >&2; exit 1; }
+command -v ffmpeg >/dev/null || { notify -u critical "ergon-webcam" "$(_t "ffmpeg is not installed")"; echo "ergon-webcam: ffmpeg is not installed" >&2; exit 1; }
 
 dev="${ERGON_WEBCAM_DEVICE:-}"
 if [ -z "$dev" ]; then
@@ -52,7 +54,7 @@ if [ -z "$dev" ]; then
   done
 fi
 if [ -z "$dev" ] || [ ! -e "${ERGON_V4L_DEVROOT:-}$dev" ]; then
-  notify -u normal "ergon-webcam" "no camera found"
+  notify -u normal "ergon-webcam" "$(_t "no camera found")"
   echo "ergon-webcam: no camera found (no V4L2 capture device)" >&2
   exit 1
 fi
@@ -61,7 +63,7 @@ mkdir -p "$OUT" "$STATE"
 file="$OUT/webcam-$(date +%Y%m%d-%H%M%S).mp4"
 printf '%s' "$file" > "$FILEF"
 
-notify "ergon-webcam" "recording → $(basename "$file")"
+notify "ergon-webcam" "$(_t "recording → %s" "$(basename "$file")")"
 # Backgrounded so this invocation can write the pid and return; the second
 # invocation is what ends it. -nostdin: a keybind has no terminal to read.
 # set -m: a non-interactive shell starts background jobs with SIGINT ignored,

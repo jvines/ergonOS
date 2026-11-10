@@ -25,12 +25,14 @@
 # a minute". Nothing is left running in the caller's shell: systemd-run returns
 # once the unit is queued and its output is captured, not inherited.
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 export LC_ALL=C
 
 PFX=ergon-remind-
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 die() { echo "ergon-remind: $*" >&2; [ -t 2 ] || notify-send -a ergon-remind -u normal "ergon remind" "$*" >/dev/null 2>&1 || true; exit 1; }
-say() { notify-send -a ergon-remind -u low -t 4000 "Reminder" "$1" >/dev/null 2>&1 || true; echo "$1"; }
+say() { notify-send -a ergon-remind -u low -t 4000 "$(_t Reminder)" "$1" >/dev/null 2>&1 || true; echo "$1"; }
 
 # parse_when <text>: sets EPOCH, or dies with a message that says what was wrong.
 parse_when() {
@@ -89,7 +91,7 @@ cmd_clear() {
 # Runs from the timer. Hidden: `ergon remind` never documents it.
 cmd_fire() {
   local alert=$1 msg=$2
-  notify-send -a ergon-remind -u critical -t 0 "Reminder" "$msg" >/dev/null 2>&1 || true
+  notify-send -a ergon-remind -u critical -t 0 "$(_t Reminder)" "$msg" >/dev/null 2>&1 || true
   if [ "$alert" = 1 ]; then
     "$(dirname "$SELF")/ergon-alert" ergon-remind "$msg" >/dev/null 2>&1 || true
   fi

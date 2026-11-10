@@ -25,6 +25,8 @@
 # action fires at all: the waybar blink is easy to miss under a fullscreen
 # window or on the lock screen, and nothing else here ever spoke up.
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
 ROOT="${ERGON_SYSROOT:-}"
 PSDIR="$ROOT/sys/class/power_supply"
@@ -149,13 +151,13 @@ case "${1:-status}" in
 
     if [ "$cap" -le "$CRIT" ]; then
       if [ "$last" != critical ]; then
-        _notify critical "Battery critical: ${cap}%" \
-          "Plug in now. UPower suspends or hibernates on its own well before this runs out."
+        _notify critical "$(_t "Battery critical: %s%%" "$cap")" \
+          "$(_t "Plug in now. UPower suspends or hibernates on its own well before this runs out.")"
         printf 'critical\n' > "$STATE_FILE"
       fi
     elif [ "$cap" -le "$LOW" ]; then
       if [ "$last" = none ]; then
-        _notify - "Battery low: ${cap}%" "Plug in soon."
+        _notify - "$(_t "Battery low: %s%%" "$cap")" "$(_t "Plug in soon.")"
         printf 'low\n' > "$STATE_FILE"
       fi
     else

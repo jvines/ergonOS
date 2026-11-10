@@ -15,6 +15,8 @@
 # fallback; that one is the deliberate escape hatch for when wezterm is present
 # but broken, which this cannot detect.
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
 CLASS=""
 if [ "${1:-}" = "--class" ]; then CLASS="${2:?--class needs a name}"; shift 2; fi
@@ -49,6 +51,6 @@ elif command -v kitty >/dev/null; then
 fi
 
 command -v notify-send >/dev/null && \
-  notify-send -u critical "ergon-term" "no terminal emulator installed"
+  notify-send -u critical "ergon-term" "$(_t "no terminal emulator installed")"
 echo "ergon-term: no terminal emulator found (wezterm, foot, alacritty, kitty)" >&2
 exit 1

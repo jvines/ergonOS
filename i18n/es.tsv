@@ -1,0 +1,96 @@
+# Spanish (Chile). English text <TAB> translation. See lib/i18n.sh.
+# Keep the printf conversions (%s, %%) of the English, in the same order.
+# menu: top level
+System	Sistema
+Style	Estilo
+Commands	Comandos
+Help	Ayuda
+# menu: System
+Session	Sesión
+Wi-Fi	Wi-Fi
+Web app	Aplicación web
+Timezone	Zona horaria
+Language	Idioma
+Channel	Canal
+Add	Añadir
+Remove	Quitar
+List	Listar
+# menu: Style, Help
+Palette	Paleta
+Background	Fondo
+Keybindings	Atajos de teclado
+# menu: prompts
+ergon	ergon
+system	sistema
+style	estilo
+palette	paleta
+background	fondo
+commands	comandos
+help	ayuda
+web app	aplicación web
+no backgrounds to choose from (see: ergon wallpaper --list)	no hay fondos para elegir (ver: ergon wallpaper --list)
+# welcome
+Keys	Atajos
+Bundles	Paquetes
+Topics	Temas
+Welcome	Bienvenida
+It printed nothing.	No imprimió nada.
+No answer within %ss.	Sin respuesta en %ss.
+It failed (exit %s): %s	Falló (código %s): %s
+ergon explain has no welcome topic here.	ergon explain no tiene aquí el tema de bienvenida.
+To add one:	Para añadir uno:
+ergon-bundle has no usage line for add.	ergon-bundle no tiene línea de uso para add.
+Welcome to Ergon	Bienvenido a Ergon
+The welcome page could not open a window. Run: ergon welcome	La página de bienvenida no pudo abrir una ventana. Ejecuta: ergon welcome
+# explain
+Topics (ergon explain <topic>):	Temas (ergon explain <tema>):
+no topic %s	no existe el tema %s
+# notifications
+Battery critical: %s%%	Batería crítica: %s%%
+Battery low: %s%%	Batería baja: %s%%
+Plug in now. UPower suspends or hibernates on its own well before this runs out.	Conecta el cargador ahora. UPower suspende o hiberna por su cuenta mucho antes de que se agote.
+Plug in soon.	Conecta el cargador pronto.
+%s was killed for memory	%s fue terminado por falta de memoria
+systemd-oomd ended %s and everything running in it. `ergon watch` gives a long job a scope of its own.	systemd-oomd terminó %s y todo lo que corría en él. `ergon watch` da a un trabajo largo su propio scope.
+%s crashed%s	%s falló%s
+`coredumpctl info %s` has the details.	`coredumpctl info %s` tiene los detalles.
+no text found in selection	no se encontró texto en la selección
+tesseract not installed	tesseract no está instalado
+no QR code found in the selection	no se encontró un código QR en la selección
+copied — %s	copiado — %s
+copied — %s characters	copiado — %s caracteres
+stopped — %s	detenido — %s
+ffmpeg is not installed	ffmpeg no está instalado
+no camera found	no se encontró una cámara
+recording → %s	grabando → %s
+no terminal emulator installed	no hay un emulador de terminal instalado
+unicode-emoji is not installed	unicode-emoji no está instalado
+%s copied (wtype not installed, so not typed)	%s copiado (wtype no está instalado, así que no se escribió)
+Reminder	Recordatorio
+# menu: added with ERGON-109, 129-132, 138, 141-143, 147 (integration 2026-11-10)
+Display	Pantalla
+Toggles	Interruptores
+Sign in to Wi-Fi	Iniciar sesión en el Wi-Fi
+SSH server	Servidor SSH
+Vault	Bóveda
+Tailscale	Tailscale
+DNS	DNS
+Restart	Reiniciar
+Touchpad	Panel táctil
+Touchscreen	Pantalla táctil
+World clock	Reloj mundial
+Transcode	Convertir video o imagen
+Present (mirror, no notifications)	Presentar (espejo, sin notificaciones)
+Mirror	Espejo
+Extend right	Extender a la derecha
+Extend left	Extender a la izquierda
+Extend (undo mirror)	Extender (deshacer espejo)
+Scale (next)	Escala (siguiente)
+Resolution and refresh	Resolución y frecuencia
+Rotate	Rotar
+Keep this layout	Conservar esta disposición
+display	pantalla
+restart	reiniciar
+resolution	resolución
+rotate	rotar
+toggle	interruptor

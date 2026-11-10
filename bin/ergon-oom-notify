@@ -20,6 +20,8 @@
 # oomd may touch here is under that manager's app.slice (provisioning's
 # out-of-memory stage), so this is every kill in the session and nobody else's.
 set -euo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
 KILLED=d989611b15e44c9dbf31e3c81256e4ed    # "systemd-oomd killed N process(es) in this unit"
 STARTED=39f53479d3a045ac8e11786248231fbf   # "Started <description>."
@@ -50,7 +52,7 @@ journalctl --quiet --follow --lines=0 --output=json MESSAGE_ID="$KILLED" _UID="$
   # measured); ergon\x2dterm arrived as ergonx2dterm, a unit that is not there.
   # Its own app name: mako groups by app-name (mako/config), and a crash toast
   # from plain `notify-send` would otherwise fold into a held critical one.
-  notify-send -a ergon-oom-notify -u critical "${what:-$unit} was killed for memory" \
-    "systemd-oomd ended ${unit//\\/\\\\} and everything running in it. \`ergon watch\` gives a long job a scope of its own." \
+  notify-send -a ergon-oom-notify -u critical "$(_t "%s was killed for memory" "${what:-$unit}")" \
+    "$(_t "systemd-oomd ended %s and everything running in it. \`ergon watch\` gives a long job a scope of its own." "${unit//\\/\\\\}")" \
     || printf 'could not deliver the notification for %s (no session bus?)\n' "$unit" >&2
 done

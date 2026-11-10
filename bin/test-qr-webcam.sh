@@ -13,6 +13,7 @@
 # ergon-webcam: a fake sysfs tree stands in for /sys/class/video4linux and a
 # stub ffmpeg that exits on SIGINT stands in for the encoder.
 set -uo pipefail
+export ERGON_LANG=en   # the assertions read English; i18n follows the session locale (ERGON-158)
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PASS=0; FAIL=0
