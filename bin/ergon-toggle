@@ -55,8 +55,8 @@ snippet() {
     opacity:off)     echo 'hl.config({ decoration = { inactive_opacity = 1.0 } })' ;;
     rounding:on)     echo 'hl.config({ decoration = { rounding = 4 } })' ;;
     rounding:off)    echo 'hl.config({ decoration = { rounding = 0 } })' ;;
-    widescreen:on)   echo 'hl.config({ dwindle = { single_window_aspect_ratio = { 16, 9 } } })' ;;
-    widescreen:off)  echo 'hl.config({ dwindle = { single_window_aspect_ratio = { 0, 0 } } })' ;;
+    widescreen:on)   echo 'hl.config({ layout = { single_window_aspect_ratio = { 16, 9 } } })' ;;
+    widescreen:off)  echo 'hl.config({ layout = { single_window_aspect_ratio = { 0, 0 } } })' ;;
   esac
 }
 
