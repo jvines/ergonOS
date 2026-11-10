@@ -2349,6 +2349,12 @@ assert_flame() {
 }
 # Best-effort screenshot into the writable out share (grim cannot capture where
 # the VM has no dmabuf path, which is a note, never a failure).
+# Text evidence beside the screenshots: stdin to /out/NAME.txt.
+diag() {
+  mountpoint -q /out 2>/dev/null || { mkdir -p /out; mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; } || true
+  if mountpoint -q /out 2>/dev/null; then cat > "/out/$1.txt"; chmod 666 "/out/$1.txt" 2>/dev/null || true; else cat >/dev/null; fi
+}
+
 shot() {
   mountpoint -q /out 2>/dev/null || { mkdir -p /out; mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; } || true
   mountpoint -q /out 2>/dev/null || { note "no out share: no $1 screenshot"; return 0; }
@@ -3073,12 +3079,13 @@ else
     # From the screen, not the projector: with no eDP, extend works from the
     # focused output, and creating ERGON-PROJ can leave the focus on it.
     hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null 2>&1; sleep 0.5
+    { echo "== before"; hq monitors all -j; } | diag display-extend-right
     usr "ergon-display extend right" >> /tmp/display.log 2>&1
     sleep 2
     _dx=$(hq monitors -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .x')
     _sw=$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | ((.width / .scale) | round)')
     [ -n "$_dx" ] && [ "$_dx" = "$_sw" ] && ok "ergon display extend right puts the second output at x=$_sw" \
-      || { bad "extend right: ERGON-PROJ at x='$_dx', expected '$_sw'"; hq monitors all -j | jq -c '.[] | {name, x, width, scale, disabled, mirrorOf}' | sed 's/^/     /'; tail -5 /tmp/display.log | sed 's/^/     /'; }
+      || { bad "extend right: ERGON-PROJ at x='$_dx', expected '$_sw'"; { echo '== before'; cat /out/display-extend-right.txt 2>/dev/null; echo '== after'; hq monitors all -j; echo '== display.log'; cat /tmp/display.log; } > /tmp/dx.txt; diag display-extend-right < /tmp/dx.txt; }
     shot display-extend-right
     usr "ergon-display scale cycle" >> /tmp/display.log 2>&1 \
       && ok "ergon display scale cycle steps the focused output" || bad "scale cycle failed (see /tmp/display.log)"
@@ -4404,6 +4411,11 @@ elif [ -n "$(loginctl show-user "$U" -p Display --value 2>/dev/null)" ]; then
     _why=$(usr "journalctl --user -b --no-pager -q -u pipewire.service" 2>/dev/null | grep -iE 'rtkit|realtime|sched|priority' | tail -3 | tr '\n' ' ')
     if [ "$_act" = yes ]; then
       bad "  no pipewire thread has realtime priority in active session $_sid, restarted inside it: $_pwt (pipewire: ${_why:-nothing logged})"
+      { echo "== session"; loginctl show-session "$_sid"; echo "== threads"; ps -L -o tid,cls,rtprio,ni,comm -p "$_pwp"
+        echo "== limits"; cat /proc/"$_pwp"/limits; echo "== pipewire log"; journalctl -b --no-pager -q _COMM=pipewire | tail -30
+        echo "== rtkit log"; journalctl -b --no-pager -q -u rtkit-daemon | tail -30
+        echo "== module-rt config"; grep -rn -A8 'module-rt' /usr/share/pipewire/pipewire.conf 2>/dev/null | head -30
+        echo "== polkit"; journalctl -b --no-pager -q -u polkit | tail -10; } 2>&1 | diag rtkit-135
     else
       note "ERGON-135: session $_sid is not active (Active=${_act:-?}), so polkit refuses rtkit by design; threads $_pwt; pipewire: ${_why:-nothing logged}"
     fi
