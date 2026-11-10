@@ -657,6 +657,16 @@ disp extend right
 check "extend right: the projector goes after the laptop's logical width" has "$SAVED" 'output = "HDMI-A-1", position = "1600x0"'
 check "  the next after that" has "$SAVED" 'output = "DP-2", position = "3520x0"'
 check "  and unmirrors" not has "$SAVED" "mirror"
+# Hyprland's FALLBACK placeholder is in `monitors all` (disabled): it takes no
+# room. The VM suite caught it: the projector went to x=2240, not 1280.
+FB='[{"name":"eDP-1","focused":true,"width":2560,"height":1600,"scale":1.6,"x":0,"y":0,"transform":0,"mirrorOf":"none"},
+     {"name":"FALLBACK","disabled":true,"width":1920,"height":1080,"scale":2,"x":0,"y":0,"transform":0,"mirrorOf":"none","id":9},
+     {"name":"HDMI-A-1","width":1920,"height":1080,"scale":1,"x":0,"y":0,"transform":0,"mirrorOf":"none","id":1}]'
+mons "$FB"; rm -f "$SAVED"
+disp extend right
+check "extend right skips the disabled FALLBACK output" has "$SAVED" 'output = "HDMI-A-1", position = "1600x0"'
+check "  and writes no rule for it" not has "$SAVED" "FALLBACK"
+mons "$EXT"; rm -f "$SAVED"
 disp extend left
 check "extend left: the projector goes before it" has "$SAVED" 'output = "HDMI-A-1", position = "-1920x0"'
 

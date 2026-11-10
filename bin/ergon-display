@@ -257,7 +257,7 @@ place() {  # right|left SOURCE
   hyprctl monitors all -j | jq -r --arg d "$1" --arg s "$2" '
     def lw: ((if ((.transform // 0) % 2) == 1 then .height else .width end) / (.scale // 1)) | round;
     (map(select(.name == $s))[0]) as $src
-    | [.[] | select(.name != $s)] as $o
+    | [.[] | select(.name != $s and .name != "FALLBACK" and (.disabled | not))] as $o
     | reduce $o[] as $m ({x: (if $d == "right" then ($src.x // 0) + ($src | lw) else ($src.x // 0) end), l: []};
         if $d == "right" then .l += ["\($m.name) \(.x)x\($src.y // 0)"] | .x += ($m | lw)
         else .x -= ($m | lw) | .l += ["\($m.name) \(.x)x\($src.y // 0)"] end)

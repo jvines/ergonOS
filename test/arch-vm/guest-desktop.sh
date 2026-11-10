@@ -3078,7 +3078,7 @@ else
     _dx=$(hq monitors -j | jq -r '.[] | select(.name == "ERGON-PROJ") | .x')
     _sw=$(hq monitors -j | jq -r --arg n "$_dsp_src" '.[] | select(.name == $n) | ((.width / .scale) | round)')
     [ -n "$_dx" ] && [ "$_dx" = "$_sw" ] && ok "ergon display extend right puts the second output at x=$_sw" \
-      || bad "extend right: ERGON-PROJ at x='$_dx', expected '$_sw' (see /tmp/display.log)"
+      || { bad "extend right: ERGON-PROJ at x='$_dx', expected '$_sw'"; hq monitors all -j | jq -c '.[] | {name, x, width, scale, disabled, mirrorOf}' | sed 's/^/     /'; tail -5 /tmp/display.log | sed 's/^/     /'; }
     shot display-extend-right
     usr "ergon-display scale cycle" >> /tmp/display.log 2>&1 \
       && ok "ergon display scale cycle steps the focused output" || bad "scale cycle failed (see /tmp/display.log)"
@@ -4397,7 +4397,16 @@ elif [ -n "$(loginctl show-user "$U" -p Display --value 2>/dev/null)" ]; then
   if [ -n "$_pwp" ] && ps -L -o cls=,ni= -p "$_pwp" | awk '$1 ~ /^(FF|RR)$/ || $2 < 0 { f=1 } END { exit !f }'; then
     ok "  pipewire restarted inside the session has a realtime or negative-nice thread: $_pwt"
   else
-    bad "  no pipewire thread has realtime priority, even restarted inside the session: $_pwt ($(journalctl -b --no-pager -q -u rtkit-daemon -n 3 2>/dev/null | tr '\n' ' '))"
+    # polkit grants rtkit to an ACTIVE session only. Judge it where the
+    # harness's session is one; elsewhere record why, with PipeWire's own words.
+    _sid=$(loginctl show-user "$U" -p Display --value 2>/dev/null)
+    _act=$(loginctl show-session "$_sid" -p Active --value 2>/dev/null)
+    _why=$(usr "journalctl --user -b --no-pager -q -u pipewire.service" 2>/dev/null | grep -iE 'rtkit|realtime|sched|priority' | tail -3 | tr '\n' ' ')
+    if [ "$_act" = yes ]; then
+      bad "  no pipewire thread has realtime priority in active session $_sid, restarted inside it: $_pwt (pipewire: ${_why:-nothing logged})"
+    else
+      note "ERGON-135: session $_sid is not active (Active=${_act:-?}), so polkit refuses rtkit by design; threads $_pwt; pipewire: ${_why:-nothing logged}"
+    fi
   fi
 else
   note "ERGON-135: no graphical logind session for $U in this harness, so polkit treats pipewire as inactive and rtkit refuses it by design; threads: $_pwt"
