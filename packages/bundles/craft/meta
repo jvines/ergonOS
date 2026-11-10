@@ -1,0 +1,3 @@
+DESCRIPTION="Craft suite: artcraft launcher and the storytold design, film, light, pdf, photo and vector apps (AUR)"
+SIZE_MB=500
+NOTE="Opt-in since ERGON-147. Everything is built from the AUR on install. The artcraft AI app itself is deliberately not included."

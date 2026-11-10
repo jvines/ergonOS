@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# ergon:summary=Password vault: point Bitwarden (app, rbw, Firefox) at your Vaultwarden server
+# ergon:group=system
+# ergon:args=[setup | url | firefox]
+# ergon:help=native
+#
+# ERGON-147. The Bitwarden clients are in the base (bitwarden, rbw, and the
+# Firefox extension); this tells them WHICH server, so they work with a
+# self-hosted Vaultwarden and not only bitwarden.com.
+#
+#   setup     (default) resolve the server URL and apply it to rbw
+#             (`rbw config set base_url`) and the desktop app (its data.json,
+#             unless the app is running). Asks once when no URL is known.
+#   url       print the URL: VAULT_URL in hosts/<host>/host.env, else the
+#             answer saved in ~/.config/ergon/vault-url, else nothing.
+#   firefox   install the Bitwarden extension through the system policy file
+#             (provisioning runs this), with the server URL as its managed
+#             storage when one is known. Other policies already there are kept.
+set -euo pipefail
+
+case "${1:-}" in -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
+HOSTENV="${ERGON_HOSTENV:-$ERGON/hosts/$(hostname -s)/host.env}"
+SAVED="${XDG_CONFIG_HOME:-$HOME/.config}/ergon/vault-url"
+APPDATA="${XDG_CONFIG_HOME:-$HOME/.config}/Bitwarden/data.json"
+POLICY_DIR="${ERGON_POLICY_DIR:-/etc/firefox/policies}"
+EXT_ID='{446900e4-71c2-419f-a6a7-df9c091e268b}'
+EXT_XPI='https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi'
+
+die() { echo "ergon-vault: $*" >&2; exit 1; }
+
+valid() { [[ $1 =~ ^https?://[^[:space:]\'\"\\]+$ ]]; }
+
+url() {
+  local u=""
+  [ -f "$HOSTENV" ] && u=$(sed -n 's/^VAULT_URL=//p' "$HOSTENV" | tail -n1 | tr -d "\"'")
+  [ -n "$u" ] || { [ -f "$SAVED" ] && u=$(head -n1 "$SAVED"); } || true
+  u=${u%/}
+  [ -z "$u" ] || valid "$u" || die "not a http(s) URL: $u"
+  printf '%s\n' "$u"
+}
+
+setup() {
+  local u; u=$(url)
+  if [ -z "$u" ]; then
+    [ -t 0 ] || exit 0                       # unattended: nothing to apply, nothing to ask
+    printf 'Vaultwarden server URL (https://vault.example.org): '
+    read -r u; u=${u%/}
+    [ -n "$u" ] || exit 0
+    valid "$u" || die "not a http(s) URL: $u"
+    mkdir -p "${SAVED%/*}"; printf '%s\n' "$u" > "$SAVED"
+  fi
+  if command -v rbw >/dev/null 2>&1; then
+    rbw config set base_url "$u" && echo "rbw: base_url = $u"
+  fi
+  if command -v bitwarden >/dev/null 2>&1; then
+    if pgrep -x bitwarden >/dev/null 2>&1; then
+      echo "Bitwarden is running; close it and run this again to set its server"
+    else
+      mkdir -p "${APPDATA%/*}"
+      [ -s "$APPDATA" ] || echo '{}' > "$APPDATA"
+      jq --arg u "$u" '.global_environment_environment = {region: "Self-hosted", urls: {base: $u}}' \
+        "$APPDATA" > "$APPDATA.new" && mv "$APPDATA.new" "$APPDATA"
+      echo "Bitwarden app: server = $u"
+    fi
+  fi
+}
+
+firefox() {
+  local u f tmp; u=$(url); f="$POLICY_DIR/policies.json"; tmp=$(mktemp)
+  [ -s "$f" ] && cp "$f" "$tmp" || echo '{}' > "$tmp"
+  jq --arg id "$EXT_ID" --arg xpi "$EXT_XPI" --arg u "$u" '
+      .policies.ExtensionSettings[$id] = {install_url: $xpi, installation_mode: "normal_installed"}
+      | if $u != "" then .policies["3rdparty"].Extensions[$id].environment = {base: $u} else . end
+    ' "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
+  if [ -w "$POLICY_DIR" ] || { mkdir -p "$POLICY_DIR" 2>/dev/null && [ -w "$POLICY_DIR" ]; }; then
+    install -m644 "$tmp" "$f"
+  else
+    sudo install -Dm644 "$tmp" "$f"
+  fi
+  rm -f "$tmp"
+  echo "Firefox: Bitwarden extension is installed by policy ($f)"
+}
+
+case "${1:-setup}" in
+  setup)   setup ;;
+  url)     url ;;
+  firefox) firefox ;;
+  *)       echo "usage: ergon-vault [setup | url | firefox]" >&2; exit 2 ;;
+esac

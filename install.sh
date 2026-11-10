@@ -399,6 +399,10 @@ else
   # is as safe to rerun as the links around it.
   if [ "$CHECK" = 1 ]; then "$ERGON/bin/ergon-webapp" sync --check; else "$ERGON/bin/ergon-webapp" sync || warn "web apps: sync failed"; fi
 
+  # ERGON-147: point rbw and the Bitwarden app at VAULT_URL (or the saved answer);
+  # unattended with neither, it does nothing -- the question waits for System > Vault.
+  if [ "$CHECK" != 1 ]; then "$ERGON/bin/ergon-vault" setup </dev/null || warn "vault: setup failed"; fi
+
   if [ "$CHECK" != 1 ]; then
     # ERGON-72: `su -`/`sudo -u` (provisioning, the VM harness) open no
     # logind session, so a bare `systemctl --user` below reached no manager

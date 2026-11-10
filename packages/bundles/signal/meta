@@ -1,0 +1,4 @@
+# SIZE_MB: signal-desktop 357 MiB installed, 111 MiB download (extra repo).
+DESCRIPTION="Signal, private messenger"
+SIZE_MB=360
+NOTE="Opt-in since ERGON-147. Link it to your phone from Signal on first start."

@@ -254,3 +254,5 @@ zathura-pdf-mupdf
 imv                 # images; also shows the Wi-Fi share QR (bin/ergon-wifi)
 qrencode            # bin/ergon-wifi: the "share this network" QR code
 mpv
+bitwarden           # ERGON-147: password vault client; bin/ergon-vault points it at Vaultwarden
+rbw                 # ERGON-147: Bitwarden CLI that works with Vaultwarden
