@@ -122,6 +122,13 @@ pcall(require, "hosts." .. host)
 local rt = os.getenv("XDG_RUNTIME_DIR")
 if rt then pcall(dofile, rt .. "/ergon/display.lua") end
 
+-- What `ergon toggle` switched off or on (animations, gaps, opacity, rounding,
+-- widescreen), rendered by bin/ergon-toggle into the state dir. After the themed
+-- config so it wins, before user.lua so yours still wins over it, and re-read on
+-- every load so a reload or a palette switch keeps the choice.
+local state = os.getenv("XDG_STATE_HOME") or ((os.getenv("HOME") or "") .. "/.local/state")
+pcall(dofile, state .. "/ergon/toggles.lua")
+
 -- Yours. Last, so an hl.config() here wins over everything above it.
 --
 -- The explicit path is the whole point and a bare require("user") would be a

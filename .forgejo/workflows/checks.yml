@@ -237,6 +237,10 @@ jobs:
       - name: The tiling key cycles a workspace's layout
         run: cd "$CI_DIR" && ./bin/test-tiling.sh
 
+      # ERGON-109/140/150/151/155: desktop toggles and the screensaver, stubs.
+      - name: Desktop toggles persist and the screensaver starts and stops
+        run: cd "$CI_DIR" && ./bin/test-toggle.sh
+
       # ERGON-108: cursor zoom steps, stub hyprctl.
       - name: The zoom keys step cursor:zoom_factor
         run: cd "$CI_DIR" && ./bin/test-zoom.sh

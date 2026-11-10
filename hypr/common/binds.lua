@@ -338,3 +338,7 @@ bind("SUPER + ALT + W", "Previous workspace layout", "ergon-tiling back")
 bind("SUPER + CTRL + Z",         "Zoom in around the cursor",  "ergon-zoom in",    { repeating = true })
 bind("SUPER + CTRL + SHIFT + Z", "Zoom out",                   "ergon-zoom out",   { repeating = true })
 bind("SUPER + CTRL + ALT + Z",   "Reset zoom",                 "ergon-zoom reset")
+
+-- Desktop switches (ERGON-109/150/151/155/140): `ergon toggle` is the one mechanism,
+-- the Style > Toggles menu reaches all of them. Only the bar has a key.
+bind("SUPER + ALT + B", "Toggle the status bar", "ergon-toggle bar")

@@ -3630,6 +3630,46 @@ if [[ "$_z0" =~ ^[0-9.]+$ ]]; then
   usr "ergon-zoom reset" >/dev/null 2>&1 </dev/null
 else bad "ERGON-108: zoom_factor is not numeric: '$_z0' ($(hq 'getoption cursor:zoom_factor -j' | head -c 150))"; fi
 
+# 109/150/151/155/140: ergon toggle, through the real compositor.
+_opt() { hq "getoption $1 -j" | jq -r '.int // .float // empty' 2>/dev/null; }
+usr "ergon-toggle gaps off; ergon-toggle rounding off; ergon-toggle animations off; ergon-toggle opacity off" >/dev/null 2>&1 </dev/null
+_g=$(_opt general:gaps_in); _r=$(_opt decoration:rounding); _a=$(_opt animations:enabled)
+[ "$_g" = 0 ] && [ "$_r" = 0 ] && [ "$_a" = 0 ] \
+  && ok "ERGON-109/155: toggles off reach the compositor (gaps_in $_g, rounding $_r, animations $_a)" \
+  || bad "ERGON-109/155: gaps_in '$_g' rounding '$_r' animations '$_a', want 0 0 0 ($(hq 'getoption general:gaps_in -j' | head -c 120))"
+hq reload >/dev/null 2>&1; sleep 2
+[ "$(_opt general:gaps_in)" = 0 ] && [ "$(_opt decoration:rounding)" = 0 ] \
+  && ok "ERGON-109: the choice survives a config reload" || bad "ERGON-109: a reload undid the toggles (gaps_in '$(_opt general:gaps_in)')"
+usr "ergon-toggle gaps on; ergon-toggle rounding on; ergon-toggle animations on; ergon-toggle opacity on" >/dev/null 2>&1 </dev/null
+[ "$(_opt general:gaps_in)" = 4 ] && [ "$(_opt decoration:rounding)" = 4 ] \
+  && ok "ERGON-109: toggled back on, the themed look returns" || bad "ERGON-109: gaps_in '$(_opt general:gaps_in)' rounding '$(_opt decoration:rounding)' after on"
+usr "ergon-toggle widescreen on" >/dev/null 2>&1 </dev/null
+hq "getoption dwindle:single_window_aspect_ratio -j" | grep -q '16' \
+  && ok "ERGON-150: widescreen sets the single-window aspect ratio" || bad "ERGON-150: aspect ratio not set: $(hq 'getoption dwindle:single_window_aspect_ratio -j' | head -c 150)"
+usr "ergon-toggle widescreen off" >/dev/null 2>&1 </dev/null
+if [ -S "$YSOCK" ]; then
+  # SUPER+ALT+B: evdev LEFTMETA 125, LEFTALT 56, B 48.
+  _wb() { pgrep -u "$(id -u "$U")" -x waybar >/dev/null; }
+  _wb && { o_key 125:1 56:1 48:1 48:0 56:0 125:0; o_until 6 bash -c '! pgrep -x waybar >/dev/null' \
+    && ok "ERGON-151: SUPER+ALT+B hides the bar" || bad "ERGON-151: waybar still running after SUPER+ALT+B"
+    o_key 125:1 56:1 48:1 48:0 56:0 125:0; o_until 8 _wb \
+    && ok "ERGON-151: SUPER+ALT+B brings the bar back" || bad "ERGON-151: the bar did not come back"; } \
+    || note "ERGON-151: no waybar running; the bar key is unpressed"
+fi
+# 140: the screensaver, as a picture for Jose to approve.
+usr "ergon-screensaver start" >/dev/null 2>&1 </dev/null; sleep 3
+hq clients -j | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \
+  && ok "ERGON-140: the screensaver window is open" || bad "ERGON-140: no ergon-screensaver window"
+if mountpoint -q /out 2>/dev/null; then
+  _mon=$(hq monitors -j 2>/dev/null | jq -r '.[0].name // empty')
+  timeout 30 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -o '$_mon' /out/screensaver.png" >/dev/null 2>&1 \
+    && chmod 666 /out/screensaver.png 2>/dev/null \
+    || note "ERGON-140: grim cannot capture in this VM (no dmabuf); no screensaver.png"
+fi
+usr "ergon-screensaver stop" >/dev/null 2>&1 </dev/null; sleep 1
+hq clients -j | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \
+  && bad "ERGON-140: the screensaver window survived stop" || ok "ERGON-140: stop closes the screensaver"
+
 # 113: ergon-window width save and restore through the binds.
 if [ -S "$YSOCK" ]; then
   o_win w113a && o_win w113b
