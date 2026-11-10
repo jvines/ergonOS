@@ -181,6 +181,10 @@ jobs:
       - name: A palette switch reaches the running desktop
         run: cd "$CI_DIR" && ./bin/test-theme.sh
 
+      # Every palette in theme/ is well formed, readable, and renders every template.
+      - name: Every palette is complete, legible and renders
+        run: cd "$CI_DIR" && ./bin/test-palettes.sh
+
       # `ergon text-size`: one factor, every surface, kept across a palette switch.
       - name: Text size scales every surface and survives a theme switch
         run: cd "$CI_DIR" && ./bin/test-text-size.sh
