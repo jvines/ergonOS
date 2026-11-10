@@ -132,6 +132,12 @@ else
   bad "provision-arch.sh failed"
   tail -25 /tmp/prov.log | sed 's/^/     /'
 fi
+# ERGON-126: a GRUB machine printed both of these while provisioning exited 0.
+if _w=$(grep -F '!!' /tmp/prov.log | grep -E 'boot guard not installed|did not reach grub.cfg|boot entries not installed|boot migration'); then
+  bad "provisioning warned about the boot chain: $_w"
+else
+  ok "provisioning installed the boot entries and the boot guard without a warning"
+fi
 # Arch news published AFTER the install: informant was not there when the
 # ERGON_SKIP_NEWS gate ran, so its hook would abort every later pacman
 # transaction (aur --rebuild, ergon update). The operator reads it; so does this.

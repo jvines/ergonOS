@@ -9,7 +9,10 @@
 #                 means rebuilding them (mkinitcpio -P).
 #   grub          installs before that. /boot is inside LUKS2, GRUB unlocks it,
 #                 and the cmdline lives in /etc/default/grub. These machines
-#                 keep GRUB until ERGON-125 migrates them.
+#                 keep GRUB until bin/ergon-boot-migrate moves them (ERGON-125).
+#                 It writes /etc/kernel/cmdline early but the layout flips only
+#                 at its last step, var/lib/ergon/boot-migrated: until then a
+#                 half-migrated machine still boots, and is treated as, GRUB.
 #
 # Every function takes the root to look under as its first argument ("" for
 # the running system; ERGON_BOOTROOT when omitted), and ERGON_ESP overrides
@@ -17,7 +20,8 @@
 
 ergon_boot_layout() {  # ergon_boot_layout [root] -> systemd-boot | grub | none
   local r="${1-${ERGON_BOOTROOT:-}}"
-  if [ -f "$r/etc/kernel/cmdline" ]; then echo systemd-boot
+  if [ -f "$r/etc/kernel/cmdline" ] && { [ ! -f "$r/etc/default/grub" ] || [ -f "$r/var/lib/ergon/boot-migrated" ]; }; then
+    echo systemd-boot
   elif [ -f "$r/etc/default/grub" ]; then echo grub
   else echo none; fi
 }
