@@ -113,7 +113,7 @@ manager does not re-read it.
 
 **Do not edit a themed config. It is generated, and your edit has a short life.**
 
-Nineteen files are rendered from a `.in` template beside them by
+Twenty-one files are rendered from a `.in` template beside them by
 `ergon theme`, which expands the active palette into `@COOL_*@` placeholders:
 
     waybar/style.css      mako/config        hypr/hyprlock.conf
@@ -122,7 +122,7 @@ Nineteen files are rendered from a `.in` template beside them by
     yazi/theme.toml       lnav/config.json   lazygit/config.yml
     lazydocker/config.yml wezterm/wezterm.lua btop/themes/ergon.theme
     bat/themes/ergon.tmTheme  swayosd/style.css  gtk/gtk4.css
-    gtk/settings4.ini
+    gtk/settings4.ini     qt6ct/qt6ct.conf   qt6ct/colors/ergon.conf
 
 `gtk/gtk4.css` is the one exception to "the active palette": it is
 `gtk/gtk.css.in` rendered twice, a light palette and a dark one in

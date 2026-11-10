@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Open the terminal, whichever one this machine actually has
 # ergon:group=launch
-# ergon:args=[--class NAME] [command [args...]]
+# ergon:args=[--here] [--class NAME] [command [args...]]
 # ergon:help=native
 #
 # wezterm is the daily terminal and an AUR git build (see packages/aur), which
@@ -18,7 +18,8 @@ set -euo pipefail
 # shellcheck source=../lib/i18n.sh
 . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
 
-CLASS=""
+CLASS=""; HERE=0
+if [ "${1:-}" = "--here" ]; then HERE=1; shift; fi
 if [ "${1:-}" = "--class" ]; then CLASS="${2:?--class needs a name}"; shift 2; fi
 
 # ERGON-30: -h/--help is ours only when it is what's LEFT to launch, i.e. no
@@ -28,6 +29,28 @@ if [ "${1:-}" = "--class" ]; then CLASS="${2:?--class needs a name}"; shift 2; f
 case "${1:-}" in
   -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
+
+# --here (ERGON-133): open in the directory of the focused terminal, home when
+# the focused window is not one. The directory is the cwd of the focused
+# window's shell, /proc/<child>/cwd: its first child, since a terminal's pid is
+# the emulator and the shell is what it spawned. A window with several tabs
+# (wezterm) answers for its first. OSC 7 is not used: it needs the shell to
+# cooperate, and a /proc read works in the shell as it ships. Every terminal
+# below starts its shell in the cwd it was launched with, so a cd here is the
+# whole feature and needs no per-terminal flag.
+if [ "$HERE" = 1 ]; then
+  _dir="$HOME"
+  _w=$(hyprctl activewindow -j 2>/dev/null || true)
+  _class=$(jq -r '.class // empty' <<<"$_w" 2>/dev/null || true)
+  case "$_class" in
+    org.wezfurlong.wezterm|foot|footclient|Alacritty|kitty|ergon-float)
+      _pid=$(jq -r '.pid // empty' <<<"$_w" 2>/dev/null || true)
+      _child=$(pgrep -P "${_pid:-0}" 2>/dev/null | head -1 || true)
+      _cwd=$(readlink "/proc/${_child:-0}/cwd" 2>/dev/null || true)
+      [ -n "$_cwd" ] && [ -d "$_cwd" ] && _dir="$_cwd" ;;
+  esac
+  cd "$_dir" 2>/dev/null || cd "$HOME"
+fi
 
 # Each terminal spells the app-id flag differently, and gets the command in a
 # different position. Keep the mapping here rather than at every call site.

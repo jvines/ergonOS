@@ -365,6 +365,9 @@ if [ "$GSETTINGS_ONLY" = 1 ]; then sync_gsettings; exit 0; fi
   printf 's|@COOL_PREFER_DARK@|%s|g\n' "$PREFER_DARK"
   printf 's|@COOL_GTK_THEME@|%s|g\n'   "$GTK_THEME"
   printf 's|@COOL_ICON_THEME@|%s|g\n'  "$ICON_THEME"
+  # ERGON-139: qt5ct and qt6ct take an absolute colour-scheme path, and only
+  # this script knows whose $HOME it is rendering for.
+  printf 's|@COOL_HOME@|%s|g\n' "$(printf %s "$HOME" | sed 's/[&|\\]/\\&/g')"
 } >> "$SEDPROG"
 
 # gtk-4.0 gets BOTH modes, in @media (prefers-color-scheme) blocks that GTK4

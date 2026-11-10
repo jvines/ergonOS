@@ -277,6 +277,10 @@ jobs:
       - name: Input toggles, subsystem restart, clock and transcode
         run: cd "$CI_DIR" && ./bin/test-input-restart.sh
 
+      # ERGON-133: SUPER+RETURN opens in the focused terminal's directory.
+      - name: A new terminal opens where the focused one is
+        run: cd "$CI_DIR" && ./bin/test-term-here.sh
+
       # ERGON-103: links go to the default browser and raise its window, stubs.
       - name: Links open in the default browser and raise it
         run: cd "$CI_DIR" && ./bin/test-browser.sh
