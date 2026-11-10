@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# ergon:summary=Set git's global name and email once, on first login; never overwrites
+# ergon:group=system
+# ergon:args=[--first-run | --show | NAME EMAIL]
+# ergon:help=native
+#
+#   ergon git-identity               ask for whatever is missing, now
+#   ergon git-identity NAME EMAIL    set the missing ones directly
+#   ergon git-identity --show        print the global identity
+#   ergon git-identity --first-run   what autostart runs: asks once per user, then never again
+#
+# ERGON-141. Only a MISSING user.name or user.email is ever written; an identity that
+# exists is left alone. The prompt is a fuzzel input on a desktop, read on a terminal.
+# Escape or an empty answer skips, and a skipped first run is not repeated (the stamp is
+# ${XDG_STATE_HOME:-~/.local/state}/ergon/git-identity-asked); `ergon git-identity` asks again.
+set -uo pipefail
+STAMP="${XDG_STATE_HOME:-$HOME/.local/state}/ergon/git-identity-asked"
+
+get() { git config --global --get "$1" 2>/dev/null; }
+
+ask() {  # $1 prompt -> stdout; 2 when it cannot ask at all
+  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v fuzzel >/dev/null 2>&1; then
+    fuzzel --dmenu --lines 0 --prompt "$1  " </dev/null || echo ""
+  elif [ -t 0 ]; then
+    local a; read -r -p "$1: " a; printf '%s\n' "$a"
+  else
+    return 2
+  fi
+}
+
+# fill NAME EMAIL: set each of the two that is missing and given.
+fill() {
+  [ -n "$(get user.name)" ] || { [ -z "$1" ] || git config --global user.name "$1"; }
+  case "$2" in *?@?*) [ -n "$(get user.email)" ] || git config --global user.email "$2" ;; esac
+}
+
+interactive() {
+  local n="" e=""
+  [ -n "$(get user.name)" ] || { n=$(ask "git name") || return $?; }
+  [ -n "$(get user.email)" ] || { e=$(ask "git email") || return $?; }
+  fill "$n" "$e"
+}
+
+case "${1:-}" in
+  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  --show) echo "name:  $(get user.name)"; echo "email: $(get user.email)" ;;
+  --first-run)
+    [ -e "$STAMP" ] && exit 0
+    [ -n "$(get user.name)" ] && [ -n "$(get user.email)" ] && exit 0
+    interactive; rc=$?
+    # Spent once asked or skipped; kept for a session that could not ask at all.
+    [ "$rc" = 2 ] || { mkdir -p "${STAMP%/*}" && : > "$STAMP"; }
+    exit 0 ;;
+  "") interactive ;;
+  *) [ $# -eq 2 ] || { echo "usage: ergon git-identity [--first-run | --show | NAME EMAIL]" >&2; exit 2; }
+     case "$2" in *?@?*) ;; *) echo "ergon-git-identity: '$2' is not an email address" >&2; exit 2 ;; esac
+     fill "$1" "$2" ;;
+esac
