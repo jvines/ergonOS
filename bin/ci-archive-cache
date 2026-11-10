@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # (Re)start the CI caching proxy for archive.archlinux.org on this host.
 # Idempotent: recreates the container from test/arch-vm/archive-cache/nginx.conf.
-# Reached by VM guests as http://172.17.0.1:9129/repos (the docker bridge gateway).
+# Reached by VM guests as http://192.168.0.87:9129/repos (not 172.17.0.1: the guest's own docker0 shadows it).
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 name=ergon-archive-cache

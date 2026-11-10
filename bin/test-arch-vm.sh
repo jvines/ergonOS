@@ -105,7 +105,9 @@ say "arch date"
 # locally. Otherwise the real archive, said so in the log. An explicit
 # ERGON_ARCHIVE_URL from the caller wins.
 if [ "${ERGON_ARCHIVE_URL:-https://archive.archlinux.org/repos}" = "https://archive.archlinux.org/repos" ]; then
-  _cache=${ERGON_ARCHIVE_CACHE_URL:-http://172.17.0.1:9129/repos}
+  # checo's LAN address, not the docker bridge gateway: the guest runs docker, whose
+  # own docker0 is 172.17.0.1 inside the guest and shadows it (measured 2026-11-10).
+  _cache=${ERGON_ARCHIVE_CACHE_URL:-http://192.168.0.87:9129/repos}
   if curl -fs --max-time 5 "${_cache%/repos}/healthz" >/dev/null 2>&1; then
     ERGON_ARCHIVE_URL=$_cache
     ok "archive cache answers: packages come through $ERGON_ARCHIVE_URL"
