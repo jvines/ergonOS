@@ -67,6 +67,12 @@ check "a deleted snapshot loses its entry, and the window moves to 2..9" \
 rm -rf "$T/snaps"/{3,4,5,6,7,8,9}; "$BE" sync >/dev/null 2>&1
 check "a build no entry uses any more leaves the ESP" test "$(find "$T/esp/EFI/ergon/snap" -mindepth 1 -maxdepth 1 -type d | wc -l)" = 1
 for n in 3 4 5 6 7 8 9 10; do snap "$n" 2; done; "$BE" sync >/dev/null 2>&1
+snap 11 2; mkdir -p "$T/snaps/11/snapshot/etc"
+echo 'FILES=(/etc/cryptsetup-keys.d/cryptroot.key)' > "$T/snaps/11/snapshot/etc/mkinitcpio.conf"
+"$BE" sync >/dev/null 2>&1
+check "a snapshot whose initramfs holds the LUKS keyfile never reaches the ESP (ERGON-125)" \
+  test ! -e "$E/ergon-snapshot-11.conf" -a -f "$E/ergon-snapshot-10.conf"
+rm -rf "$T/snaps/11"; "$BE" sync >/dev/null 2>&1
 
 echo "== the boot guard on systemd-boot"
 "$BG" record 1 > "$T/out" 2>&1 || bad "record failed: $(cat "$T/out")"

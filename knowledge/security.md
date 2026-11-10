@@ -244,10 +244,16 @@ without one: what Chromium, VS Code or Discord keep there is protected by the
 disk encryption, as the rest of `/home` is, and readable by any process
 running as you, as the rest of `/home` is.
 
-Installs from before ERGON-123 keep GRUB with `/boot` inside LUKS2 and a
+Installs from before ERGON-123 have GRUB with `/boot` inside LUKS2 and a
 random keyfile in the initramfs, so the passphrase is typed once at GRUB. That
-keyfile is encrypted at rest with everything else; ERGON-125 moves those
-machines to the layout above.
+keyfile is encrypted at rest with everything else. Provisioning moves those
+machines to the layout above (`ergon-boot-migrate`, ERGON-125; `BOOT_MIGRATE=0`
+in host.env keeps GRUB). The keyfile leaves the initramfs before the first UKI
+is built, since on the ESP it would be the disk's key in clear, and the boot
+menu never offers a snapshot from before the move: its initramfs still holds
+the key. Its keyslot stays until you retire it (`ergon-boot-migrate --help`).
+GRUB stays too, as an entry in systemd-boot's menu and behind it in the
+firmware's boot order; from there it asks for the passphrase twice.
 
 ## TRIM passes through the disk encryption
 

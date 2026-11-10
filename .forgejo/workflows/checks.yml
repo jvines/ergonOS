@@ -91,6 +91,10 @@ jobs:
       - name: Boot entries
         run: cd "$CI_DIR" && ./bin/test-boot-entries.sh
 
+      # ERGON-125: a GRUB install moves to systemd-boot, keeping GRUB.
+      - name: Boot migration
+        run: cd "$CI_DIR" && ./bin/test-boot-migrate.sh
+
       - name: Report scrubber
         run: cd "$CI_DIR" && ./bin/test-report.sh
 

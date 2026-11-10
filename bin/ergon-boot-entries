@@ -21,7 +21,9 @@
 # Only the newest ERGON_BOOT_SNAPSHOTS (8) get entries, so the ESP cannot fill.
 #
 # GRUB machines (installed before ERGON-123) are left alone: grub-btrfs does
-# this job there, and every command here says so and exits 0.
+# this job there, and every command here says so and exits 0. Once
+# ergon-boot-migrate moves one, its older snapshots get no entry: their
+# initramfs carries the LUKS keyfile, which must never reach the ESP.
 set -euo pipefail
 
 ERGON="$(cd "${ERGON:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/..}" && pwd -P)"
@@ -36,7 +38,7 @@ ok()   { printf '   ok   %s\n' "$*"; }
 warn() { printf '   !!   %s\n' "$*" >&2; }
 die()  { printf '   !!   %s\n' "$*" >&2; exit 1; }
 
-case "${1:-}" in -h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+case "${1:-}" in -h|--help|help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 
 if [ "$(ergon_boot_layout)" != systemd-boot ]; then
   echo "   this machine boots with GRUB; grub-btrfs keeps its snapshot entries"
@@ -85,6 +87,8 @@ info_field() {  # info_field <n> <tag>
 stage() {  # stage <n>
   local b="$SNAPDIR/$1/snapshot/boot" key need free
   [ -f "$b/vmlinuz-$KERNEL" ] && [ -f "$b/initramfs-$KERNEL.img" ] || return 1
+  # The keyfile is in a pre-migration snapshot's initramfs (ERGON-125).
+  ! grep -qs '^FILES=.*cryptsetup-keys\.d' "$SNAPDIR/$1/snapshot/etc/mkinitcpio.conf" || return 1
   key=$(stat -c '%s-%Y' "$b/vmlinuz-$KERNEL" "$b/initramfs-$KERNEL.img" | md5sum | cut -c1-12)
   if [ ! -f "$STORE/$key/initramfs.img" ]; then
     need=$(( $(stat -c %s "$b/vmlinuz-$KERNEL") + $(stat -c %s "$b/initramfs-$KERNEL.img") ))
@@ -241,6 +245,6 @@ EOF
   "$0" sync
   ;;
 
--h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
+-h|--help|help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' ;;
 *) die "unknown command '$1' (sync|list|install)" ;;
 esac
