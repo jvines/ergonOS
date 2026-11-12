@@ -60,7 +60,8 @@ run() {
   command -v tte >/dev/null 2>&1 && tte=tte
   [ -n "$tte" ] || { [ -x "$HOME/.local/bin/tte" ] && tte="$HOME/.local/bin/tte"; }
   while :; do
-    cols=$(tput cols); rows=$(tput lines)
+    # stty, not tput: it needs no $TERM, which a bare environment lacks.
+    read -r rows cols < <(stty size 2>/dev/null || echo "24 80")
     art=$(pick_art "$cols" "$rows") || art=$art_dir/ergon-24x10.txt
     if [ -n "$tte" ] && [ -f "$art" ]; then
       bg=$(term_bg)
