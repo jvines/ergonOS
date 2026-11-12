@@ -4481,19 +4481,29 @@ pkill -u "$U" -f 'foot --app-id=ergon-ff' 2>/dev/null; sleep 1
 usr "tte --version" 2>&1 | diag logo-tte-version
 grep -q "$(sed -n 's/^TTE_VERSION=//p' "$G/bin/ergon-screensaver")" /out/logo-tte-version.txt 2>/dev/null \
   && ok "ERGON-161: tte is installed at the pinned version" || bad "ERGON-161: tte is missing or not the pinned version: $(head -c 120 /out/logo-tte-version.txt 2>/dev/null)"
-usr "ergon-screensaver start" >/dev/null 2>&1
+# Mid-animation first: decrypt, a few seconds in (software rendering is slow, so
+# it is still resolving).
+usr "ERGON_SCREENSAVER_EFFECT=decrypt ergon-screensaver start" >/dev/null 2>&1
 sleep 6
 hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver" and .fullscreen != 0)' >/dev/null 2>&1 \
   && ok "  the screensaver is a fullscreen window" || bad "  no fullscreen ergon-screensaver window"
-pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1 \
+{ pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1; } \
   && ok "  and tte is animating" || bad "  tte is not running under the screensaver"
-shot logo-screensaver
+shot logo-screensaver-mid
 usr "ergon-screensaver stop" >/dev/null 2>&1
 sleep 2
-# Again with a pinned effect that shows the logo forming.
-usr "ERGON_SCREENSAVER_EFFECT=decrypt ergon-screensaver start" >/dev/null 2>&1
-sleep 9
-shot logo-screensaver-decrypt
+# Then the finished logo: a fast effect, held for two minutes, shot once tte has
+# exited (polled, generously: this VM draws in software).
+usr "ERGON_SCREENSAVER_EFFECT=wipe ERGON_SCREENSAVER_HOLD=120 ergon-screensaver start" >/dev/null 2>&1
+sleep 5
+for _ in $(seq 1 90); do
+  { pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1; } || break
+  sleep 2
+done
+sleep 3
+{ pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1; } \
+  && bad "  the wipe effect had not finished after three minutes" || ok "  the effect finished and the logo is held"
+shot logo-screensaver
 usr "ergon-screensaver stop" >/dev/null 2>&1
 sleep 2
 hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \

@@ -1,1 +1,1 @@
-../logo/term/ergon-24x10.txt
+../logo/term/ergon-36x15.txt

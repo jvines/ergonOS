@@ -40,7 +40,7 @@ check "the bar swaps the image on hover and keeps the click" \
   bash -c 'grep -q "#custom-menu:hover { background-image: url(\"logo-active.svg\")" "$0/waybar/style.css.in" && grep -q "\"on-click\": \"ergon-menu\"" "$0/waybar/config.jsonc"' "$REPO"
 check "the generated logo files are gitignored" \
   bash -c 'cd "$0" && for f in waybar/logo-dim.svg waybar/logo-active.svg hypr/lock-logo.svg fastfetch/config.jsonc; do git check-ignore -q "$f" || exit 1; done' "$REPO"
-check "fastfetch's logo is the 24x10 art" test "$(readlink -f "$REPO/fastfetch/logo.txt")" = "$(readlink -f "$REPO/logo/term/ergon-24x10.txt")"
+check "fastfetch's logo is the 36x15 art" test "$(readlink -f "$REPO/fastfetch/logo.txt")" = "$(readlink -f "$REPO/logo/term/ergon-36x15.txt")"
 check "librsvg and fastfetch are declared packages" bash -c 'grep -q "^librsvg " "$0/packages/pacman" && grep -q "^fastfetch " "$0/packages/pacman"' "$REPO"
 
 if command -v rsvg-convert >/dev/null 2>&1; then
@@ -55,5 +55,20 @@ elif command -v docker >/dev/null 2>&1; then
   fi
 else
   echo "   --   neither rsvg-convert nor docker here; the plymouth render is not exercised"
+fi
+# With a real tte: every screensaver effect accepts its palette flags and draws no
+# green-dominant colour (matrix's own green is what this rules out).
+if command -v tte >/dev/null 2>&1; then
+  eval "$(sed -n '/^palette_file()/,/^# The static fallback/p' "$REPO/bin/ergon-screensaver" | sed '$d')"
+  here=$REPO/bin; PALFILE=$(palette_file); badfx=""
+  for e in "${EFFECTS[@]}"; do
+    mapfile -t a < <(effect_args "$e")
+    out=$(tte -i "$REPO/logo/term/ergon-36x15.txt" --frame-rate 0 --canvas-width 0 --canvas-height 20 --no-eol --no-restore-cursor "$e" "${a[@]}" 2>/dev/null) || { badfx+=" $e(exit)"; continue; }
+    g=$(grep -o '38;2;[0-9]*;[0-9]*;[0-9]*' <<<"$out" | sort -u | awk -F';' '$4 > $3 + 15 && $4 > $5 + 15' | wc -l)
+    [ "$g" -eq 0 ] || badfx+=" $e(green)"
+  done
+  check "every screensaver effect runs in palette colours${badfx:+ (bad:$badfx)}" test -z "$badfx"
+else
+  echo "   --   tte not installed here; the screensaver effects are not exercised"
 fi
 printf '\n   %d passed, %d failed\n' "$PASS" "$FAIL"; [ "$FAIL" -eq 0 ]

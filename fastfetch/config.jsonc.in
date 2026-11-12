@@ -1,6 +1,6 @@
 // GENERATED from fastfetch/config.jsonc.in -- edit the .in, then run: ergon theme
 //
-// fastfetch with the ergonOS mark (ERGON-161). The art is logo/term/ergon-24x10.txt
+// fastfetch with the ergonOS mark (ERGON-161). The art is logo/term/ergon-36x15.txt
 // (fastfetch/logo.txt links to it), coloured from the palette; the modules are
 // the short list a screenshot or a bug report wants, not the full inventory.
 {

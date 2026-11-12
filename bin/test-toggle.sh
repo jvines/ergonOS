@@ -70,8 +70,9 @@ stub tte 'echo "tte $*" >> "$T/log"; sleep 30'
 : > "$T/log"
 (sleep 1.5; printf 'q') | HOME="$T/home" timeout 20 script -qec "stty cols 80 rows 30; $S run" /dev/null >/dev/null 2>&1
 rc=$?
-check "with tte, run animates the 60x25 art" grep -q 'tte -i .*ergon-60x25.txt .*--random-effect' "$T/log"
+check "with tte, run animates the 60x25 art with a palette-coloured effect" grep -qE 'tte -i .*ergon-60x25.txt .* (decrypt|beams|burn|binarypath|expand|middleout|rain|slide|sweep|wipe|print|scattered|slice|spray|crumble|waves|rings|unstable|pour|randomsequence) .*--final-gradient-stops [0-9A-Fa-f]{6} ' "$T/log"
 check "  on a canvas two rows short of the window" grep -q -- '--canvas-height 28 ' "$T/log"
+check "  never tte's own --random-effect, whose colours are not the palette's" bash -c '! grep -q -- --random-effect "$0"' "$T/log"
 check "  and a key ends it (no hang)" test "$rc" -eq 0
 rm -f "$T/stub/tte"
 : > "$T/log"

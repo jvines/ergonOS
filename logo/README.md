@@ -27,7 +27,7 @@ templates rendered from the active palette:
   `~/.local/share/ergon/lock-logo.png` for hyprlock.
 - Boot splash: `bin/ergon-plymouth` recolours `ergon-lockup-stacked-light.svg` to
   the palette's foreground and writes `logo.png` into the Plymouth theme.
-- fastfetch: `fastfetch/logo.txt` links to `term/ergon-24x10.txt`.
+- fastfetch: `fastfetch/logo.txt` links to `term/ergon-36x15.txt`.
 - Screensaver: `bin/ergon-screensaver` animates `term/` art with `tte`.
 
 The mark's path data is copied into the `.in` files; `bin/test-logo.sh` fails

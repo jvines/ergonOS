@@ -13,8 +13,10 @@
 # repos: provisioning installs it as a uv tool, pinned (TTE_VERSION below and
 # bin/provision-arch.sh must agree; bin/test-toggle.sh checks that). Without
 # it, or when an effect fails, the static art is shown instead -- a screensaver
-# that crashes is a blank screen at best. ERGON_SCREENSAVER_EFFECT=<name> pins
-# the effect (the VM suite uses it for a repeatable screenshot).
+# that crashes is a blank screen at best. Every effect in EFFECTS takes its
+# colours from the active palette. ERGON_SCREENSAVER_EFFECT=<name> pins the
+# effect and ERGON_SCREENSAVER_HOLD=<s> the pause on the finished logo (the VM
+# suite uses both, for a repeatable screenshot).
 set -euo pipefail
 
 self=$(readlink -f "${BASH_SOURCE[0]}")
@@ -39,6 +41,44 @@ term_bg() {
   sed -n 's/^background *= *\([0-9A-Fa-f]\{6\}\).*/\1/p' "${XDG_CONFIG_HOME:-$HOME/.config}/foot/foot.ini" 2>/dev/null | head -1 || true
 }
 
+# The active palette's file: what ergon-theme recorded, else the default.
+palette_file() {
+  local n f
+  n=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette" 2>/dev/null || echo cool)
+  case "$n" in /*|./*|../*) f=$n ;; *) f=$here/../theme/$n.env ;; esac
+  [ -f "$f" ] || f=$here/../theme/cool.env
+  printf '%s\n' "$f"
+}
+
+# pal KEY -> RRGGBB of COOL_KEY in the active palette.
+pal() { sed -n "s/^COOL_$1=#\([0-9A-Fa-f]\{6\}\).*/\1/p" "$PALFILE" | head -1 || true; }
+
+# Effects whose colours can ALL be set, so every frame is in the palette. tte's
+# own defaults (the green of matrix, say) are never shown: an effect that cannot
+# be fully recoloured is not in this list. Names and flags are tte 0.15.0's.
+EFFECTS=(decrypt beams burn binarypath expand middleout rain slide sweep wipe
+         print scattered slice spray crumble waves rings unstable pour randomsequence)
+
+# effect_args NAME -> the colour flags for NAME, one per line, from the palette.
+effect_args() {
+  local c0 c1 c2 c3 c4 acc act fg dim bg
+  c0=$(pal 0); c1=$(pal 1); c2=$(pal 2); c3=$(pal 3); c4=$(pal 4)
+  acc=$(pal ACCENT); act=$(pal ACTIVE); fg=$(pal FG0); dim=$(pal DIMMER); bg=$(pal BG1)
+  local fin=(--final-gradient-stops "$c0" "$c2" "$c4" --final-gradient-direction diagonal)
+  case "$1" in
+    decrypt)      printf '%s\n' --ciphertext-colors "$c1" "$c3" "${fin[@]}" ;;
+    beams)        printf '%s\n' --beam-gradient-stops "$act" "$fg" "${fin[@]}" ;;
+    burn)         printf '%s\n' --starting-color "$dim" --burn-colors "$c4" "$act" "$fg" "${fin[@]}" ;;
+    binarypath)   printf '%s\n' --binary-colors "$c1" "$c3" "${fin[@]}" ;;
+    middleout|pour) printf '%s\n' --starting-color "$dim" "${fin[@]}" ;;
+    rain)         printf '%s\n' --rain-colors "$c0" "$c1" "$c2" "$c3" "${fin[@]}" ;;
+    waves)        printf '%s\n' --wave-gradient-stops "$c0" "$c4" "${fin[@]}" ;;
+    rings)        printf '%s\n' --ring-colors "$c0" "$c2" "$c4" "${fin[@]}" ;;
+    unstable)     printf '%s\n' --unstable-color "$c4" "${fin[@]}" ;;
+    *)            printf '%s\n' "${fin[@]}" ;;   # expand slide sweep wipe print scattered slice spray crumble randomsequence
+  esac
+}
+
 # The static fallback: the art, centred, in the accent colour (ANSI cyan, which
 # the terminal's palette sets).
 still() {
@@ -57,7 +97,8 @@ still() {
 run() {
   trap 'printf "\e[?25h\e[?1049l"' EXIT
   printf '\e[?1049h\e[?25l'
-  local cols rows art bg pid tte=""
+  local cols rows art bg pid name eargs tte=""
+  PALFILE=$(palette_file)
   command -v tte >/dev/null 2>&1 && tte=tte
   [ -n "$tte" ] || { [ -x "$HOME/.local/bin/tte" ] && tte="$HOME/.local/bin/tte"; }
   while :; do
@@ -71,9 +112,12 @@ run() {
       # moving the cursor under the alternate screen; the canvas is the window
       # less two rows. Its stdout is the animation, so it keeps the terminal.
       # Backgrounded, so the key read below can end it at once.
+      name=${ERGON_SCREENSAVER_EFFECT:-}
+      case " ${EFFECTS[*]} " in *" $name "*) ;; *) name=${EFFECTS[RANDOM % ${#EFFECTS[@]}]} ;; esac
+      mapfile -t eargs < <(effect_args "$name")
       "$tte" -i "$art" --frame-rate 240 --canvas-width 0 --canvas-height $((rows - 2)) \
         --anchor-canvas c --anchor-text c ${bg:+--terminal-background-color "$bg"} \
-        --no-eol --no-restore-cursor ${ERGON_SCREENSAVER_EFFECT:---random-effect} 2>/dev/null </dev/null &
+        --no-eol --no-restore-cursor "$name" "${eargs[@]}" 2>/dev/null </dev/null &
       pid=$!
     else
       still "$art" "$cols" "$rows"
@@ -85,7 +129,7 @@ run() {
       if read -r -s -n1 -t 0.2; then kill "$pid" 2>/dev/null || true; exit 0; fi
     done
     [ -n "$pid" ] && wait "$pid" 2>/dev/null || still "$art" "$cols" "$rows"
-    if read -r -s -n1 -t 4; then exit 0; fi
+    if read -r -s -n1 -t "${ERGON_SCREENSAVER_HOLD:-4}"; then exit 0; fi
   done
 }
 
