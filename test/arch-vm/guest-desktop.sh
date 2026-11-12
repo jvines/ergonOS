@@ -2184,10 +2184,9 @@ if mountpoint -q /out 2>/dev/null; then
   # On empty bar space: over a workspace button it pops a tooltip into the shot,
   # and over a window it could move focus under the tests that follow.
   hq "dispatch 'hl.dsp.cursor.move({x = 450, y = 15})'" >/dev/null 2>&1 || true
-  usr foot >/dev/null 2>&1 &
-  sleep 4
-  usr fuzzel >/dev/null 2>&1 &
-  sleep 3
+  # A clean desktop: no windows, no launcher. The overlay shots below cover
+  # the terminal and launcher.
+  sleep 2
   # -o <output>, not the whole logical space. qemu's virtio-gpu presents more
   # than one output and a bare `grim` captures every one of them, then blocks
   # forever on the one that never presents a frame under software rendering. It
