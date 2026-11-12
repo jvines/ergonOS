@@ -2180,10 +2180,21 @@ if [ -d /out ] || mkdir -p /out 2>/dev/null; then
   mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null || true
 fi
 
+park_cursor() {
+  # A warp alone sends waybar no motion, so it keeps the last button hovered,
+  # tooltip and all. A real nudge through ydotool makes it notice.
+  hq "dispatch 'hl.dsp.cursor.move({x = 450, y = 15})'" >/dev/null 2>&1 || true
+  if [ -S "${YSOCK:-}" ]; then
+    usr "YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x 5 -y 0" >/dev/null 2>&1 || true
+    usr "YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x -5 -y 0" >/dev/null 2>&1 || true
+  fi
+  sleep 1
+}
+
 if mountpoint -q /out 2>/dev/null; then
   # On empty bar space: over a workspace button it pops a tooltip into the shot,
   # and over a window it could move focus under the tests that follow.
-  hq "dispatch 'hl.dsp.cursor.move({x = 450, y = 15})'" >/dev/null 2>&1 || true
+  park_cursor
   # A clean desktop: no windows, no launcher. The overlay shots below cover
   # the terminal and launcher.
   sleep 2
@@ -2388,7 +2399,7 @@ shot() {
   mountpoint -q /out 2>/dev/null || { mkdir -p /out; mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; } || true
   mountpoint -q /out 2>/dev/null || { note "no out share: no $1 screenshot"; return 0; }
   local mon; mon=$(hq monitors -j 2>/dev/null | jq -r '.[0].name // empty')
-  hq "dispatch 'hl.dsp.cursor.move({x = 450, y = 15})'" >/dev/null 2>&1 || true
+  park_cursor
   if timeout 20 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -o '$mon' /out/$1.png" >/dev/null 2>&1; then
     chmod 666 "/out/$1.png" 2>/dev/null || true; note "screenshot /out/$1.png"
   else
