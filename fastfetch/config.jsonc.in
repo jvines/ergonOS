@@ -17,7 +17,7 @@
   },
   "modules": [
     "title",
-    "os",
+    { "type": "os", "format": "ergonOS ({name} {arch})" },
     "kernel",
     "uptime",
     "packages",
