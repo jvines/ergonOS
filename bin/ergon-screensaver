@@ -94,6 +94,19 @@ still() {
   printf '\e[0m'
 }
 
+# Sets rows and cols once the size has stopped changing. A fullscreen foot is
+# first mapped at a small size and resized a moment later; drawing before that
+# put the logo in the corner of what became a much larger window (VM shot).
+settle_size() {
+  local prev="" cur n
+  for n in $(seq 1 15); do
+    cur=$(stty size 2>/dev/null || echo "24 80")
+    [ "$cur" = "$prev" ] && break
+    prev=$cur; sleep 0.3
+  done
+  read -r rows cols <<<"$cur"
+}
+
 run() {
   trap 'printf "\e[?25h\e[?1049l"' EXIT
   printf '\e[?1049h\e[?25l'
@@ -103,7 +116,7 @@ run() {
   [ -n "$tte" ] || { [ -x "$HOME/.local/bin/tte" ] && tte="$HOME/.local/bin/tte"; }
   while :; do
     # stty, not tput: it needs no $TERM, which a bare environment lacks.
-    read -r rows cols < <(stty size 2>/dev/null || echo "24 80")
+    settle_size
     art=$(pick_art "$cols" "$rows") || art=$art_dir/ergon-24x10.txt
     if [ -n "$tte" ] && [ -f "$art" ]; then
       bg=$(term_bg)

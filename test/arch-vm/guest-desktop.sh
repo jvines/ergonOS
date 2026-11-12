@@ -4481,10 +4481,9 @@ pkill -u "$U" -f 'foot --app-id=ergon-ff' 2>/dev/null; sleep 1
 usr "tte --version" 2>&1 | diag logo-tte-version
 grep -q "$(sed -n 's/^TTE_VERSION=//p' "$G/bin/ergon-screensaver")" /out/logo-tte-version.txt 2>/dev/null \
   && ok "ERGON-161: tte is installed at the pinned version" || bad "ERGON-161: tte is missing or not the pinned version: $(head -c 120 /out/logo-tte-version.txt 2>/dev/null)"
-# Mid-animation first: decrypt, a few seconds in (software rendering is slow, so
-# it is still resolving).
-usr "ERGON_SCREENSAVER_EFFECT=decrypt ergon-screensaver start" >/dev/null 2>&1
-sleep 6
+# Mid-animation first: rain, a long effect, a few seconds in.
+usr "ERGON_SCREENSAVER_EFFECT=rain ergon-screensaver start" >/dev/null 2>&1
+sleep 7
 hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver" and .fullscreen != 0)' >/dev/null 2>&1 \
   && ok "  the screensaver is a fullscreen window" || bad "  no fullscreen ergon-screensaver window"
 { pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1; } \
