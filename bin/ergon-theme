@@ -478,6 +478,17 @@ fi
 # not a separate courtesy, and its failure is the render's failure.
 ergon_ensure_user_files || rc=1
 
+# The lock screen's logo (ERGON-161): hyprlock draws a PNG, so the rendered
+# hypr/lock-logo.svg is rasterised beside lock-background.png. 2x the size it
+# is shown at, so it stays sharp on a HiDPI panel. Without rsvg-convert (librsvg,
+# in packages/pacman) the lock screen simply has no logo, and the render still
+# succeeds.
+if command -v rsvg-convert >/dev/null 2>&1 && [ -f "$ERGON/hypr/lock-logo.svg" ]; then
+  _ld="${XDG_DATA_HOME:-$HOME/.local/share}/ergon"
+  mkdir -p "$_ld" && rsvg-convert -h 360 "$ERGON/hypr/lock-logo.svg" -o "$_ld/lock-logo.png.new" \
+    && mv -f "$_ld/lock-logo.png.new" "$_ld/lock-logo.png" || echo "   !! could not render the lock screen logo" >&2
+fi
+
 # Recolour the foot windows that are already open.
 #
 # Everything else in the apply step below either re-reads a file (mako, btop)

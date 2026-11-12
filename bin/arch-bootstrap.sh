@@ -453,10 +453,11 @@ fi
 # and -K makes a keyring only where there is none yet (arch-install-scripts 31).
 #
 # No bootloader package: systemd-boot is part of systemd. plymouth draws the
-# passphrase prompt, and its font is the one the lock screen uses.
+# passphrase prompt, and its font is the one the lock screen uses; librsvg
+# is for the logo it shows (rsvg-convert, ERGON-161).
 _try=1
 until pacstrap -K "${PACSTRAP_CONF[@]}" /mnt base base-devel $KERNELS linux-firmware $UCODE \
-        btrfs-progs mkinitcpio efibootmgr plymouth ttf-jetbrains-mono-nerd snapper snap-pac \
+        btrfs-progs mkinitcpio efibootmgr plymouth librsvg ttf-jetbrains-mono-nerd snapper snap-pac \
         networkmanager sudo zsh git vim inetutils; do
   [ "$_try" -lt 4 ] || { warn "pacstrap failed $_try times — see above"; exit 1; }
   warn "pacstrap failed (try $_try of 4) — trying again in 30 s; what arrived is kept"

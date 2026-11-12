@@ -1,4 +1,6 @@
-# ergon boot splash: the wordmark, and the disk passphrase prompt under it.
+# ergon boot splash: the stacked logo (logo.png, rendered by bin/ergon-plymouth
+# from logo/ergon-lockup-stacked-light.svg in the palette's foreground), and the
+# disk passphrase prompt under it.
 # Rendered by bin/ergon-plymouth from the active palette (the colour tokens become
 # "r, g, b" in 0..1). Not yet approved on screen; iterate here. ASCII only:
 # the label plugin draws boxes for anything else (VM screenshot, 2026-10-23).
@@ -6,14 +8,13 @@
 Window.SetBackgroundTopColor(@COOL_BG0@);
 Window.SetBackgroundBottomColor(@COOL_BG0@);
 
-global.font_mark = "JetBrainsMono Nerd Font 48";
 global.font_text = "JetBrainsMono Nerd Font 14";
 global.font_dots = "JetBrainsMono Nerd Font 20";
 
-mark.image = Image.Text("ergon", @COOL_FG0@, 1, global.font_mark);
-mark.sprite = Sprite(mark.image);
-rule.image = Image.Text("____", @COOL_ACCENT@, 1, global.font_text);
-rule.sprite = Sprite(rule.image);
+# The full-size logo; the scaled copy is what is drawn (see layout()).
+logo.full = Image("logo.png");
+logo.image = logo.full;
+logo.sprite = Sprite(logo.image);
 
 prompt.sprite = Sprite();
 dots.sprite = Sprite();
@@ -30,11 +31,18 @@ fun center_x(image) {
 fun layout() {
   global.layout_w = Window.GetWidth();
   global.layout_h = Window.GetHeight();
-  global.mark_y = global.layout_h / 2 - mark.image.GetHeight();
-  mark.sprite.SetPosition(center_x(mark.image), global.mark_y, 10);
-  global.rule_y = global.mark_y + mark.image.GetHeight() + 4;
-  rule.sprite.SetPosition(center_x(rule.image), global.rule_y, 10);
-  global.prompt_y = global.rule_y + rule.image.GetHeight() + 36;
+  # A quarter of the screen's height, never above the image's own size, never
+  # below 160 px. The prompt hangs under it, so the pair stays centred as a
+  # block rather than the logo sitting dead centre with the prompt off-screen.
+  logo_h = global.layout_h / 4;
+  if (logo_h < 160) logo_h = 160;
+  if (logo_h > logo.full.GetHeight()) logo_h = logo.full.GetHeight();
+  logo_w = Math.Int(logo.full.GetWidth() * logo_h / logo.full.GetHeight());
+  logo.image = logo.full.Scale(logo_w, Math.Int(logo_h));
+  logo.sprite.SetImage(logo.image);
+  global.logo_y = global.layout_h / 2 - logo.image.GetHeight() * 0.8;
+  logo.sprite.SetPosition(center_x(logo.image), global.logo_y, 10);
+  global.prompt_y = global.logo_y + logo.image.GetHeight() + 40;
   global.dots_y = global.prompt_y + 34;
   if (global.prompt_shown == 1) {
     prompt.sprite.SetPosition(center_x(prompt.image), global.prompt_y, 10);

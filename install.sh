@@ -123,6 +123,7 @@ else
   # the tools that cannot be themed individually -- jless, dust, gping -- which
   # follow the terminal's ANSI slots or follow nothing.
   link foot       .config/foot
+  link fastfetch  .config/fastfetch   # ERGON-161: the ergonOS mark as its logo
   link lnav       .config/lnav
   link newsboat   .config/newsboat
   link yazi       .config/yazi

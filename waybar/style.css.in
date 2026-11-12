@@ -29,12 +29,21 @@ window#waybar.hidden { opacity: 0.0; }
  * far right -- neither is a reading, both are an exit into something else.
  * @COOL_ACTIVE@ on hover, not @COOL_URGENT@: this one opens a picker, it does
  * not end the session. */
+/* The ergonOS mark (ERGON-161), not a glyph: an SVG per state, rendered from
+   waybar/logo-dim.svg.in and logo-active.svg.in so it follows the palette
+   (GTK3 css cannot recolour an image, so there are two files). 19x16 keeps the
+   mark's 220:186 shape. The label is a single space only so the module exists;
+   waybar hides a custom module whose text is empty. */
 #custom-menu {
-  color: @COOL_DIM@;
+  background-image: url("logo-dim.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 19px 16px;
+  min-width: 19px;
   margin-left: 4px;
   padding: 0 8px;
 }
-#custom-menu:hover { color: @COOL_ACTIVE@; }
+#custom-menu:hover { background-image: url("logo-active.svg"); }
 
 /* -- workspaces ---------------------------------------------------------- */
 #workspaces { margin-left: 4px; }

@@ -54,10 +54,26 @@ check "hyprland.lua loads toggles.lua"  grep -q 'ergon/toggles.lua' "$REPO/hypr/
 check "autostart honours bar=off"       grep -q 'bar=off' "$REPO/hypr/common/autostart.lua"
 check "ergon-theme honours the bar toggle" grep -q 'ergon-toggle" get bar' "$REPO/bin/ergon-theme"
 check "the menu reaches the toggles"    bash -c '"$0" --dump | grep -q "^    widescreen"' "$REPO/bin/ergon-menu"
+check "hypridle starts the screensaver" grep -q 'on-timeout = ergon-screensaver start' "$REPO/hypr/hypridle.conf"
+check "and stops it on input"           grep -q 'on-resume  = ergon-screensaver stop' "$REPO/hypr/hypridle.conf"
 
 # Screensaver.
-check "a frame draws block digits"      bash -c '"$0" frame 12:34 1 1 | grep -q "██"' "$S"
-check "a frame places itself by column and row" bash -c '"$0" frame 00:00 7 4 | grep -q "\[4;7H"' "$S"
+check "the pinned tte version is the one provisioning installs" bash -c 'v=$(sed -n "s/^TTE_VERSION=//p" "$0"); [ -n "$v" ] && grep -q "TTE_VERSION=\$(sed" "$1"' "$S" "$REPO/bin/provision-arch.sh"
+check "the term art the screensaver picks from ships" bash -c 'for s in 60x25 36x15 24x10; do test -s "$0/logo/term/ergon-$s.txt" || exit 1; done' "$REPO"
+# `run` without tte on PATH shows the still logo and ends on a key. The
+# terminal is a pty (script), 80x30, so the 60x25 art fits.
+mkdir -p "$T/home"
+out=$(printf 'q' | HOME="$T/home" PATH="$T/stub:/usr/bin:/bin" timeout 20 script -qec "stty cols 80 rows 30; $S run" /dev/null 2>&1 | tr -d '\r')
+check "without tte, run shows the static logo and a key ends it" bash -c 'printf "%s" "$0" | grep -q "█"' "$out"
+# With a stub tte: run plays it with the art and the canvas flags, and a key ends it.
+stub tte 'echo "tte $*" >> "$T/log"; sleep 30'
+: > "$T/log"
+(sleep 1.5; printf 'q') | HOME="$T/home" timeout 20 script -qec "stty cols 80 rows 30; $S run" /dev/null >/dev/null 2>&1
+rc=$?
+check "with tte, run animates the 60x25 art" grep -q 'tte -i .*ergon-60x25.txt .*--random-effect' "$T/log"
+check "  on a canvas two rows short of the window" grep -q -- '--canvas-height 28 ' "$T/log"
+check "  and a key ends it (no hang)" test "$rc" -eq 0
+rm -f "$T/stub/tte"
 : > "$T/log"
 "$S" start
 sleep 0.3

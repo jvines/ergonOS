@@ -4448,6 +4448,50 @@ elif grep -q 'swrast' /tmp/picker.out || usr "ergon-gpu --software" >/dev/null 2
   note "ERGON-152: the picker needs a GPU EGL stack and this VM renders in software ($(grep -m1 -o 'falling back to [a-z_]*' /tmp/picker.out)); not exercised here"
 else bad "  the picker did not stay open: $(head -c 200 /tmp/picker.out)"; fi
 pkill -u "$U" -x hyprland-share-picker 2>/dev/null
+# --- the logo on each surface (ERGON-161) ------------------------------------
+# The shapes are asserted by bin/test-logo.sh; this is what a person looks at.
+# Every shot is of a clean state: what is opened here is closed again.
+echo "--- the logo ---"
+for _f in waybar/logo-dim.svg waybar/logo-active.svg hypr/lock-logo.svg fastfetch/config.jsonc; do
+  [ -s "$G/$_f" ] && ok "ERGON-161: $_f was rendered" || bad "ERGON-161: $_f was not rendered"
+done
+_fd=$(grep -o 'fill="#[0-9A-Fa-f]\{6\}"' "$G/waybar/logo-dim.svg" 2>/dev/null); _fa=$(grep -o 'fill="#[0-9A-Fa-f]\{6\}"' "$G/waybar/logo-active.svg" 2>/dev/null)
+[ -n "$_fd" ] && [ -n "$_fa" ] && [ "$_fd" != "$_fa" ] && ok "  the bar mark has a palette colour at rest ($_fd) and another on hover ($_fa)" || bad "  the bar mark SVGs lack distinct palette colours ('$_fd' / '$_fa')"
+[ -s "$H/.local/share/ergon/lock-logo.png" ] && ok "  the lock screen logo PNG exists" || bad "  no $H/.local/share/ergon/lock-logo.png (rsvg-convert missing?)"
+[ -s /usr/share/plymouth/themes/ergon/logo.png ] && ok "  the boot splash logo.png is installed" || bad "  no logo.png in the Plymouth theme"
+# The bar: the mark at rest, then with the pointer on it.
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x foot 2>/dev/null; sleep 1
+hq "dispatch 'hl.dsp.cursor.move({x = 600, y = 400})'" >/dev/null 2>&1; sleep 1
+shot logo-bar-rest
+hq "dispatch 'hl.dsp.cursor.move({x = 22, y = 14})'" >/dev/null 2>&1; sleep 1
+shot logo-bar-hover
+hq "dispatch 'hl.dsp.cursor.move({x = 600, y = 400})'" >/dev/null 2>&1
+# fastfetch in a foot window.
+usr "foot --app-id=ergon-ff sh -c 'fastfetch; sleep 120'" >/dev/null 2>&1 &
+sleep 5
+hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-ff")' >/dev/null 2>&1 \
+  && ok "ERGON-161: fastfetch ran in a foot window" || bad "ERGON-161: the fastfetch window did not open"
+usr "fastfetch --pipe" 2>&1 | diag logo-fastfetch
+shot logo-fastfetch
+pkill -u "$U" -f 'foot --app-id=ergon-ff' 2>/dev/null; sleep 1
+# The screensaver, mid-animation.
+usr "tte --version" 2>&1 | diag logo-tte-version
+grep -q "$(sed -n 's/^TTE_VERSION=//p' "$G/bin/ergon-screensaver")" /out/logo-tte-version.txt 2>/dev/null \
+  && ok "ERGON-161: tte is installed at the pinned version" || bad "ERGON-161: tte is missing or not the pinned version: $(head -c 120 /out/logo-tte-version.txt 2>/dev/null)"
+usr "ergon-screensaver start" >/dev/null 2>&1
+sleep 6
+hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver" and .fullscreen != 0)' >/dev/null 2>&1 \
+  && ok "  the screensaver is a fullscreen window" || bad "  no fullscreen ergon-screensaver window"
+pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1 \
+  && ok "  and tte is animating" || bad "  tte is not running under the screensaver"
+shot logo-screensaver
+usr "ergon-screensaver stop" >/dev/null 2>&1
+sleep 2
+hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \
+  && bad "  the screensaver window survived stop" || ok "  stop closes it"
+sleep 1
+# The lock screen's own shot follows below (lock-screen).
+
 # --- the lock screen (ERGON-127) -------------------------------------------
 # Lock for real, look, unlock. hyprlock draws the blurred wallpaper image; the
 # assertion is that it started and stayed up on that config. SIGUSR1 is its

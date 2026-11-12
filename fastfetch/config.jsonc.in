@@ -1,0 +1,30 @@
+// GENERATED from fastfetch/config.jsonc.in -- edit the .in, then run: ergon theme
+//
+// fastfetch with the ergonOS mark (ERGON-161). The art is logo/term/ergon-24x10.txt
+// (fastfetch/logo.txt links to it), coloured from the palette; the modules are
+// the short list a screenshot or a bug report wants, not the full inventory.
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "type": "file",
+    "source": "~/.config/fastfetch/logo.txt",
+    "color": { "1": "#@COOL_ACCENT:raw@" },
+    "padding": { "top": 1, "left": 1, "right": 3 }
+  },
+  "display": {
+    "separator": "  ",
+    "color": { "keys": "#@COOL_ACTIVE:raw@", "title": "#@COOL_FG0:raw@", "separator": "#@COOL_DIMMER:raw@" }
+  },
+  "modules": [
+    "title",
+    "os",
+    "kernel",
+    "uptime",
+    "packages",
+    "shell",
+    "wm",
+    "terminal",
+    "cpu",
+    "memory"
+  ]
+}
