@@ -1,6 +1,6 @@
 # Third-party colour schemes
 
-Twelve of the palettes in this directory are not ours. They reproduce the published
+Twelve of the palettes in this directory are not ours, and fifteen more come through omarchy (see the omarchy rows; only their hex values, never its images). They reproduce the published
 colour values of established schemes, each under its own licence, and each of
 those licences is MIT — which permits redistribution and **requires that the
 copyright and permission notice travel with the values**. That is what this file
@@ -25,6 +25,21 @@ says so rather than inventing one.
 | `solarized-dark.env` | Solarized dark | <https://github.com/altercation/solarized> | MIT, © 2011 Ethan Schoonover |
 | `solarized-light.env` | Solarized light *(light)* | <https://github.com/altercation/solarized> | MIT, © 2011 Ethan Schoonover |
 | `kanagawa.env` | Kanagawa (wave) | <https://github.com/rebelot/kanagawa.nvim> | MIT, © 2021 Tommaso Laurenzi |
+| `ethereal.env` | omarchy's ethereal | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `flexoki-light.env` | omarchy's flexoki-light *(light)* | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `hackerman.env` | omarchy's hackerman | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `jade-horse.env` | omarchy's jade-horse | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `last-horizon.env` | omarchy's last-horizon | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `lumon.env` | omarchy's lumon | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `lupine.env` | omarchy's lupine *(light)* | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `matte-black.env` | omarchy's matte-black | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `miasma.env` | omarchy's miasma | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `retro-82.env` | omarchy's retro-82 | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `ristretto.env` | omarchy's ristretto | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `solitude.env` | omarchy's solitude | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `starship.env` | omarchy's starship | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `vantablack.env` | omarchy's vantablack | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
+| `white.env` | omarchy's white *(light)* | <https://github.com/basecamp/omarchy> | MIT, © David Heinemeier Hansson |
 
 The remaining palettes — `cool`, `winter`, `spring`, `summer`, `autumn`,
 `plasma` — are generated from matplotlib colormaps and are ours; see the header
@@ -45,7 +60,7 @@ honest and the low-friction reading of it.
 
 ## MIT License
 
-The following notice applies to the Catppuccin, Nord, Everforest, Rosé Pine,
+The following notice applies to the omarchy-derived palettes (copyright line in the table) and to the Catppuccin, Nord, Everforest, Rosé Pine,
 Tokyo Night, Solarized and Kanagawa colour values reproduced in this directory,
 each with its own copyright line as listed in the table above.
 
