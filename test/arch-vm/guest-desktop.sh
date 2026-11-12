@@ -3763,7 +3763,8 @@ _t0=$SECONDS
 usr "timeout -k 2 20 ergon remind 5s vmremind" >/tmp/rm107.out 2>&1 </dev/null; _rm_rc=$?
 [ "$_rm_rc" = 0 ] && [ $((SECONDS - _t0)) -lt 10 ] && ok "ERGON-107: ergon remind 5s returned in $((SECONDS - _t0))s: $(head -c 80 /tmp/rm107.out)" || bad "ERGON-107: ergon remind 5s rc $_rm_rc after $((SECONDS - _t0))s: $(head -c 150 /tmp/rm107.out)"
 _mk_has() { { usr "timeout -k 2 5 makoctl list" 2>/dev/null </dev/null; usr "timeout -k 2 5 makoctl history" 2>/dev/null </dev/null; } | grep -q "Notification [0-9]*: Reminder"; }
-if o_until 14 _mk_has; then ok "ERGON-107: the reminder arrived as a notification titled Reminder (makoctl shows summaries only; the body is unproven)"
+# 5s timer + systemd-run + notify-send: on a loaded runner it has landed after 14s.
+if o_until 30 _mk_has; then ok "ERGON-107: the reminder arrived as a notification titled Reminder (makoctl shows summaries only; the body is unproven)"
 else bad "ERGON-107: no Reminder notification in mako: list [$(usr "timeout 5 makoctl list" 2>&1 </dev/null | tr "\n" "|" | head -c 300)] history [$(usr "timeout 5 makoctl history" 2>&1 </dev/null | tr "\n" "|" | head -c 300)] journal [$(usr "journalctl --user --no-pager -o cat -n 8 -u ergon-remind-1 -u ergon-remind-2" 2>&1 </dev/null | tr "\n" "|" | head -c 300)]"; fi
 usr "timeout 5 makoctl dismiss -a" >/dev/null 2>&1 </dev/null
 sleep 2
