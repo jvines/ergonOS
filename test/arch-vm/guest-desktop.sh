@@ -4463,7 +4463,10 @@ _fd=$(grep -o 'fill="#[0-9A-Fa-f]\{6\}"' "$G/waybar/logo-dim.svg" 2>/dev/null); 
 pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x foot 2>/dev/null; sleep 1
 hq "dispatch 'hl.dsp.cursor.move({x = 600, y = 400})'" >/dev/null 2>&1; sleep 1
 shot logo-bar-rest
-hq "dispatch 'hl.dsp.cursor.move({x = 22, y = 14})'" >/dev/null 2>&1; sleep 1
+hq "dispatch 'hl.dsp.cursor.move({x = 22, y = 14})'" >/dev/null 2>&1; sleep 0.5
+# A moved cursor alone sent GTK no motion event; a real device nudge does.
+[ -S "${YSOCK:-/nonexistent}" ] && { usr "YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x 1 -y 0; YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x -1 -y 0" >/dev/null 2>&1; }
+sleep 1
 shot logo-bar-hover
 hq "dispatch 'hl.dsp.cursor.move({x = 600, y = 400})'" >/dev/null 2>&1
 # fastfetch in a foot window.
@@ -4485,6 +4488,12 @@ hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver" an
 pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1 \
   && ok "  and tte is animating" || bad "  tte is not running under the screensaver"
 shot logo-screensaver
+usr "ergon-screensaver stop" >/dev/null 2>&1
+sleep 2
+# Again with a pinned effect that shows the logo forming.
+usr "ERGON_SCREENSAVER_EFFECT=decrypt ergon-screensaver start" >/dev/null 2>&1
+sleep 9
+shot logo-screensaver-decrypt
 usr "ergon-screensaver stop" >/dev/null 2>&1
 sleep 2
 hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \

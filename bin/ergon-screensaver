@@ -13,7 +13,8 @@
 # repos: provisioning installs it as a uv tool, pinned (TTE_VERSION below and
 # bin/provision-arch.sh must agree; bin/test-toggle.sh checks that). Without
 # it, or when an effect fails, the static art is shown instead -- a screensaver
-# that crashes is a blank screen at best.
+# that crashes is a blank screen at best. ERGON_SCREENSAVER_EFFECT=<name> pins
+# the effect (the VM suite uses it for a repeatable screenshot).
 set -euo pipefail
 
 self=$(readlink -f "${BASH_SOURCE[0]}")
@@ -72,7 +73,7 @@ run() {
       # Backgrounded, so the key read below can end it at once.
       "$tte" -i "$art" --frame-rate 240 --canvas-width 0 --canvas-height $((rows - 2)) \
         --anchor-canvas c --anchor-text c ${bg:+--terminal-background-color "$bg"} \
-        --no-eol --no-restore-cursor --random-effect 2>/dev/null </dev/null &
+        --no-eol --no-restore-cursor ${ERGON_SCREENSAVER_EFFECT:---random-effect} 2>/dev/null </dev/null &
       pid=$!
     else
       still "$art" "$cols" "$rows"
