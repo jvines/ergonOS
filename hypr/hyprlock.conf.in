@@ -92,6 +92,22 @@ label {
     valign = bottom
 }
 
+# The ergonOS logo (ERGON-161), rasterised from hypr/lock-logo.svg.in by
+# bin/ergon-theme (hyprlock takes a PNG). Below the field, so the clock and the
+# date keep the top of the screen. size is the height in px; reload = false
+# because the file only changes with a palette switch, and that restarts nothing
+# here: the lock screen is a fresh process each time.
+image {
+    monitor =
+    path = ~/.local/share/ergon/lock-logo.png
+    size = 180
+    rounding = 0
+    border_size = 0
+    position = 0, -170
+    halign = center
+    valign = center
+}
+
 input-field {
     monitor =
     size = 340, 52

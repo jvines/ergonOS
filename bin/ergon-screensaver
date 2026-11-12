@@ -1,64 +1,156 @@
 #!/usr/bin/env bash
-# ergon:summary=Idle screensaver: a large drifting clock in the palette's colours
+# ergon:summary=Idle screensaver: the ergonOS mark, animated by terminaltexteffects
 # ergon:group=power
-# ergon:args=[start | stop | run | frame HH:MM]
+# ergon:args=[start | stop | run]
 #
 # hypridle starts it after 3 minutes idle and stops it on the first input
 # (hypr/hypridle.conf), ahead of the dim at 4 and the lock at 10 (ERGON-140).
 # `start` opens a fullscreen foot running `run`; `stop` closes it. Switch it off
 # with `ergon toggle screensaver off`. A key press in the window also ends it.
 #
-# The look is one function, `frame`: block digits for the time at a given
-# column and row, in the terminal's own ANSI colours, so the palette (foot.ini)
-# is what colours it. To change what it shows, change `frame`; `run` only moves
-# it to a new spot each minute (so no pixel sits lit) and cycles the colour.
+# `run` plays the logo's terminal art (logo/term/) through `tte`, a different
+# random effect each cycle, until a key is pressed. tte is not in the Arch
+# repos: provisioning installs it as a uv tool, pinned (TTE_VERSION below and
+# bin/provision-arch.sh must agree; bin/test-toggle.sh checks that). Without
+# it, or when an effect fails, the static art is shown instead -- a screensaver
+# that crashes is a blank screen at best. Every effect in EFFECTS takes its
+# colours from the active palette. ERGON_SCREENSAVER_EFFECT=<name> pins the
+# effect and ERGON_SCREENSAVER_HOLD=<s> the pause on the finished logo, and
+# ERGON_SCREENSAVER_FPS the frame rate (the VM suite uses all three, for a
+# repeatable screenshot).
 set -euo pipefail
 
 self=$(readlink -f "${BASH_SOURCE[0]}")
+here=${self%/*}
+art_dir=$here/../logo/term
 pidfile="${XDG_RUNTIME_DIR:-/tmp}/ergon-screensaver.pid"
+TTE_VERSION=0.15.0
 
-# 3x5 glyphs, row-major, 1 = lit. Indexed 0-9 then ':'.
-glyphs=(111101101101111 010110010010111 111001111100111 111001111001111 101101111001001
-        111100111001111 111100111101111 111001001001001 111101111101111 111101111001111 000010000010000)
-
-# frame HH:MM COL ROW COLOR -> escape codes drawing the time with its top-left at COL,ROW.
-frame() {
-  local t=$1 col=$2 row=$3 color=$4 i r c ch g x out=""
-  for ((r = 0; r < 5; r++)); do
-    out+=$(printf '\e[%d;%dH' $((row + r)) "$col")
-    for ((i = 0; i < ${#t}; i++)); do
-      ch=${t:i:1}; [ "$ch" = : ] && g=${glyphs[10]} || g=${glyphs[$ch]}
-      for ((c = 0; c < 3; c++)); do
-        x=${g:r*3+c:1}
-        [ "$x" = 1 ] && out+=$(printf '\e[%dm██\e[0m' "$color") || out+='  '
-      done
-      out+='  '
-    done
+# The largest art that fits the window with a margin, or nothing.
+pick_art() {
+  local cols=$1 rows=$2 size
+  for size in 60x25 36x15 24x10; do
+    local w=${size%x*} h=${size#*x}
+    if [ "$cols" -ge $((w + 4)) ] && [ "$rows" -ge $((h + 4)) ]; then echo "$art_dir/ergon-$size.txt"; return 0; fi
   done
-  printf '%s' "$out"
+  return 1
+}
+
+# The terminal's own background, so tte's fades land on it. foot.ini is the
+# rendered palette; fall back to tte's default (black) if it is not there.
+term_bg() {
+  sed -n 's/^background *= *\([0-9A-Fa-f]\{6\}\).*/\1/p' "${XDG_CONFIG_HOME:-$HOME/.config}/foot/foot.ini" 2>/dev/null | head -1 || true
+}
+
+# The active palette's file: what ergon-theme recorded, else the default.
+palette_file() {
+  local n f
+  n=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette" 2>/dev/null || echo cool)
+  case "$n" in /*|./*|../*) f=$n ;; *) f=$here/../theme/$n.env ;; esac
+  [ -f "$f" ] || f=$here/../theme/cool.env
+  printf '%s\n' "$f"
+}
+
+# pal KEY -> RRGGBB of COOL_KEY in the active palette.
+pal() { sed -n "s/^COOL_$1=#\([0-9A-Fa-f]\{6\}\).*/\1/p" "$PALFILE" | head -1 || true; }
+
+# Effects whose colours can ALL be set, so every frame is in the palette. tte's
+# own defaults (the green of matrix, say) are never shown: an effect that cannot
+# be fully recoloured is not in this list. Names and flags are tte 0.15.0's.
+EFFECTS=(decrypt beams burn binarypath expand middleout rain slide sweep wipe
+         print scattered slice spray crumble waves rings unstable pour randomsequence)
+
+# effect_args NAME -> the colour flags for NAME, one per line, from the palette.
+effect_args() {
+  local c0 c1 c2 c3 c4 acc act fg dim bg
+  c0=$(pal 0); c1=$(pal 1); c2=$(pal 2); c3=$(pal 3); c4=$(pal 4)
+  acc=$(pal ACCENT); act=$(pal ACTIVE); fg=$(pal FG0); dim=$(pal DIMMER); bg=$(pal BG1)
+  local fin=(--final-gradient-stops "$c0" "$c2" "$c4" --final-gradient-direction diagonal)
+  case "$1" in
+    decrypt)      printf '%s\n' --ciphertext-colors "$c1" "$c3" "${fin[@]}" ;;
+    beams)        printf '%s\n' --beam-gradient-stops "$act" "$fg" "${fin[@]}" ;;
+    burn)         printf '%s\n' --starting-color "$dim" --burn-colors "$c4" "$act" "$fg" "${fin[@]}" ;;
+    binarypath)   printf '%s\n' --binary-colors "$c1" "$c3" "${fin[@]}" ;;
+    middleout|pour) printf '%s\n' --starting-color "$dim" "${fin[@]}" ;;
+    rain)         printf '%s\n' --rain-colors "$c0" "$c1" "$c2" "$c3" "${fin[@]}" ;;
+    waves)        printf '%s\n' --wave-gradient-stops "$c0" "$c4" "${fin[@]}" ;;
+    rings)        printf '%s\n' --ring-colors "$c0" "$c2" "$c4" "${fin[@]}" ;;
+    unstable)     printf '%s\n' --unstable-color "$c4" "${fin[@]}" ;;
+    *)            printf '%s\n' "${fin[@]}" ;;   # expand slide sweep wipe print scattered slice spray crumble randomsequence
+  esac
+}
+
+# The static fallback: the art, centred, in the accent colour (ANSI cyan, which
+# the terminal's palette sets).
+still() {
+  local art=$1 cols=$2 rows=$3 w h pad top line
+  w=$(awk '{ if (length($0) > m) m = length($0) } END { print m }' "$art")
+  h=$(wc -l < "$art")
+  pad=$(( (cols - w) / 2 )); [ "$pad" -ge 0 ] || pad=0
+  top=$(( (rows - h) / 2 )); [ "$top" -ge 0 ] || top=0
+  printf '\e[2J\e[96m'
+  while IFS= read -r line; do
+    top=$((top + 1)); printf '\e[%d;%dH%s' "$top" $((pad + 1)) "$line"
+  done < "$art"
+  printf '\e[0m'
+}
+
+# Sets rows and cols once the size has stopped changing. A fullscreen foot is
+# first mapped at a small size and resized a moment later; drawing before that
+# put the logo in the corner of what became a much larger window (VM shot).
+settle_size() {
+  local prev="" cur n
+  for n in $(seq 1 15); do
+    cur=$(stty size 2>/dev/null || echo "24 80")
+    [ "$cur" = "$prev" ] && break
+    prev=$cur; sleep 0.3
+  done
+  read -r rows cols <<<"$cur"
 }
 
 run() {
   trap 'printf "\e[?25h\e[?1049l"' EXIT
   printf '\e[?1049h\e[?25l'
-  local cols rows t col row n=0 colors=(96 94 95 36 34 35)
+  local cols rows art bg pid name eargs tte=""
+  PALFILE=$(palette_file)
+  command -v tte >/dev/null 2>&1 && tte=tte
+  [ -n "$tte" ] || { [ -x "$HOME/.local/bin/tte" ] && tte="$HOME/.local/bin/tte"; }
   while :; do
-    cols=$(tput cols); rows=$(tput lines)
-    t=$(date +%H:%M)
-    # 4 digits + colon, each 3 cells of 2 columns plus 2 of gap: 5 * 8 columns.
-    col=$(( 1 + RANDOM % (cols > 42 ? cols - 40 : 1) )); row=$(( 1 + RANDOM % (rows > 6 ? rows - 5 : 1) ))
-    printf '\e[2J'
-    frame "$t" "$col" "$row" "${colors[n++ % ${#colors[@]}]}"
-    # Hold this minute; any key ends it.
-    if read -r -s -n1 -t $((61 - 10#$(date +%S))); then exit 0; fi
+    # stty, not tput: it needs no $TERM, which a bare environment lacks.
+    settle_size
+    art=$(pick_art "$cols" "$rows") || art=$art_dir/ergon-24x10.txt
+    if [ -n "$tte" ] && [ -f "$art" ]; then
+      bg=$(term_bg)
+      printf '\e[2J\e[H'
+      # --no-eol and --no-restore-cursor keep tte from scrolling the screen or
+      # moving the cursor under the alternate screen; the canvas is the window
+      # less two rows. Its stdout is the animation, so it keeps the terminal.
+      # Backgrounded, so the key read below can end it at once.
+      name=${ERGON_SCREENSAVER_EFFECT:-}
+      case " ${EFFECTS[*]} " in *" $name "*) ;; *) name=${EFFECTS[RANDOM % ${#EFFECTS[@]}]} ;; esac
+      mapfile -t eargs < <(effect_args "$name")
+      "$tte" -i "$art" --frame-rate "${ERGON_SCREENSAVER_FPS:-240}" --canvas-width 0 --canvas-height $((rows - 2)) \
+        --anchor-canvas c --anchor-text c ${bg:+--terminal-background-color "$bg"} \
+        --no-eol --no-restore-cursor "$name" "${eargs[@]}" 2>/dev/null </dev/null &
+      pid=$!
+    else
+      still "$art" "$cols" "$rows"
+      pid=""
+    fi
+    # Any key ends it; otherwise wait for the effect, hold the finished logo
+    # for a few seconds, and go again with another effect.
+    while [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; do
+      if read -r -s -n1 -t 0.2; then kill "$pid" 2>/dev/null || true; exit 0; fi
+    done
+    [ -n "$pid" ] && wait "$pid" 2>/dev/null || still "$art" "$cols" "$rows"
+    if read -r -s -n1 -t "${ERGON_SCREENSAVER_HOLD:-4}"; then exit 0; fi
   done
 }
 
 case "${1:-start}" in
-  frame) frame "${2:?time}" "${3:-1}" "${4:-1}" "${5:-36}"; echo ;;
   run)   run ;;
   start)
-    [ "$("${self%/*}/ergon-toggle" get screensaver 2>/dev/null || echo on)" = off ] && exit 0
+    [ "$("$here/ergon-toggle" get screensaver 2>/dev/null || echo on)" = off ] && exit 0
     "$0" stop
     setsid foot --fullscreen --app-id=ergon-screensaver "$self" run >/dev/null 2>&1 &
     echo $! > "$pidfile"
@@ -69,6 +161,6 @@ case "${1:-start}" in
     if [ -n "$pid" ] && grep -aq ergon-screensaver "/proc/$pid/cmdline" 2>/dev/null; then kill "$pid" 2>/dev/null || true; fi
     rm -f "$pidfile"
     ;;
-  -h|--help) sed -n "2,13p" "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help) sed -n "2,20p" "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ergon-screensaver: unknown argument '$1'" >&2; exit 2 ;;
 esac

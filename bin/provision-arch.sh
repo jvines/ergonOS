@@ -1204,6 +1204,20 @@ for t in basedpyright ruff; do
   fi
 done
 
+# terminaltexteffects (`tte`) animates the idle screensaver (ERGON-161). Not in
+# the Arch repos, so a uv tool like the two above, but PINNED: an effect that
+# changes under the screensaver is a look nobody approved. The version lives in
+# bin/ergon-screensaver (TTE_VERSION) so there is one place to bump.
+TTE_VERSION=$(sed -n 's/^TTE_VERSION=//p' "$ERGON/bin/ergon-screensaver")
+if [ -n "$TTE_VERSION" ]; then
+  if "$HOME/.local/bin/tte" --version 2>/dev/null | grep -qF "$TTE_VERSION"; then
+    skip "terminaltexteffects $TTE_VERSION"
+  else
+    uv tool install --force "terminaltexteffects==$TTE_VERSION" >/dev/null \
+      && ok "terminaltexteffects $TTE_VERSION" || warn "terminaltexteffects not installed -- the screensaver shows a still logo"
+  fi
+fi
+
 # Tree-sitter grammars are per-machine (they live outside the repo in
 # ~/.emacs.d/tree-sitter), so they have to be built here, not synced.
 if command -v emacs >/dev/null && [ -f "$HOME/.emacs.d/init.el" ]; then

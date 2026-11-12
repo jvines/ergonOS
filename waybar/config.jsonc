@@ -31,7 +31,7 @@
   // every seat (see custom/session). With the palette label gone (ERGON-80),
   // this is also the only way to pick a palette with the pointer alone.
   "custom/menu": {
-    "format": "󰍜",
+    "format": " ",
     "tooltip": true,
     "tooltip-format": "Menu — system, style, commands, help",
     "on-click": "ergon-menu"

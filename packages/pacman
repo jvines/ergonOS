@@ -264,3 +264,5 @@ qrencode            # bin/ergon-wifi: the "share this network" QR code
 mpv
 bitwarden           # ERGON-147: password vault client; bin/ergon-vault points it at Vaultwarden
 rbw                 # ERGON-147: Bitwarden CLI that works with Vaultwarden
+librsvg             # ERGON-161: rsvg-convert draws the logo PNGs (boot splash, lock screen); also GTK's SVG loader, which waybar's menu mark needs
+fastfetch           # ERGON-161: system summary with the ergonOS mark (fastfetch/config.jsonc)
