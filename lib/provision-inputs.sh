@@ -39,6 +39,7 @@ ERGON_PROVISION_INPUTS=(
   bin/ergon-secureboot
   bin/ergon-plymouth
   lib/bootloader.sh
+  lib/greeter-theme.sh
   plymouth
   packages/pacman
   packages/aur

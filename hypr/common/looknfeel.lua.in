@@ -132,6 +132,58 @@ hl.config({
   },
 })
 
+-- ---------------------------------------------------------------------------
+-- Motion (ERGON-42).
+--
+-- `enabled = true` alone meant Hyprland's BUILT-IN curves, which nobody chose:
+-- every leaf on one "default" bezier at speed 8, and a horizontal slide on
+-- every workspace switch. These are Omarchy's numbers (default/hypr/
+-- looknfeel.lua on its quattro branch, read 2026-10-14), which are in turn the
+-- curves Hyprland's own example config ships, with two leaves switched off.
+-- Speeds are in deciseconds: 4.1 is a 410 ms pop-in.
+--
+-- Not hl.animations{}: that does not exist (see the header). The two calls
+-- below are their own functions, and a curve has to be declared before an
+-- animation names it.
+--
+-- Omarchy also declares easeInOutCubic and then uses it nowhere, as does
+-- Hyprland's example config. It is left out rather than carried as a name
+-- that nothing reads.
+hl.curve("easeOutQuint", { type = "bezier", points = { { 0.23, 1 }, { 0.32, 1 } } })
+hl.curve("linear", { type = "bezier", points = { { 0, 0 }, { 1, 1 } } })
+hl.curve("almostLinear", { type = "bezier", points = { { 0.5, 0.5 }, { 0.75, 1.0 } } })
+hl.curve("quick", { type = "bezier", points = { { 0.15, 0 }, { 0.1, 1 } } })
+
+hl.animation({ leaf = "global", enabled = true, speed = 10, bezier = "default" })
+hl.animation({ leaf = "border", enabled = true, speed = 5.39, bezier = "easeOutQuint" })
+hl.animation({ leaf = "windows", enabled = true, speed = 3.79, bezier = "easeOutQuint" })
+-- A new window grows from 87% of its size rather than from a point: enough
+-- motion to see where it landed, not enough to read as a zoom.
+hl.animation({ leaf = "windowsIn", enabled = true, speed = 4.1, bezier = "easeOutQuint", style = "popin 87%" })
+-- Closing is faster than opening and linear: a window you dismissed should be
+-- gone, not perform its exit.
+hl.animation({ leaf = "windowsOut", enabled = true, speed = 1.49, bezier = "linear", style = "popin 87%" })
+hl.animation({ leaf = "fadeIn", enabled = true, speed = 1.73, bezier = "almostLinear" })
+hl.animation({ leaf = "fadeOut", enabled = true, speed = 1.46, bezier = "almostLinear" })
+-- `fade` also carries the 0.96 inactive_opacity above, so focus moving
+-- between windows dims one and lifts the other on this curve.
+hl.animation({ leaf = "fade", enabled = true, speed = 3.03, bezier = "quick" })
+-- Layers: mako, the OSD and the bar fade rather than slide. The launcher is
+-- exempt -- hypr/common/windows.lua gives its namespace no_anim, because a
+-- fade on something you summon and type into at once reads as lag.
+hl.animation({ leaf = "layers", enabled = true, speed = 3.81, bezier = "easeOutQuint" })
+hl.animation({ leaf = "layersIn", enabled = true, speed = 4, bezier = "easeOutQuint", style = "fade" })
+hl.animation({ leaf = "layersOut", enabled = true, speed = 1.5, bezier = "linear", style = "fade" })
+hl.animation({ leaf = "fadeLayersIn", enabled = true, speed = 1.79, bezier = "almostLinear" })
+hl.animation({ leaf = "fadeLayersOut", enabled = true, speed = 1.39, bezier = "almostLinear" })
+-- OFF, both. A workspace switch is the most frequent motion on this desktop
+-- -- a keypress, many times an hour -- and a slide makes every one of them
+-- wait for it. fadeSwitch is the dim-and-lift across a switch, the same
+-- argument. The 3-finger swipe below still follows the fingers while they
+-- move; with the leaf off, only the snap after release is instant.
+hl.animation({ leaf = "workspaces", enabled = false })
+hl.animation({ leaf = "fadeSwitch", enabled = false })
+
 -- Native since 0.51. hyprgrass is not a package (only hyprgrass-git, which
 -- depends on hyprland-git and would replace the official build).
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })

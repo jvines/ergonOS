@@ -36,7 +36,8 @@ out=$("${DOCKER[@]}" run --rm --label cl.jvines.owner=ergon-test-hypr-config -v 
   # newer glib2 than the image had ("undefined symbol: g_timeout_source_new_ns"),
   # and both CSS checks failed on a stylesheet nobody had touched.
   pacman -Syu --noconfirm --needed hyprland fuzzel mako hypridle hyprlock foot \
-    python-gobject gtk3 gtk4 uwsm wezterm newsboat lazygit lazydocker fcitx5 dbus >/dev/null 2>&1
+    python-gobject gtk3 gtk4 uwsm wezterm newsboat lazygit lazydocker fcitx5 dbus \
+    greetd-tuigreet >/dev/null 2>&1
 
   # Hyprland and hyprlock refuse to run as root without a flag whose name tells
   # you not to use it, so everything runs as a real user.
@@ -285,6 +286,44 @@ PYEOF
   run "timeout 5 hyprlock -c /home/t/.config/hypr/hyprlock.conf" \
     | grep -iE "config error|does not exist|Config has errors" || true
 
+  # ERGON-42. tuigreet takes a colour name or a key it does not know without a
+  # word -- no message, no exit, the default drawn (lib/greeter-theme.sh) -- so
+  # the names lib/greeter-theme.sh can produce are drawn through a real one, in
+  # --mock (no greetd socket), and the colours read back off its pty. Three
+  # runs cover all eight: one colour per drawn part in the first two (button
+  # there is only somewhere to draw a fifth colour; the theme leaves it at
+  # the tuigreet default), and the theme provisioning would write for cool in
+  # the third. tuigreet 0.11.1
+  # sometimes enters its alternate screen and never draws (4 of 12 runs,
+  # measured), so each run is tried until "Username" is on screen.
+  echo "@@tuigreet"
+  esc=$(printf "\033")
+  tg() {  # tg <theme> -> the 38;5;N indexes drawn, space-separated, or DREWNOTHING
+    for _ in 1 2 3 4 5 6 7 8; do
+      TERM=linux script -qfc "stty rows 30 cols 100; timeout 3 tuigreet --mock --time --asterisks --theme \"$1\" --cmd true" /tmp/tg.out >/dev/null 2>&1
+      if grep -aq Username /tmp/tg.out; then
+        echo " $(grep -aoE "${esc}\[38;5;[0-9]+[;m]" /tmp/tg.out | grep -oE "[0-9]+[;m]$" | tr -d ";m" | sort -un | tr "\n" " ")"
+        return 0
+      fi
+    done
+    echo DREWNOTHING
+  }
+  . /tmp/repo/lib/greeter-theme.sh
+  for spec in "border=lightred;prompt=lightgreen;time=lightyellow;action=lightblue;button=lightmagenta:9 10 11 12 13" \
+              "border=white;prompt=gray:15 7" \
+              "$(ergon_greeter_theme /tmp/repo/theme/cool.env):14 15 7"; do
+    th=${spec%:*}; got=$(tg "$th")
+    for i in ${spec##*:}; do
+      case "$got" in *" $i "*) ;; *) echo "tuigreet drew $got for $th: no 38;5;$i" ;; esac
+    done
+  done
+  # The control: a misspelt name must not draw the colour it nearly names, or
+  # every pass above could be tuigreet drawing its own defaults.
+  case "$(tg "border=lightcyn")" in
+    *" 14 "*) echo "border=lightcyn drew 38;5;14: this check cannot tell a name tuigreet knows from one it does not" ;;
+    DREWNOTHING) echo "tuigreet --mock never drew in 8 tries" ;;
+  esac
+
   # newsboat. Unlike wezterm it does NOT fall back silently: an unrecognised
   # directive (measured against a renamed `color` target) is a fatal parse
   # error on stderr, exit 1, before curses ever starts or a feed is touched --
@@ -478,7 +517,7 @@ grep -qx '@@end' <<<"$out" || {
   printf '   FAIL the container script stopped before the end; last lines:\n'
   printf '%s\n' "$out" | tail -8 | sed 's/^/     /'; rc=1; }
 for tool in hyprland hyprland-degraded hyprland-nvidia-env bundle-notes fuzzel foot wezterm waybar-css swayosd-css gtk-css \
-  lazygit-config lazydocker-config mako hypridle hyprlock newsboat uwsm-env fcitx5 accents; do
+  lazygit-config lazydocker-config mako hypridle hyprlock tuigreet newsboat uwsm-env fcitx5 accents; do
   findings=$(printf '%s\n' "$out" | sed -n "/^@@$tool\$/,/^@@/p" | grep -vE '^@@' || true)
   if [ -z "$findings" ]; then
     printf '   ok   %s\n' "$tool"

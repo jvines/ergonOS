@@ -791,10 +791,27 @@ _autologin() {
 }
 AUTOLOGIN=$(_autologin)
 _session="uwsm start -e -D Hyprland hyprland.desktop"
+# --theme (ERGON-42): the greeter's colours, from the palette in use NOW --
+# ERGON_PALETTE if set, else the one `ergon theme` remembers, else cool.
+# lib/greeter-theme.sh says why that is a mapping onto the console's sixteen
+# colours and not the palette's own hex. Rendered HERE and not by `ergon theme`:
+# this file is root's, in /etc, and a palette switch (SUPER+T) must not ask for a
+# password. So after a switch the greeter keeps the colours of the palette
+# provisioning last saw, until it runs again. The palette files are deliberately
+# not provisioning inputs: an edit to one would re-provision every machine to
+# recolour a login screen.
+# shellcheck source=../lib/greeter-theme.sh
+. "$ERGON/lib/greeter-theme.sh"
+_pal=${ERGON_PALETTE:-$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/ergon/palette" 2>/dev/null || echo cool)}
+case "$_pal" in /*|./*|../*) ;; *) _pal="$ERGON/theme/$_pal.env" ;; esac
+if ! _gtheme=$(ergon_greeter_theme "$_pal"); then
+  warn "could not read a greeter theme from $_pal; using cool's"
+  _gtheme=$(ergon_greeter_theme "$ERGON/theme/cool.env") || _gtheme=""
+fi
 {
   printf '%s\n' "# Written by provision-arch.sh." "[terminal]" "vt = 1" ""
   printf '%s\n' "[default_session]" \
-    "command = \"tuigreet --time --remember --remember-user-session --asterisks --cmd '$_session'\"" \
+    "command = \"tuigreet --time --remember --remember-user-session --asterisks${_gtheme:+ --theme '$_gtheme'} --cmd '$_session'\"" \
     'user = "greeter"'
   if [ "$AUTOLOGIN" = 1 ]; then
     printf '%s\n' "" "# AUTOLOGIN=1 in hosts/$_host/host.env: straight into Hyprland after the" \
@@ -805,7 +822,7 @@ sudo systemctl enable greetd >/dev/null 2>&1 || true
 if [ "$AUTOLOGIN" = 1 ]; then
   ok "greetd: $(id -un) logged in automatically at boot$([ -e /dev/mapper/cryptroot ] && echo ", after the disk unlock"); tuigreet on vt1 after logout"
 else
-  ok "greetd + tuigreet on vt1 (AUTOLOGIN=0)"
+  ok "greetd + tuigreet on vt1 (AUTOLOGIN=0)${_gtheme:+, coloured from $(basename "$_pal" .env)}"
 fi
 
 # The keyring (ERGON-123, after omarchy). With nobody typing a login password

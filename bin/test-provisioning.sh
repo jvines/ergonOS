@@ -543,5 +543,52 @@ grep -qxF '   would remove  .config/environment.d/50-ergon-screenshots.conf' <<<
   || bad "  emptying SCREENSHOT_DIR does not plan the removal: $(grep screenshots <<<"$out")"
 rm -f "$_ssf"
 
+
+# --- ERGON-42: the greeter's colours ---------------------------------------
+# lib/greeter-theme.sh: pure. Whether tuigreet ACCEPTS the names is a different
+# claim, made by a real tuigreet in bin/test-hypr-config.sh.
+# shellcheck source=../lib/greeter-theme.sh
+. "$REPO/lib/greeter-theme.sh"
+# The greeter. Light console colours only, every key tuigreet draws with this
+# repo's flags, for every palette shipped -- a palette that maps to nothing
+# would put --theme 'border=;...' on the greeter, which tuigreet ignores
+# without a word (lib/greeter-theme.sh).
+_names=' lightred lightyellow lightgreen lightcyan lightblue lightmagenta white gray '
+_bad=""
+for _p in "$REPO"/theme/*.env; do
+  [ "${_p##*/}" = type.env ] && continue
+  _t=$(ergon_greeter_theme "$_p") || { _bad="$_bad ${_p##*/}(failed)"; continue; }
+  _keys=""
+  IFS=';' read -ra _kv <<<"$_t"
+  for _e in "${_kv[@]}"; do
+    _keys="$_keys ${_e%%=*}"
+    case "$_names" in *" ${_e#*=} "*) ;; *) _bad="$_bad ${_p##*/}:$_e" ;; esac
+  done
+  [ "$_keys" = " border prompt text input time action" ] || _bad="$_bad ${_p##*/}:keys($_keys)"
+done
+[ -z "$_bad" ] && ok "every palette gives the greeter a known colour for each of the six parts it sets" \
+  || bad "greeter themes that tuigreet would drop:$_bad"
+_t=$(ergon_greeter_theme "$REPO/theme/cool.env")
+[ "$_t" = "border=lightcyan;prompt=lightcyan;text=white;input=white;time=gray;action=gray" ] \
+  && ok "  cool: the cyan end of its ramp on a white-and-gray greeter" || bad "  cool's greeter theme is '$_t'"
+# By hue, not by the kernel's own rule, which turns every pastel white: these
+# are the palettes where the two disagree.
+_t=$(ergon_greeter_theme "$REPO/theme/catppuccin.env")
+[ "${_t%%;*}" = border=lightblue ] && ok "  catppuccin's mauve (#CBA6F7, 267 degrees) is lightblue, not white" \
+  || bad "  catppuccin's border is ${_t%%;*}"
+_t=$(ergon_greeter_theme "$REPO/theme/gruvbox.env")
+[ "${_t%%;*}" = border=lightyellow ] && ok "  gruvbox's #FABD2F is lightyellow" || bad "  gruvbox's border is ${_t%%;*}"
+_vc=""
+for _x in '#FF0000:lightred' '#00FFFF:lightcyan' '#808080:white' '#FF40FF:lightmagenta' '#4040FF:lightblue'; do
+  [ "$(ergon_vt_colour "${_x%%:*}")" = "${_x#*:}" ] || _vc="$_vc ${_x%%:*}->$(ergon_vt_colour "${_x%%:*}")"
+done
+[ -z "$_vc" ] && ok "  the hue sectors: red, cyan, magenta, blue land where they should; grey has none" \
+  || bad "  hue sectors wrong:$_vc"
+ergon_vt_colour 'nothex' >/dev/null && bad "  a value that is not #RRGGBB was given a colour" \
+  || ok "  a value that is not #RRGGBB is refused rather than guessed at"
+printf 'COOL_ACTIVE=#40FFFF\n' > "$T/half.env"
+ergon_greeter_theme "$T/half.env" >/dev/null && bad "  a palette with no COOL_ACCENT still produced a theme" \
+  || ok "  a palette missing a role produces no theme, so provisioning falls back to cool's"
+
 printf '\n   %d ok, %d FAILED\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
