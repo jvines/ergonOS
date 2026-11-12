@@ -2181,6 +2181,9 @@ if [ -d /out ] || mkdir -p /out 2>/dev/null; then
 fi
 
 if mountpoint -q /out 2>/dev/null; then
+  # On empty bar space: over a workspace button it pops a tooltip into the shot,
+  # and over a window it could move focus under the tests that follow.
+  hq "dispatch 'hl.dsp.cursor.move({x = 450, y = 15})'" >/dev/null 2>&1 || true
   usr foot >/dev/null 2>&1 &
   sleep 4
   usr fuzzel >/dev/null 2>&1 &
@@ -2211,6 +2214,9 @@ if mountpoint -q /out 2>/dev/null; then
       sed 's/^/     /' /tmp/grim.log 2>/dev/null
     fi
   fi
+  # Close them, or every later screenshot (first-desktop among them) still has
+  # this launcher open over a terminal.
+  pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x foot 2>/dev/null; sleep 1
 else
   bad "the writable out share did not mount"
 fi
@@ -2383,6 +2389,7 @@ shot() {
   mountpoint -q /out 2>/dev/null || { mkdir -p /out; mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; } || true
   mountpoint -q /out 2>/dev/null || { note "no out share: no $1 screenshot"; return 0; }
   local mon; mon=$(hq monitors -j 2>/dev/null | jq -r '.[0].name // empty')
+  hq "dispatch 'hl.dsp.cursor.move({x = 450, y = 15})'" >/dev/null 2>&1 || true
   if timeout 20 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -o '$mon' /out/$1.png" >/dev/null 2>&1; then
     chmod 666 "/out/$1.png" 2>/dev/null || true; note "screenshot /out/$1.png"
   else
