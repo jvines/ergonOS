@@ -15,8 +15,9 @@
 # it, or when an effect fails, the static art is shown instead -- a screensaver
 # that crashes is a blank screen at best. Every effect in EFFECTS takes its
 # colours from the active palette. ERGON_SCREENSAVER_EFFECT=<name> pins the
-# effect and ERGON_SCREENSAVER_HOLD=<s> the pause on the finished logo (the VM
-# suite uses both, for a repeatable screenshot).
+# effect and ERGON_SCREENSAVER_HOLD=<s> the pause on the finished logo, and
+# ERGON_SCREENSAVER_FPS the frame rate (the VM suite uses all three, for a
+# repeatable screenshot).
 set -euo pipefail
 
 self=$(readlink -f "${BASH_SOURCE[0]}")
@@ -128,7 +129,7 @@ run() {
       name=${ERGON_SCREENSAVER_EFFECT:-}
       case " ${EFFECTS[*]} " in *" $name "*) ;; *) name=${EFFECTS[RANDOM % ${#EFFECTS[@]}]} ;; esac
       mapfile -t eargs < <(effect_args "$name")
-      "$tte" -i "$art" --frame-rate 240 --canvas-width 0 --canvas-height $((rows - 2)) \
+      "$tte" -i "$art" --frame-rate "${ERGON_SCREENSAVER_FPS:-240}" --canvas-width 0 --canvas-height $((rows - 2)) \
         --anchor-canvas c --anchor-text c ${bg:+--terminal-background-color "$bg"} \
         --no-eol --no-restore-cursor "$name" "${eargs[@]}" 2>/dev/null </dev/null &
       pid=$!
@@ -160,6 +161,6 @@ case "${1:-start}" in
     if [ -n "$pid" ] && grep -aq ergon-screensaver "/proc/$pid/cmdline" 2>/dev/null; then kill "$pid" 2>/dev/null || true; fi
     rm -f "$pidfile"
     ;;
-  -h|--help) sed -n "2,16p" "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help) sed -n "2,20p" "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "ergon-screensaver: unknown argument '$1'" >&2; exit 2 ;;
 esac

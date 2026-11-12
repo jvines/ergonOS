@@ -4482,7 +4482,7 @@ usr "tte --version" 2>&1 | diag logo-tte-version
 grep -q "$(sed -n 's/^TTE_VERSION=//p' "$G/bin/ergon-screensaver")" /out/logo-tte-version.txt 2>/dev/null \
   && ok "ERGON-161: tte is installed at the pinned version" || bad "ERGON-161: tte is missing or not the pinned version: $(head -c 120 /out/logo-tte-version.txt 2>/dev/null)"
 # Mid-animation first: rain, a long effect, a few seconds in.
-usr "ERGON_SCREENSAVER_EFFECT=rain ergon-screensaver start" >/dev/null 2>&1
+usr "ERGON_SCREENSAVER_EFFECT=rain ERGON_SCREENSAVER_FPS=12 ergon-screensaver start" >/dev/null 2>&1
 sleep 7
 hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver" and .fullscreen != 0)' >/dev/null 2>&1 \
   && ok "  the screensaver is a fullscreen window" || bad "  no fullscreen ergon-screensaver window"
