@@ -12,10 +12,16 @@
 font=@FONT_MONO@ @TYPE:11@
 background-color=@COOL_BG1@
 text-color=@COOL_FG0@
-border-color=@COOL_BG2@
 progress-color=over @COOL_BG2@
 
-border-size=1
+# The overlay border (ERGON-42): 2px of @COOL_ACTIVE@, the same token and
+# width as fuzzel, the OSD and the lock screen's field, and the same width as
+# a window's. The window border is the cyan->magenta gradient; mako draws one
+# colour only, so every overlay takes the solid ACTIVE and they all match each
+# other rather than half of them almost matching the windows. This was 1px of
+# @COOL_BG2@, a hairline the background nearly swallowed.
+border-color=@COOL_ACTIVE@
+border-size=2
 border-radius=4
 padding=10,14
 margin=8
@@ -61,20 +67,23 @@ include=~/.config/ergon/mako
 [grouped]
 format=<b>%s</b>\n%b
 
+# Low urgency keeps the grey border on purpose: it is the one notification
+# meant to be missable, and dimmed text under a bright frame would say both.
 [urgency=low]
 border-color=@COOL_BG2@
 text-color=@COOL_DIM@
 default-timeout=4000
 
-[urgency=normal]
-border-color=@COOL_ACCENT@
+# urgency=normal has no block of its own any more. It set @COOL_ACCENT@ over
+# the global border, which is exactly the second border colour ERGON-42 took
+# away; normal is the global look.
 
-# Never expires. See the header.
+# Never expires. See the header. URGENT rather than the overlay border: this
+# one has to look different from every other notification.
 [urgency=critical]
 border-color=@COOL_URGENT@
 text-color=@COOL_FG0@
 background-color=@COOL_BG0@
-border-size=2
 default-timeout=0
 
 # The OSD owns volume and brightness; these would be a duplicate toast for

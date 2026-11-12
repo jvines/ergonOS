@@ -51,10 +51,14 @@ selection=@COOL_BG1:raw@ff
 selection-text=@COOL_FG0:raw@ff
 selection-match=@COOL_ACTIVE:raw@ff
 counter=@COOL_DIMMER:raw@ff
-border=@COOL_ACCENT:raw@ff
+# The overlay border (ERGON-42), shared with mako, the OSD and the lock
+# screen's field: 2px of @COOL_ACTIVE@. Solid, because fuzzel draws one colour;
+# mako/config.in says why the overlays match each other rather than the
+# windows' gradient. It was 1px of @COOL_ACCENT@.
+border=@COOL_ACTIVE:raw@ff
 
 [border]
-width=1
+width=2
 radius=4
 
 [dmenu]

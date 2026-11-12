@@ -83,6 +83,7 @@ check "the cmdline is /etc/kernel/cmdline"    '[ "$(tr -s " " < /etc/kernel/cmdl
 check "the UKI carries that cmdline"          'objdump -s -j .cmdline $ESP/EFI/ergon/linux.efi >/dev/null 2>&1 || grep -aq "rd.luks.name=" $ESP/EFI/ergon/linux.efi'
 check "Plymouth is in the initramfs"          'grep -q "usr/bin/plymouthd" <<<"$(lsinitcpio /boot/initramfs-linux.img)"'
 check "  with the ergon theme"                'grep -q "plymouth/themes/ergon/ergon.script" <<<"$(lsinitcpio /boot/initramfs-linux.img)"'
+check "  and its logo (ERGON-161)"              'grep -q "plymouth/themes/ergon/logo.png" <<<"$(lsinitcpio /boot/initramfs-linux.img)"'
 check "  and splash on the cmdline"           'grep -qw splash /proc/cmdline'
 check "no LUKS keyfile in the initramfs"      '! grep -q cryptsetup-keys <<<"$(lsinitcpio /boot/initramfs-linux.img)"'
 check "Plymouth ran in this boot"             '[ -n "$(journalctl -b -u plymouth-start.service -o cat --no-pager 2>/dev/null)" ]'

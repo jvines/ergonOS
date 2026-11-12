@@ -48,6 +48,10 @@ mako/config
 newsboat/config
 swayosd/style.css
 waybar/style.css
+fastfetch/config.jsonc
+waybar/logo-dim.svg
+waybar/logo-active.svg
+hypr/lock-logo.svg
 wezterm/wezterm.lua
 yazi/theme.toml
 qt6ct/qt6ct.conf

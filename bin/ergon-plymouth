@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ergon:summary=Install the boot splash in the active palette
 # ergon:group=system
-# ergon:args=install [--palette NAME] [--no-rebuild] | status
+# ergon:args=install [--palette NAME] [--no-rebuild] | status | render PALETTE DIR
 # ergon:help=native
 #
 # The splash and the disk passphrase prompt are drawn by Plymouth, from the
@@ -9,6 +9,11 @@
 # plymouth/*.tpl and copied into /usr/share/plymouth/themes/ergon, and the
 # initramfs (the UKIs) is rebuilt when it changed. ergon-theme calls this after
 # a palette switch; provisioning calls it on every run.
+#
+# The logo is logo/ergon-lockup-stacked-light.svg with its fill swapped for the
+# palette's COOL_FG0 and rasterised by rsvg-convert (librsvg) to logo.png in the
+# theme dir (ERGON-161); the script scales it to the screen. `render PALETTE DIR`
+# writes the theme to a directory with no root and no initramfs, for tests.
 #
 # The templates are .tpl, not .in, so ergon-theme's own render loop leaves them
 # alone: Plymouth wants colours as "r, g, b" in 0..1, which no other surface
@@ -67,15 +72,25 @@ floats() {  # floats RRGGBB -> "r, g, b" in 0..1, three decimals
 }
 
 render() {  # render <palette file> <outdir>
-  local prog f
+  local prog f fg
   prog=$(sedprog "$1")
   for f in ergon.plymouth ergon.script; do
     sed -e "$prog" "$ERGON/plymouth/$f.tpl" > "$2/$f"
     if grep -q '@COOL_' "$2/$f"; then die "$f references a colour $1 does not define"; fi
   done
+  command -v rsvg-convert >/dev/null 2>&1 || die "rsvg-convert is missing (the librsvg package); the boot splash logo cannot be drawn"
+  fg=$(sed -n 's/^COOL_FG0=\(#[0-9A-Fa-f]\{6\}\).*/\1/p' "$1")
+  [ -n "$fg" ] || die "$1 defines no COOL_FG0"
+  sed "s/fill=\"#FFFFFF\"/fill=\"$fg\"/" "$ERGON/logo/ergon-lockup-stacked-light.svg" \
+    | rsvg-convert -h 480 -o "$2/logo.png" || die "could not rasterise the logo"
 }
 
 case "${1:-status}" in
+render)  # render PALETTE DIR: the theme files with no install, for tests
+  [ $# -eq 3 ] || die "usage: ergon-plymouth render PALETTE DIR"
+  mkdir -p "$3"; render "$(resolve "$2")" "$3"
+  ;;
+
 install)
   shift
   PAL=""; REBUILD=1
@@ -98,7 +113,7 @@ install)
   tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
   render "$PF" "$tmp"
   changed=0
-  for f in ergon.plymouth ergon.script; do
+  for f in ergon.plymouth ergon.script logo.png; do
     cmp -s "$tmp/$f" "$THEMEDIR/$f" || { install -Dm644 "$tmp/$f" "$THEMEDIR/$f"; changed=1; }
   done
   # The theme the plymouth hook copies into the initramfs.
@@ -125,12 +140,13 @@ EOF
 
 status)
   has_hook || { echo "   no plymouth hook in this initramfs (a GRUB install)"; exit 0; }
+  [ -f "$THEMEDIR/logo.png" ] || { echo "   splash has no logo.png (ergon-plymouth install)"; exit 1; }
   cur=$(cat "$THEMEDIR/palette" 2>/dev/null || echo none)
   want=$(active_palette); want=$(basename "$want" .env)
   printf '   splash palette: %s (desktop: %s)\n' "$cur" "$want"
   [ "$cur" = "$want" ]
   ;;
 
--h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
-*) die "unknown command '$1' (install|status)" ;;
+-h|--help|help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' ;;
+*) die "unknown command '$1' (install|status|render)" ;;
 esac

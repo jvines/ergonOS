@@ -29,11 +29,14 @@
 
 window#osd {
   border-radius: 999px;
-  /* Upstream draws no border. The rest of this desktop — mako, fuzzel,
-   * hyprlock — marks a floating surface with one hairline of @COOL_BG2@, and
-   * the OSD sits over arbitrary content where a borderless pill at 92% alpha
-   * loses its edge against a pale wallpaper. */
-  border: 1px solid @COOL_BG2@;
+  /* Upstream draws no border, and the OSD sits over arbitrary content where a
+   * borderless pill at 92% alpha loses its edge against a pale wallpaper.
+   * The overlay border (ERGON-42): 2px of @COOL_ACTIVE@, the one token mako,
+   * fuzzel and the lock screen's field share -- mako/config.in says why it is
+   * solid rather than the windows' gradient. It was a 1px @COOL_BG2@ hairline.
+   * The fill below is the same colour; the frame and the level are one
+   * surface. */
+  border: 2px solid @COOL_ACTIVE@;
   background: alpha(@COOL_BG0@, 0.92);
 }
 

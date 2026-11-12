@@ -166,6 +166,14 @@ fi
 grep -q 'uwsm start -S' /etc/greetd/config.toml 2>/dev/null \
   && bad "greetd uses 'uwsm start -S', which errors on an unrecognized argument" \
   || ok "no invalid -S flag in the session command"
+# ERGON-42: the greeter's colours, from the palette in use when provisioning
+# ran -- nothing set one on this disk, so cool. Spelled out rather than
+# recomputed with lib/greeter-theme.sh, which would make this agree with itself.
+if grep -qF -- "--theme 'border=lightcyan;prompt=lightcyan;text=white;input=white;time=gray;action=gray'" /etc/greetd/config.toml; then
+  ok "tuigreet carries cool's theme, from provisioning"
+else
+  bad "tuigreet's command has no --theme from cool: $(grep '^command' /etc/greetd/config.toml)"
+fi
 # ERGON-123: the installer's AUTOLOGIN=1 reached host.env, and greetd starts
 # the same uwsm session for the user once per boot. That it really lands in
 # Hyprland is the screenshot boot's job (guest-autologin.sh), after this suite.
@@ -1329,6 +1337,22 @@ NB=$(hq binds -j 2>/dev/null | grep -c '"key"' || true)
 NB=${NB:-0}
 if [ "$NB" -gt 20 ]; then ok "$NB keybindings registered"; else bad "only $NB keybindings registered"; fi
 
+# ERGON-42: the animation tree the compositor is RUNNING, not the file. A
+# leaf that parses but never applied -- the wrong table, a call that ran
+# before its curve existed -- looks exactly like Hyprland's defaults. Searched
+# recursively, so the check does not depend on how hyprctl nests leaves.
+_anim=$(hq animations -j 2>/dev/null)
+_leaf() { jq -c --arg n "$1" '[.. | objects | select(.name? == $n)][0] // empty' <<<"$_anim" 2>/dev/null; }
+_wi=$(_leaf windowsIn); _ws=$(_leaf workspaces); _fs=$(_leaf fadeSwitch)
+if jq -e '.bezier == "easeOutQuint" and (.style | test("popin 87%"))' <<<"$_wi" >/dev/null 2>&1 \
+   && jq -e '.enabled == false' <<<"$_ws" >/dev/null 2>&1 \
+   && jq -e '.enabled == false' <<<"$_fs" >/dev/null 2>&1; then
+  ok "the running compositor pops windows in at 87% on easeOutQuint, with workspaces and fadeSwitch off"
+else
+  bad "the animation tree is not looknfeel's: windowsIn=${_wi:-?} workspaces=${_ws:-?} fadeSwitch=${_fs:-?}"
+  head -c 600 <<<"$_anim" | sed 's/^/     /'
+fi
+
 # --- ERGON-15: the first login opens the welcome, once ----------------------
 # A window mapping, not a string in autostart.lua. The stamp is the other half:
 # only the page itself writes it, from inside the window, once it has a
@@ -2156,11 +2180,24 @@ if [ -d /out ] || mkdir -p /out 2>/dev/null; then
   mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null || true
 fi
 
+park_cursor() {
+  # A warp alone sends waybar no motion, so it keeps the last button hovered,
+  # tooltip and all. A real nudge through ydotool makes it notice.
+  hq "dispatch 'hl.dsp.cursor.move({x = 450, y = 15})'" >/dev/null 2>&1 || true
+  if [ -S "${YSOCK:-}" ]; then
+    usr "YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x 5 -y 0" >/dev/null 2>&1 || true
+    usr "YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x -5 -y 0" >/dev/null 2>&1 || true
+  fi
+  sleep 1
+}
+
 if mountpoint -q /out 2>/dev/null; then
-  usr foot >/dev/null 2>&1 &
-  sleep 4
-  usr fuzzel >/dev/null 2>&1 &
-  sleep 3
+  # On empty bar space: over a workspace button it pops a tooltip into the shot,
+  # and over a window it could move focus under the tests that follow.
+  park_cursor
+  # A clean desktop: no windows, no launcher. The overlay shots below cover
+  # the terminal and launcher.
+  sleep 2
   # -o <output>, not the whole logical space. qemu's virtio-gpu presents more
   # than one output and a bare `grim` captures every one of them, then blocks
   # forever on the one that never presents a frame under software rendering. It
@@ -2187,6 +2224,9 @@ if mountpoint -q /out 2>/dev/null; then
       sed 's/^/     /' /tmp/grim.log 2>/dev/null
     fi
   fi
+  # Close them, or every later screenshot (first-desktop among them) still has
+  # this launcher open over a terminal.
+  pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x foot 2>/dev/null; sleep 1
 else
   bad "the writable out share did not mount"
 fi
@@ -2359,6 +2399,7 @@ shot() {
   mountpoint -q /out 2>/dev/null || { mkdir -p /out; mount -t 9p -o trans=virtio,version=9p2000.L out /out 2>/dev/null; } || true
   mountpoint -q /out 2>/dev/null || { note "no out share: no $1 screenshot"; return 0; }
   local mon; mon=$(hq monitors -j 2>/dev/null | jq -r '.[0].name // empty')
+  park_cursor
   if timeout 20 su - "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$SIG WAYLAND_DISPLAY=$WLD grim -o '$mon' /out/$1.png" >/dev/null 2>&1; then
     chmod 666 "/out/$1.png" 2>/dev/null || true; note "screenshot /out/$1.png"
   else
@@ -2367,6 +2408,19 @@ shot() {
 }
 assert_flame cool "the first session"
 shot first-desktop
+# ERGON-42: the overlays, for a person to look at. A window, then a
+# notification (mako's border), then the launcher (fuzzel's). Best effort like
+# every shot: a note, never a failure, where the VM cannot capture.
+usr "foot" >/dev/null 2>&1 </dev/null &
+sleep 4
+usr "notify-send -a ergon 'Border check' 'One 2px ACTIVE border on every overlay'" >/dev/null 2>&1 || true
+sleep 2
+shot overlay-notification
+usr "fuzzel" >/dev/null 2>&1 </dev/null &
+sleep 3
+shot overlay-launcher
+usr "pkill -x fuzzel; pkill -x foot; makoctl dismiss -a" >/dev/null 2>&1 || true
+sleep 1
 
 # The file existing is not the point; hyprpaper actually putting a surface on
 # the background layer is. A file that hyprpaper cannot read looks identical
@@ -3709,7 +3763,8 @@ _t0=$SECONDS
 usr "timeout -k 2 20 ergon remind 5s vmremind" >/tmp/rm107.out 2>&1 </dev/null; _rm_rc=$?
 [ "$_rm_rc" = 0 ] && [ $((SECONDS - _t0)) -lt 10 ] && ok "ERGON-107: ergon remind 5s returned in $((SECONDS - _t0))s: $(head -c 80 /tmp/rm107.out)" || bad "ERGON-107: ergon remind 5s rc $_rm_rc after $((SECONDS - _t0))s: $(head -c 150 /tmp/rm107.out)"
 _mk_has() { { usr "timeout -k 2 5 makoctl list" 2>/dev/null </dev/null; usr "timeout -k 2 5 makoctl history" 2>/dev/null </dev/null; } | grep -q "Notification [0-9]*: Reminder"; }
-if o_until 14 _mk_has; then ok "ERGON-107: the reminder arrived as a notification titled Reminder (makoctl shows summaries only; the body is unproven)"
+# 5s timer + systemd-run + notify-send: on a loaded runner it has landed after 14s.
+if o_until 30 _mk_has; then ok "ERGON-107: the reminder arrived as a notification titled Reminder (makoctl shows summaries only; the body is unproven)"
 else bad "ERGON-107: no Reminder notification in mako: list [$(usr "timeout 5 makoctl list" 2>&1 </dev/null | tr "\n" "|" | head -c 300)] history [$(usr "timeout 5 makoctl history" 2>&1 </dev/null | tr "\n" "|" | head -c 300)] journal [$(usr "journalctl --user --no-pager -o cat -n 8 -u ergon-remind-1 -u ergon-remind-2" 2>&1 </dev/null | tr "\n" "|" | head -c 300)]"; fi
 usr "timeout 5 makoctl dismiss -a" >/dev/null 2>&1 </dev/null
 sleep 2
@@ -4472,6 +4527,68 @@ elif grep -q 'swrast' /tmp/picker.out || usr "ergon-gpu --software" >/dev/null 2
   note "ERGON-152: the picker needs a GPU EGL stack and this VM renders in software ($(grep -m1 -o 'falling back to [a-z_]*' /tmp/picker.out)); not exercised here"
 else bad "  the picker did not stay open: $(head -c 200 /tmp/picker.out)"; fi
 pkill -u "$U" -x hyprland-share-picker 2>/dev/null
+# --- the logo on each surface (ERGON-161) ------------------------------------
+# The shapes are asserted by bin/test-logo.sh; this is what a person looks at.
+# Every shot is of a clean state: what is opened here is closed again.
+echo "--- the logo ---"
+for _f in waybar/logo-dim.svg waybar/logo-active.svg hypr/lock-logo.svg fastfetch/config.jsonc; do
+  [ -s "$G/$_f" ] && ok "ERGON-161: $_f was rendered" || bad "ERGON-161: $_f was not rendered"
+done
+_fd=$(grep -o 'fill="#[0-9A-Fa-f]\{6\}"' "$G/waybar/logo-dim.svg" 2>/dev/null); _fa=$(grep -o 'fill="#[0-9A-Fa-f]\{6\}"' "$G/waybar/logo-active.svg" 2>/dev/null)
+[ -n "$_fd" ] && [ -n "$_fa" ] && [ "$_fd" != "$_fa" ] && ok "  the bar mark has a palette colour at rest ($_fd) and another on hover ($_fa)" || bad "  the bar mark SVGs lack distinct palette colours ('$_fd' / '$_fa')"
+[ -s "$H/.local/share/ergon/lock-logo.png" ] && ok "  the lock screen logo PNG exists" || bad "  no $H/.local/share/ergon/lock-logo.png (rsvg-convert missing?)"
+[ -s /usr/share/plymouth/themes/ergon/logo.png ] && ok "  the boot splash logo.png is installed" || bad "  no logo.png in the Plymouth theme"
+# The bar: the mark at rest, then with the pointer on it.
+pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -x foot 2>/dev/null; sleep 1
+hq "dispatch 'hl.dsp.cursor.move({x = 600, y = 400})'" >/dev/null 2>&1; sleep 1
+shot logo-bar-rest
+hq "dispatch 'hl.dsp.cursor.move({x = 22, y = 14})'" >/dev/null 2>&1; sleep 0.5
+# A moved cursor alone sent GTK no motion event; a real device nudge does.
+[ -S "${YSOCK:-/nonexistent}" ] && { usr "YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x 1 -y 0; YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x -1 -y 0" >/dev/null 2>&1; }
+sleep 1
+shot logo-bar-hover
+hq "dispatch 'hl.dsp.cursor.move({x = 600, y = 400})'" >/dev/null 2>&1
+# fastfetch in a foot window.
+usr "foot --app-id=ergon-ff sh -c 'fastfetch; sleep 120'" >/dev/null 2>&1 &
+sleep 5
+hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-ff")' >/dev/null 2>&1 \
+  && ok "ERGON-161: fastfetch ran in a foot window" || bad "ERGON-161: the fastfetch window did not open"
+usr "fastfetch --pipe" 2>&1 | diag logo-fastfetch
+shot logo-fastfetch
+pkill -u "$U" -f 'foot --app-id=ergon-ff' 2>/dev/null; sleep 1
+# The screensaver, mid-animation.
+usr "tte --version" 2>&1 | diag logo-tte-version
+grep -q "$(sed -n 's/^TTE_VERSION=//p' "$G/bin/ergon-screensaver")" /out/logo-tte-version.txt 2>/dev/null \
+  && ok "ERGON-161: tte is installed at the pinned version" || bad "ERGON-161: tte is missing or not the pinned version: $(head -c 120 /out/logo-tte-version.txt 2>/dev/null)"
+# Mid-animation first: rain, a long effect, a few seconds in.
+usr "ERGON_SCREENSAVER_EFFECT=rain ERGON_SCREENSAVER_FPS=12 ergon-screensaver start" >/dev/null 2>&1
+sleep 7
+hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver" and .fullscreen != 0)' >/dev/null 2>&1 \
+  && ok "  the screensaver is a fullscreen window" || bad "  no fullscreen ergon-screensaver window"
+{ pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1; } \
+  && ok "  and tte is animating" || bad "  tte is not running under the screensaver"
+shot logo-screensaver-mid
+usr "ergon-screensaver stop" >/dev/null 2>&1
+sleep 2
+# Then the finished logo: a fast effect, held for two minutes, shot once tte has
+# exited (polled, generously: this VM draws in software).
+usr "ERGON_SCREENSAVER_EFFECT=wipe ERGON_SCREENSAVER_HOLD=120 ergon-screensaver start" >/dev/null 2>&1
+sleep 5
+for _ in $(seq 1 90); do
+  { pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1; } || break
+  sleep 2
+done
+sleep 3
+{ pgrep -u "$U" -x tte >/dev/null 2>&1 || pgrep -u "$U" -f 'bin/tte' >/dev/null 2>&1; } \
+  && bad "  the wipe effect had not finished after three minutes" || ok "  the effect finished and the logo is held"
+shot logo-screensaver
+usr "ergon-screensaver stop" >/dev/null 2>&1
+sleep 2
+hq clients -j 2>/dev/null | jq -e '.[] | select(.class == "ergon-screensaver")' >/dev/null 2>&1 \
+  && bad "  the screensaver window survived stop" || ok "  stop closes it"
+sleep 1
+# The lock screen's own shot follows below (lock-screen).
+
 # --- the lock screen (ERGON-127) -------------------------------------------
 # Lock for real, look, unlock. hyprlock draws the blurred wallpaper image; the
 # assertion is that it started and stayed up on that config. SIGUSR1 is its
