@@ -3008,6 +3008,30 @@ else
 fi
 assert_flame cool "after switching back"
 
+# --- the omarchy-derived palettes, one screenshot each (ERGON-156) ------------
+# Visible, so Jose judges them: /out/palette-<name>.png is the desktop (bar,
+# wallpaper, the foot and fuzzel windows opened above) under that palette. The
+# asserted part is that the switch ran and the background was recoloured for it.
+for _p in ethereal flexoki-light hackerman jade-horse last-horizon lumon lupine matte-black miasma retro-82 ristretto solitude starship vantablack white; do
+  if usr "timeout 120 ergon-theme $_p" > /tmp/palette-$_p.log 2>&1 </dev/null; then
+    for _ in $(seq 40); do case "$(bgapplied)" in */backgrounds/$_p/*) break ;; esac; sleep 1; done
+    case "$(bgapplied)" in
+      */backgrounds/$_p/*) ok "ERGON-156: $_p applied and its background was coloured for it" ;;
+      *) bad "ERGON-156: $_p applied but the background is '$(bgapplied)'" ;;
+    esac
+    # fuzzel does not restyle live and mako keeps old toasts: a fresh launcher under this palette, no stale toasts
+    usr "makoctl dismiss -a" >/dev/null 2>&1 </dev/null; pkill -u "$U" -x fuzzel 2>/dev/null; sleep 1
+    usr fuzzel >/dev/null 2>&1 &
+    sleep 3; shot "palette-$_p"
+    pkill -u "$U" -x fuzzel 2>/dev/null
+  else
+    bad "ERGON-156: ergon-theme $_p failed: $(tail -3 /tmp/palette-$_p.log | tr '\n' ' ')"
+  fi
+done
+pkill -u "$U" -x fuzzel 2>/dev/null
+usr "ergon-theme cool" > /tmp/palette-restore2.log 2>&1 </dev/null
+assert_flame cool "after the omarchy palettes"
+
 # --- a projector is mirrored, and stays mirrored (ERGON-37) -----------------
 # The VM has one output, so the projector is a headless one the compositor
 # makes itself. A mirror drops out of `monitors` and shows in `monitors all`
