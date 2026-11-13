@@ -2183,7 +2183,8 @@ fi
 park_cursor() {
   # A warp alone sends waybar no motion, so it keeps the last button hovered,
   # tooltip and all. A real nudge through ydotool makes it notice.
-  hq "dispatch 'hl.dsp.cursor.move({x = 450, y = 15})'" >/dev/null 2>&1 || true
+  # PARK_X/PARK_Y: somewhere else for a shot of a full-screen window (ERGON-134).
+  hq "dispatch 'hl.dsp.cursor.move({x = ${PARK_X:-450}, y = ${PARK_Y:-15}})'" >/dev/null 2>&1 || true
   if [ -S "${YSOCK:-}" ]; then
     usr "YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x 5 -y 0" >/dev/null 2>&1 || true
     usr "YDOTOOL_SOCKET=$YSOCK ydotool mousemove -x -5 -y 0" >/dev/null 2>&1 || true
@@ -3164,6 +3165,9 @@ else
   else su "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user unset-environment GDK_SCALE" 2>/dev/null || true; fi
   hq output remove ERGON-PROJ >/dev/null
 fi
+
+# ERGON-134 and ERGON-137: an X11 client at 1.6, and touchpad swipes (guest-hw.sh).
+. "$SHARE/test/arch-vm/guest-hw.sh"
 
 # --- what the OS hands its agents -----------------------------------------
 # Every one of these is installed by a step that WARNS rather than fails, so
