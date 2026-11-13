@@ -123,6 +123,7 @@ Twenty-one files are rendered from a `.in` template beside them by
     lazydocker/config.yml wezterm/wezterm.lua btop/themes/ergon.theme
     bat/themes/ergon.tmTheme  swayosd/style.css  gtk/gtk4.css
     gtk/settings4.ini     qt6ct/qt6ct.conf   qt6ct/colors/ergon.conf
+    qt5ct/qt5ct.conf   qt5ct/colors/ergon.conf
 
 `gtk/gtk4.css` is the one exception to "the active palette": it is
 `gtk/gtk.css.in` rendered twice, a light palette and a dark one in

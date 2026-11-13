@@ -89,9 +89,10 @@ xdg-user-dirs
 qt5-wayland
 qt6-wayland                 # native Wayland for Qt6 apps (Qt5's is above)
 qt6ct               # ERGON-139: the Qt6 platform theme; its colour scheme is rendered
-                    # from the palette (qt6ct/). Qt5 has its own, qt5ct, which one
-                    # QT_QPA_PLATFORMTHEME cannot name alongside this one (a colon
-                    # list is not read), so Qt5 apps are not themed
+                    # from the palette (qt6ct/).
+qt5ct               # ERGON-160: the same for Qt5 apps (qt5ct/). QT_QPA_PLATFORMTHEME=qt6ct
+                    # already names it there: both plugins declare both keys, and each Qt
+                    # searches only its own plugin directory (hypr/common/env.lua)
 
 # --- login -----------------------------------------------------------------
 greetd

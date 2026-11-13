@@ -4503,6 +4503,25 @@ sleep 5
 if pgrep -u "$U" -x qt6ct >/dev/null; then ok "  qt6ct (a Qt6 app) opens"; shot qt6-themed; else bad "  qt6ct did not stay open"; fi
 pkill -u "$U" -x qt6ct 2>/dev/null
 
+# ERGON-160: a Qt5 app follows too. The name is the same (qt6ct); Qt5 resolves it to
+# qt5ct's plugin, so the proof is the plugin in the process, not the variable.
+_q5s="$H/.config/qt5ct/colors/ergon.conf"
+_n=$(awk -F= '/^(active|disabled|inactive)_colors=/ { n = split($2, a, ","); if (n != 21) bad_n = 1; c++ } END { print (c == 3 && !bad_n) ? "ok" : "bad" }' "$_q5s" 2>/dev/null)
+[ "$_n" = ok ] && ok "qt5ct colour scheme rendered: three states of 21 colours" || bad "qt5ct colour scheme missing or malformed: $_q5s"
+_win5=$(awk -F'[=,]' '/^active_colors=/ { gsub(/ /, "", $12); print tolower(substr($12, 4)) }' "$_q5s" 2>/dev/null)
+[ -n "$_win5" ] && [ "$_win5" = "$_win" ] && ok "  its Window colour is Qt6's ($_win5)" || bad "  Qt5 Window colour '$_win5' is not Qt6's '$_win'"
+grep -qx "color_scheme_path=$_q5s" "$H/.config/qt5ct/qt5ct.conf" 2>/dev/null && ok "  qt5ct.conf points at it" || bad "  qt5ct.conf does not point at $_q5s"
+hq "dispatch 'hl.dsp.exec_cmd(\"qt5ct\")'" >/dev/null 2>&1
+sleep 5
+_p5=$(pgrep -u "$U" -x qt5ct | head -1)
+if [ -n "$_p5" ]; then
+  ok "  qt5ct (a Qt5 app) opens"
+  _m5=$(grep -o 'libqt[56]ct\.so' /proc/"$_p5"/maps 2>/dev/null | sort -u | tr '\n' ' ')
+  [ "$_m5" = "libqt5ct.so " ] && ok "  and loaded the qt5ct platform theme, not qt6ct's" || bad "  Qt5 app mapped platform theme plugins: '${_m5:-none}'"
+  shot qt5-themed
+else bad "  qt5ct did not stay open"; fi
+pkill -u "$U" -x qt5ct 2>/dev/null
+
 # ERGON-152: the screen-share picker. xdg-desktop-portal-hyprland ships
 # hyprland-share-picker (Qt6, so the palette above themes it) and the portal
 # offers monitors and windows as sources.

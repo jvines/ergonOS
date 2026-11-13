@@ -56,3 +56,5 @@ wezterm/wezterm.lua
 yazi/theme.toml
 qt6ct/qt6ct.conf
 qt6ct/colors/ergon.conf
+qt5ct/qt5ct.conf
+qt5ct/colors/ergon.conf
