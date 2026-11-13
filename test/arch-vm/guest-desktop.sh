@@ -3165,6 +3165,9 @@ else
   hq output remove ERGON-PROJ >/dev/null
 fi
 
+# ERGON-134 and ERGON-137: an X11 client at 1.6, and touchpad swipes (guest-hw.sh).
+. "$SHARE/test/arch-vm/guest-hw.sh"
+
 # --- what the OS hands its agents -----------------------------------------
 # Every one of these is installed by a step that WARNS rather than fails, so
 # provisioning stays green whatever happens here and nothing else in this suite

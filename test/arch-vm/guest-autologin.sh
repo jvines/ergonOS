@@ -58,5 +58,56 @@ dk=$(asu busctl --user call org.freedesktop.secrets /org/freedesktop/secrets org
 pgrep -x gcr-prompter >/dev/null && bad "a keyring prompt (gcr-prompter) is open" || ok "no keyring prompt is open"
 asu "$H/ergonOS/bin/ergon-doctor" 2>/dev/null | grep -E 'keyring|autologin|bootloader|boot-splash|snapshot-menu' | sed 's/^/     /'
 
+# ERGON-135: PipeWire gets realtime from rtkit. polkit grants rtkit to an ACTIVE
+# session ON A SEAT, which the serial-console harness never has and this greetd
+# login does (seat0). So here it is a judgement, not a note: in an active seat
+# session PipeWire must hold a realtime or negative-nice thread, rtkit must have
+# logged the grant, and rtkit's watchdog must not have demoted or killed anything.
+echo "--- ERGON-135: PipeWire realtime, in a real seat session ---"
+if [ -n "$sid" ]; then
+  _seat=$(loginctl show-session "$sid" -p Seat --value 2>/dev/null); _act=$(loginctl show-session "$sid" -p Active --value 2>/dev/null)
+  if [ "$_act" = yes ] && [ -n "$_seat" ]; then
+    ok "session $sid is active on $_seat (what polkit needs to let rtkit grant priority)"
+    for _ in $(seq 60); do pgrep -u "$U" -x pipewire >/dev/null && break; sleep 1; done
+    # Nothing in the session may have asked for audio yet; a client is what starts the socket-activated daemon.
+    pgrep -u "$U" -x pipewire >/dev/null || { asu timeout 10 pactl info >/dev/null 2>&1; sleep 3; }
+    _rt() {  # every thread of the user's audio daemons: class, rtprio, nice, name
+      local p; for p in $(pgrep -u "$U" -x 'pipewire|pipewire-pulse|wireplumber'); do
+        ps -L -o pid=,cls=,rtprio=,ni=,comm= -p "$p" | tr -s ' '; done; }
+    # rtkit is asked once per thread as it starts; give the daemons a moment to settle.
+    for _ in $(seq 20); do _rt | awk '$2 ~ /^(FF|RR)$/ || $4 + 0 < 0 { f = 1 } END { exit !f }' && break; sleep 1; done
+    _thr=$(_rt)
+    _rtn=$(awk '$2 ~ /^(FF|RR)$/ || $4 + 0 < 0' <<<"$_thr" | wc -l)
+    _rtl=$(journalctl -b --no-pager -q -u rtkit-daemon 2>/dev/null)
+    if [ "$_rtn" -gt 0 ]; then
+      ok "PipeWire has $_rtn thread(s) at realtime class or negative nice: $(awk '$2 ~ /^(FF|RR)$/ || $4 + 0 < 0 { printf "%s/%s/nice%s/%s; ", $2, $3, $4, $5 }' <<<"$_thr")"
+    else
+      bad "no PipeWire thread has realtime priority or negative nice in active seat session $sid"
+    fi
+    _grants=$(grep -c 'Successfully made thread' <<<"$_rtl")
+    [ "$_grants" -gt 0 ] && ok "  rtkit-daemon logged $_grants grant(s): $(grep 'Successfully made thread' <<<"$_rtl" | tail -1 | sed 's/^[^ ]* [^ ]* [^ ]* //')" \
+      || bad "  rtkit-daemon logged no 'Successfully made thread' for this session"
+    if grep -qiE 'canary|Demoting|Demoted|Killing|watchdog' <<<"$_rtl"; then
+      bad "  rtkit's watchdog acted on this user's threads: $(grep -iE 'canary|Demoting|Demoted|Killing|watchdog' <<<"$_rtl" | tail -2 | tr '\n' ' ')"
+    else
+      ok "  and rtkit's watchdog demoted or killed nothing"
+    fi
+    pgrep -u "$U" -x pipewire >/dev/null && ok "  pipewire is still running" || bad "  pipewire is not running at the end"
+    if [ "$_rtn" -eq 0 ] || [ "$_grants" -eq 0 ]; then
+      { echo "== session"; loginctl show-session "$sid"; echo "== threads"; echo "$_thr"
+        echo "== limits"; cat /proc/"$(pgrep -u "$U" -x pipewire | head -1)"/limits 2>&1
+        echo "== pipewire log"; journalctl -b --no-pager -q _COMM=pipewire | tail -30
+        echo "== rtkit log"; echo "$_rtl" | tail -30
+        echo "== polkit"; journalctl -b --no-pager -q -u polkit | tail -10; } > /out/rtkit-135.txt 2>&1
+      chmod 666 /out/rtkit-135.txt 2>/dev/null
+      sed 's/^/     /' /out/rtkit-135.txt | head -60
+    fi
+  else
+    note "ERGON-135: session $sid is not active on a seat (Active=$_act Seat=${_seat:-none}), so the realtime judgement was not made"
+  fi
+else
+  bad "ERGON-135: no wayland session to judge PipeWire's priority in"
+fi
+
 echo "--- $P passed, $F failed ---"
 echo "AUTOLOGIN_RESULT=$F"
