@@ -9,15 +9,22 @@
 # guest-autologin.sh.) Kept in its own file so a dev loop can source it into a
 # booted, provisioned disk without re-running the hour of provisioning above it.
 
-pacman -S --needed --noconfirm xterm xorg-xwininfo xorg-xdpyinfo python-evdev libinput >/tmp/hw-pacman.log 2>&1 \
+pacman -S --needed --noconfirm xterm xorg-xwininfo xorg-xdpyinfo python-evdev libinput-tools >/tmp/hw-pacman.log 2>&1 \
   || { bad "could not install the X11 and touchpad test tools (harness): $(tail -2 /tmp/hw-pacman.log | tr '\n' ' ')"; }
 
 # --- ERGON-134: XWayland apps are sharp at a fractional scale -----------------
 echo "--- ERGON-134: an X11 client at scale 1.6 ---"
 _x_mon=$(hq monitors -j | jq -r '.[0].name')
-_x_orig=$(hq monitors -j | jq -r --arg n "$_x_mon" '.[] | select(.name == $n) | "\(.x)x\(.y) \(.scale) \(.transform)"')
+_x_orig=$(hq monitors -j | jq -r --arg n "$_x_mon" '.[] | select(.name == $n) | "\(.x)x\(.y) \(.scale) \(.transform) \(.width)x\(.height)@\(.refreshRate)"')
 _x_gdk=$(su "$U" -s /bin/bash -c "XDG_RUNTIME_DIR=/run/user/1000 systemctl --user show-environment" 2>/dev/null | sed -n 's/^GDK_SCALE=//p')
 hq "dispatch 'hl.dsp.focus({ monitor = \"$_x_mon\" })'" >/dev/null
+# The Framework 13 is 2256x1504; the VM's 1280x800 would be only 800 logical px wide at 1.6, narrower
+# than the bar. Take the biggest of the Framework's mode and 1920x1200 the output offers.
+_x_modes=$(usr "ergon-display modes" 2>/dev/null | tr '\n' ' ')
+note "ERGON-134: $_x_mon offers: ${_x_modes:0:200}"
+for _m in 2256x1504 1920x1200; do
+  case " $_x_modes " in *" $_m@"*) usr "ergon-display mode $_m" >>/tmp/hw-display.log 2>&1 && { sleep 2; break; } ;; esac
+done
 # As a person does it: step the focused output up with SUPER+CTRL+M's command
 # until it is at 1.6, the Framework 13's scale.
 for _ in 1 2 3 4 5 6; do
@@ -80,14 +87,16 @@ else
     bad "  its X window is ${_xww:-?}x${_xwh:-?} px; at device pixels it would be ${_ew}x${_eh} (compositor logical ${_hw}x${_hh})"
     { hq monitors -j; echo "$_xc"; echo "$_xi"; } | diag hw134
   fi
+  PARK_X=$(( _xlw - 60 )) PARK_Y=$(( _xh * 5 / 8 - 60 ))   # over the xterm: no bar tooltip in the shot
   shot xwayland-scale-1.6
+  unset PARK_X PARK_Y
   usr "pkill -x xterm" >/dev/null 2>&1
   sleep 1
 fi
 # Back as found: the output rule, the saved layout ergon display wrote, and the
 # GDK_SCALE the compositor and the manager carry.
-read -r _o_pos _o_scale _o_tr <<<"$_x_orig"
-hq "eval 'hl.monitor({ output = \"$_x_mon\", position = \"$_o_pos\", scale = \"$_o_scale\", transform = $_o_tr })'" >/dev/null
+read -r _o_pos _o_scale _o_tr _o_mode <<<"$_x_orig"
+hq "eval 'hl.monitor({ output = \"$_x_mon\", mode = \"$_o_mode\", position = \"$_o_pos\", scale = \"$_o_scale\", transform = $_o_tr })'" >/dev/null
 rm -f "/run/user/1000/ergon/display.lua" "$H/.local/state/ergon/display.lua"
 sleep 1
 usr "ergon-display xscale" >/dev/null 2>&1
@@ -108,7 +117,8 @@ if ! grep -q READY /tmp/tp.log; then
   bad "the virtual touchpad was not created: $(head -c 300 /tmp/tp.log)"
 else
   sleep 2
-  _tp_li=$(libinput list-devices 2>/dev/null | awk -v RS= '/ERGON-TEST Virtual Touchpad/')
+  libinput list-devices >/tmp/tp-li.txt 2>&1
+  _tp_li=$(awk -v RS= '/ERGON-TEST Virtual Touchpad/' /tmp/tp-li.txt)
   grep -q 'Capabilities:.*pointer.*gesture' <<<"$_tp_li" \
     && ok "libinput classifies the virtual device as a touchpad (Capabilities: $(sed -n 's/^Capabilities: *//p' <<<"$_tp_li"))" \
     || { bad "libinput does not classify the virtual device as a touchpad"; echo "$_tp_li" | diag hw137-libinput; }
@@ -132,6 +142,10 @@ else
 
   # 3 fingers, horizontal: the workspace follows.
   _w0=$(ws)
+  # Control: two fingers are a scroll, not a gesture, so the same stroke must leave the workspace alone.
+  tp swipe 2 -1 0
+  [ "$(ws)" = "$_w0" ] && ok "a 2-finger swipe is a scroll and leaves workspace $_w0 alone (the 3-finger result below is the gesture)" \
+    || bad "a 2-finger swipe changed the workspace to $(ws)"
   tp swipe 3 -1 0
   _w1=$(ws)
   [ "$_w1" != "$_w0" ] && ok "a 3-finger swipe left moves workspace $_w0 -> $_w1" || bad "a 3-finger swipe left left the workspace at $_w0"
@@ -163,8 +177,6 @@ else
   [ "$(_fl)" = false ] && ok "  and another 4-finger swipe up tiles it again" \
     || { note "ERGON-137: a second 4-finger swipe up leaves the window floating=$(_fl): the gesture floats, it does not toggle"
          hq "dispatch 'hl.dsp.window.float({ action = \"toggle\" })'" >/dev/null 2>&1; }
-  shot touchpad-gestures
-
   usr "pkill -f hw-gesture" >/dev/null 2>&1
   echo quit >&9; exec 9>&-; wait "$_tp_pid" 2>/dev/null
   hq "dispatch 'hl.dsp.focus({workspace = 1})'" >/dev/null
