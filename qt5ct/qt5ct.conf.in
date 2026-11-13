@@ -1,0 +1,15 @@
+# GENERATED from qt5ct/qt5ct.conf.in -- edit the .in, then run: ergon theme
+#
+# Qt5 applications follow the palette (ERGON-160), exactly as Qt6 ones do through
+# qt6ct/qt6ct.conf: QT_QPA_PLATFORMTHEME=qt6ct (hypr/common/env.lua) is the name
+# Qt5 resolves to qt5ct's plugin too, which reads this file and the scheme below.
+# The two configs are the same, a Qt5 look matching the Qt6 one. The background
+# below is not read: it makes this file change with the palette, and qt5ct
+# reloads a running application when THIS file does.
+# palette background @COOL_BG0@
+[Appearance]
+color_scheme_path=@COOL_HOME@/.config/qt5ct/colors/ergon.conf
+custom_palette=true
+icon_theme=@COOL_ICON_THEME@
+standard_dialogs=default
+style=Fusion

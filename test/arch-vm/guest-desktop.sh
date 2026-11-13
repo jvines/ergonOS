@@ -4503,6 +4503,25 @@ sleep 5
 if pgrep -u "$U" -x qt6ct >/dev/null; then ok "  qt6ct (a Qt6 app) opens"; shot qt6-themed; else bad "  qt6ct did not stay open"; fi
 pkill -u "$U" -x qt6ct 2>/dev/null
 
+# ERGON-160: a Qt5 app follows too. The name is the same (qt6ct); Qt5 resolves it to
+# qt5ct's plugin, so the proof is the plugin in the process, not the variable.
+_q5s="$H/.config/qt5ct/colors/ergon.conf"
+_n=$(awk -F= '/^(active|disabled|inactive)_colors=/ { n = split($2, a, ","); if (n != 21) bad_n = 1; c++ } END { print (c == 3 && !bad_n) ? "ok" : "bad" }' "$_q5s" 2>/dev/null)
+[ "$_n" = ok ] && ok "qt5ct colour scheme rendered: three states of 21 colours" || bad "qt5ct colour scheme missing or malformed: $_q5s"
+_win5=$(awk -F'[=,]' '/^active_colors=/ { gsub(/ /, "", $12); print tolower(substr($12, 4)) }' "$_q5s" 2>/dev/null)
+[ -n "$_win5" ] && [ "$_win5" = "$_win" ] && ok "  its Window colour is Qt6's ($_win5)" || bad "  Qt5 Window colour '$_win5' is not Qt6's '$_win'"
+grep -qx "color_scheme_path=$_q5s" "$H/.config/qt5ct/qt5ct.conf" 2>/dev/null && ok "  qt5ct.conf points at it" || bad "  qt5ct.conf does not point at $_q5s"
+hq "dispatch 'hl.dsp.exec_cmd(\"qt5ct\")'" >/dev/null 2>&1
+sleep 5
+_p5=$(pgrep -u "$U" -x qt5ct | head -1)
+if [ -n "$_p5" ]; then
+  ok "  qt5ct (a Qt5 app) opens"
+  _m5=$(grep -o 'libqt[56]ct\.so' /proc/"$_p5"/maps 2>/dev/null | sort -u | tr '\n' ' ')
+  [ "$_m5" = "libqt5ct.so " ] && ok "  and loaded the qt5ct platform theme, not qt6ct's" || bad "  Qt5 app mapped platform theme plugins: '${_m5:-none}'"
+  shot qt5-themed
+else bad "  qt5ct did not stay open"; fi
+pkill -u "$U" -x qt5ct 2>/dev/null
+
 # ERGON-152: the screen-share picker. xdg-desktop-portal-hyprland ships
 # hyprland-share-picker (Qt6, so the palette above themes it) and the portal
 # offers monitors and windows as sources.
@@ -4516,17 +4535,36 @@ esac
 # The picker as xdph starts it: windows arrive in XDPH_WINDOW_SHARING_LIST as
 # handle[HC>]class[HT>]title[HE>]address[HA>]; outputs it reads from Qt itself.
 _wl=$(hq clients -j | jq -r '.[] | "\(.pid)[HC>]\(.class)[HT>]\(.title)[HE>]\(.address)[HA>]"' | tr -d "\n" | tr -d "\"'\`\$\\\\")
-usr "XDPH_WINDOW_SHARING_LIST='$_wl' hyprland-share-picker" >/tmp/picker.out 2>&1 </dev/null &
-sleep 5
-# The picker is Hyprtoolkit (OpenGL ES only, no CPU path; xdph 1.5 is not Qt) and
-# asserts on EGL_ANDROID_native_fence_sync, which mesa's kms_swrast lacks. The VM
-# has virtio-gpu without 3D, so there it aborts: no env var changes that. Where the
-# GPU is real it must stay open.
-if pgrep -u "$U" -x hyprland-share-picker >/dev/null; then ok "  the picker opens with ${_wl:+windows and }outputs"; shot share-picker
-elif grep -q 'swrast' /tmp/picker.out || usr "ergon-gpu --software" >/dev/null 2>&1 </dev/null; then
-  note "ERGON-152: the picker needs a GPU EGL stack and this VM renders in software ($(grep -m1 -o 'falling back to [a-z_]*' /tmp/picker.out)); not exercised here"
-else bad "  the picker did not stay open: $(head -c 200 /tmp/picker.out)"; fi
-pkill -u "$U" -x hyprland-share-picker 2>/dev/null
+# ERGON-159: xdph is configured with our picker, which runs the stock one on a
+# GPU and a fuzzel list under software rendering (where Hyprtoolkit aborts).
+grep -qE '^\s*custom_picker_binary = ergon-share-picker$' "$H/.config/hypr/xdph.conf" 2>/dev/null \
+  && ok "ERGON-159: xdph.conf points custom_picker_binary at ergon-share-picker" || bad "ERGON-159: $H/.config/hypr/xdph.conf does not name ergon-share-picker"
+usr "command -v ergon-share-picker" >/dev/null 2>&1 </dev/null && ok "  and it is on the session PATH" || bad "  ergon-share-picker is not on the session PATH, so xdph could not start it"
+if usr "ergon-gpu --software" >/dev/null 2>&1 </dev/null; then
+  # A fuzzel shim that keeps what the picker fed it, then runs the real one.
+  mkdir -p /tmp/spshim; rm -f /tmp/picker.shown /tmp/picker.out /tmp/picker.err
+  printf '#!/bin/sh\ntee /tmp/picker.shown | exec %s "$@"\n' "$(command -v fuzzel)" >/tmp/spshim/fuzzel
+  chmod 755 /tmp/spshim/fuzzel; chmod 777 /tmp/spshim; touch /tmp/picker.shown /tmp/picker.out /tmp/picker.err; chmod 666 /tmp/picker.shown /tmp/picker.out /tmp/picker.err
+  usr "PATH=/tmp/spshim:\$PATH XDPH_WINDOW_SHARING_LIST='$_wl' ergon-share-picker" >/tmp/picker.out 2>/tmp/picker.err </dev/null &
+  sleep 4
+  if pgrep -u "$U" -x fuzzel >/dev/null; then
+    ok "ERGON-159: under software rendering ergon-share-picker opens a fuzzel list"
+    for _m in $(hq monitors -j | jq -r '.[].name'); do
+      grep -q "^screen  $_m  " /tmp/picker.shown 2>/dev/null && ok "  it lists output $_m" || bad "  output $_m is not in the list: $(head -c 200 /tmp/picker.shown)"
+    done
+    if [ -n "$_wl" ]; then grep -q '^window  ' /tmp/picker.shown 2>/dev/null && ok "  and the windows" || bad "  no window in the list: $(head -c 300 /tmp/picker.shown)"; fi
+    shot share-picker-fallback
+    usr "wtype screen -s 400 -k Return" >/dev/null 2>&1 </dev/null; sleep 3
+    grep -qE '^\[SELECTION\]/screen:[^ ]+$' /tmp/picker.out && ok "  picking a screen prints '$(head -1 /tmp/picker.out)'" || bad "  no screen selection line: '$(head -c 200 /tmp/picker.out)' $(head -c 200 /tmp/picker.err)"
+  else bad "ERGON-159: ergon-share-picker opened no list: $(head -c 200 /tmp/picker.out) $(head -c 200 /tmp/picker.err)"; fi
+  pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f ergon-share-picker 2>/dev/null; sleep 1
+else
+  usr "XDPH_WINDOW_SHARING_LIST='$_wl' hyprland-share-picker" >/tmp/picker.out 2>&1 </dev/null &
+  sleep 5
+  if pgrep -u "$U" -x hyprland-share-picker >/dev/null; then ok "  the picker opens with ${_wl:+windows and }outputs"; shot share-picker
+  else bad "  the picker did not stay open: $(head -c 200 /tmp/picker.out)"; fi
+  pkill -u "$U" -x hyprland-share-picker 2>/dev/null
+fi
 # --- the logo on each surface (ERGON-161) ------------------------------------
 # The shapes are asserted by bin/test-logo.sh; this is what a person looks at.
 # Every shot is of a clean state: what is opened here is closed again.

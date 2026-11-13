@@ -1,0 +1,14 @@
+# GENERATED from qt5ct/colors/ergon.conf.in -- edit the .in, then run: ergon theme
+#
+# The palette as a Qt colour scheme (ERGON-139): twenty-one #AARRGGBB values per
+# state, in QPalette::ColorRole order -- WindowText, Button, Light, Midlight,
+# Dark, Mid, Text, BrightText, ButtonText, Base, Window, Shadow, Highlight,
+# HighlightedText, Link, LinkVisited, AlternateBase, (NoRole), ToolTipBase,
+# ToolTipText, PlaceholderText. qt5ct's own schemes have exactly this many; a
+# short or long line is not an error, the palette is just wrong.
+# Window is the desktop's background, Button and Base are one step up and
+# AlternateBase two, the way gtk/gtk.css.in layers them.
+[ColorScheme]
+active_colors=#ff@COOL_FG0:raw@, #ff@COOL_BG1:raw@, #ff@COOL_BG2:raw@, #ff@COOL_BG2:raw@, #ff@COOL_BG0:raw@, #ff@COOL_BG2:raw@, #ff@COOL_FG0:raw@, #ff@COOL_FG0:raw@, #ff@COOL_FG0:raw@, #ff@COOL_BG1:raw@, #ff@COOL_BG0:raw@, #ff000000, #ff@COOL_ACCENT:raw@, #ff@COOL_BG0:raw@, #ff@COOL_ACCENT:raw@, #ff@COOL_DIM:raw@, #ff@COOL_BG2:raw@, #ff@COOL_FG0:raw@, #ff@COOL_BG1:raw@, #ff@COOL_FG0:raw@, #80@COOL_FG0:raw@
+disabled_colors=#ff@COOL_DIMMER:raw@, #ff@COOL_BG1:raw@, #ff@COOL_BG2:raw@, #ff@COOL_BG2:raw@, #ff@COOL_BG0:raw@, #ff@COOL_BG2:raw@, #ff@COOL_DIMMER:raw@, #ff@COOL_FG0:raw@, #ff@COOL_DIMMER:raw@, #ff@COOL_BG1:raw@, #ff@COOL_BG0:raw@, #ff000000, #ff@COOL_BG2:raw@, #ff@COOL_DIMMER:raw@, #ff@COOL_DIMMER:raw@, #ff@COOL_DIMMER:raw@, #ff@COOL_BG2:raw@, #ff@COOL_FG0:raw@, #ff@COOL_BG1:raw@, #ff@COOL_FG0:raw@, #80@COOL_FG0:raw@
+inactive_colors=#ff@COOL_FG0:raw@, #ff@COOL_BG1:raw@, #ff@COOL_BG2:raw@, #ff@COOL_BG2:raw@, #ff@COOL_BG0:raw@, #ff@COOL_BG2:raw@, #ff@COOL_FG0:raw@, #ff@COOL_FG0:raw@, #ff@COOL_FG0:raw@, #ff@COOL_BG1:raw@, #ff@COOL_BG0:raw@, #ff000000, #ff@COOL_ACCENT:raw@, #ff@COOL_BG0:raw@, #ff@COOL_ACCENT:raw@, #ff@COOL_DIM:raw@, #ff@COOL_BG2:raw@, #ff@COOL_FG0:raw@, #ff@COOL_BG1:raw@, #ff@COOL_FG0:raw@, #80@COOL_FG0:raw@
