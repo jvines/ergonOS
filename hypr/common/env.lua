@@ -12,7 +12,14 @@ hl.env("GDK_BACKEND", "wayland,x11,*")
 hl.env("QT_QPA_PLATFORM", "wayland;xcb")
 -- qt6ct (ERGON-139): Qt6 applications take the palette from qt6ct/. One name only:
 -- Qt does not read a colon list here (measured with qt6ct 0.11), and a plugin it
--- cannot find leaves the application unthemed, so Qt5 apps are the gap.
+-- cannot find leaves the application unthemed.
+-- Qt5 (ERGON-160) needs no second name. Measured with qt5ct 1.9, qt6ct 0.11, a
+-- Qt5 app (designer-qt5) under Xvfb: each plugin declares BOTH keys, qt5ct and
+-- qt6ct, and Qt5 searches only /usr/lib/qt/plugins while Qt6 searches only
+-- /usr/lib/qt6/plugins. So "qt6ct" resolves to libqt6ct.so in a Qt6 app and to
+-- libqt5ct.so in a Qt5 one (/proc/<pid>/maps), and the Qt5 window's Window
+-- pixel became the colour qt5ct/colors/ergon.conf gave it. Every Qt5 app, no
+-- per-app list; it only needs the qt5ct package installed.
 hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")
 hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
 hl.env("QT_AUTO_SCREEN_SCALE_FACTOR", "1")

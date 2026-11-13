@@ -44,7 +44,7 @@ cp "$REPO/bin/ergon-theme" "$E/bin/"
 cp "$REPO/lib/user-config.sh" "$E/lib/"
 cp "$REPO/theme/cool.env" "$REPO/theme/gruvbox.env" "$REPO/theme/gruvbox-light.env" \
    "$REPO/theme/catppuccin-latte.env" "$REPO/theme/type.env" "$E/theme/"
-for d in foot mako waybar swayosd fuzzel gtk btop/themes wezterm qt6ct qt6ct/colors; do
+for d in foot mako waybar swayosd fuzzel gtk btop/themes wezterm qt6ct qt6ct/colors qt5ct qt5ct/colors; do
   mkdir -p "$E/$d"; cp "$REPO/$d"/*.in "$E/$d/" 2>/dev/null
 done
 
@@ -252,6 +252,20 @@ _q1=$(cat "$E/qt6ct/qt6ct.conf"); run gruvbox >/dev/null 2>&1
 check "  a palette switch rewrites qt6ct.conf too, which is what a running Qt6 app reloads on" \
   test "$(cat "$E/qt6ct/qt6ct.conf")" != "$_q1"
 check "  and the scheme follows to the new background" test "$(qwin)" = "$(qbg gruvbox)"
+run gruvbox-light >/dev/null 2>&1
+# --- Qt5 too (ERGON-160): qt5ct has its own config, same shape, same palette ---
+q5win() { awk -F'[=,]' '/^active_colors=/ { gsub(/ /, "", $12); print tolower(substr($12, 4)) }' "$E/qt5ct/colors/ergon.conf"; }
+check "qt5ct's Window colour is the active palette's background" \
+  test "$(q5win)" = "$(qbg gruvbox-light)"
+check "  each of the three states has 21 colours" \
+  test "$(awk -F= '/^(active|disabled|inactive)_colors=/ { if (split($2, a, ",") == 21) n++ } END { print n }' "$E/qt5ct/colors/ergon.conf")" = 3
+check "  qt5ct.conf names its own scheme under \$HOME and the light icon theme" \
+  bash -c 'grep -qxF "color_scheme_path=$1/.config/qt5ct/colors/ergon.conf" "$2" && grep -qxF "icon_theme=Papirus-Light" "$2"' _ "$HOME" "$E/qt5ct/qt5ct.conf"
+check "  and it is the Qt6 look: same Window colour as qt6ct's" test "$(q5win)" = "$(qwin)"
+_q5=$(cat "$E/qt5ct/qt5ct.conf"); run gruvbox >/dev/null 2>&1
+check "  a palette switch rewrites qt5ct.conf, which a running Qt5 app reloads on" \
+  test "$(cat "$E/qt5ct/qt5ct.conf")" != "$_q5"
+check "  and the scheme follows to the new background" test "$(q5win)" = "$(qbg gruvbox)"
 run gruvbox-light >/dev/null 2>&1
 
 # --- gtk-4.0 carries both modes, so a running GTK4 app follows a switch -------

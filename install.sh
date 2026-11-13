@@ -256,6 +256,8 @@ else
   # Qt6 follows the palette through qt6ct (ERGON-139): a whole directory, as
   # foot is, because the platform theme writes its own files beside the config.
   link qt6ct .config/qt6ct
+  # And Qt5 through qt5ct (ERGON-160), the same shape.
+  link qt5ct .config/qt5ct
   # The OSD. swayosd-server searches $XDG_CONFIG_HOME/swayosd/style.css itself
   # and loads it over the package's own sheet, so this needs no --style flag in
   # autostart.lua -- the file simply has to be at that path. One file rather
