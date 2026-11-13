@@ -4516,17 +4516,36 @@ esac
 # The picker as xdph starts it: windows arrive in XDPH_WINDOW_SHARING_LIST as
 # handle[HC>]class[HT>]title[HE>]address[HA>]; outputs it reads from Qt itself.
 _wl=$(hq clients -j | jq -r '.[] | "\(.pid)[HC>]\(.class)[HT>]\(.title)[HE>]\(.address)[HA>]"' | tr -d "\n" | tr -d "\"'\`\$\\\\")
-usr "XDPH_WINDOW_SHARING_LIST='$_wl' hyprland-share-picker" >/tmp/picker.out 2>&1 </dev/null &
-sleep 5
-# The picker is Hyprtoolkit (OpenGL ES only, no CPU path; xdph 1.5 is not Qt) and
-# asserts on EGL_ANDROID_native_fence_sync, which mesa's kms_swrast lacks. The VM
-# has virtio-gpu without 3D, so there it aborts: no env var changes that. Where the
-# GPU is real it must stay open.
-if pgrep -u "$U" -x hyprland-share-picker >/dev/null; then ok "  the picker opens with ${_wl:+windows and }outputs"; shot share-picker
-elif grep -q 'swrast' /tmp/picker.out || usr "ergon-gpu --software" >/dev/null 2>&1 </dev/null; then
-  note "ERGON-152: the picker needs a GPU EGL stack and this VM renders in software ($(grep -m1 -o 'falling back to [a-z_]*' /tmp/picker.out)); not exercised here"
-else bad "  the picker did not stay open: $(head -c 200 /tmp/picker.out)"; fi
-pkill -u "$U" -x hyprland-share-picker 2>/dev/null
+# ERGON-159: xdph is configured with our picker, which runs the stock one on a
+# GPU and a fuzzel list under software rendering (where Hyprtoolkit aborts).
+grep -qE '^\s*custom_picker_binary = ergon-share-picker$' "$H/.config/hypr/xdph.conf" 2>/dev/null \
+  && ok "ERGON-159: xdph.conf points custom_picker_binary at ergon-share-picker" || bad "ERGON-159: $H/.config/hypr/xdph.conf does not name ergon-share-picker"
+usr "command -v ergon-share-picker" >/dev/null 2>&1 </dev/null && ok "  and it is on the session PATH" || bad "  ergon-share-picker is not on the session PATH, so xdph could not start it"
+if usr "ergon-gpu --software" >/dev/null 2>&1 </dev/null; then
+  # A fuzzel shim that keeps what the picker fed it, then runs the real one.
+  mkdir -p /tmp/spshim; rm -f /tmp/picker.shown /tmp/picker.out /tmp/picker.err
+  printf '#!/bin/sh\ntee /tmp/picker.shown | exec %s "$@"\n' "$(command -v fuzzel)" >/tmp/spshim/fuzzel
+  chmod 755 /tmp/spshim/fuzzel; chmod 777 /tmp/spshim; touch /tmp/picker.shown /tmp/picker.out /tmp/picker.err; chmod 666 /tmp/picker.shown /tmp/picker.out /tmp/picker.err
+  usr "PATH=/tmp/spshim:\$PATH XDPH_WINDOW_SHARING_LIST='$_wl' ergon-share-picker" >/tmp/picker.out 2>/tmp/picker.err </dev/null &
+  sleep 4
+  if pgrep -u "$U" -x fuzzel >/dev/null; then
+    ok "ERGON-159: under software rendering ergon-share-picker opens a fuzzel list"
+    for _m in $(hq monitors -j | jq -r '.[].name'); do
+      grep -q "^screen  $_m  " /tmp/picker.shown 2>/dev/null && ok "  it lists output $_m" || bad "  output $_m is not in the list: $(head -c 200 /tmp/picker.shown)"
+    done
+    if [ -n "$_wl" ]; then grep -q '^window  ' /tmp/picker.shown 2>/dev/null && ok "  and the windows" || bad "  no window in the list: $(head -c 300 /tmp/picker.shown)"; fi
+    shot share-picker-fallback
+    usr "wtype screen -s 400 -k Return" >/dev/null 2>&1 </dev/null; sleep 3
+    grep -qE '^\[SELECTION\]/screen:[^ ]+$' /tmp/picker.out && ok "  picking a screen prints '$(head -1 /tmp/picker.out)'" || bad "  no screen selection line: '$(head -c 200 /tmp/picker.out)' $(head -c 200 /tmp/picker.err)"
+  else bad "ERGON-159: ergon-share-picker opened no list: $(head -c 200 /tmp/picker.out) $(head -c 200 /tmp/picker.err)"; fi
+  pkill -u "$U" -x fuzzel 2>/dev/null; pkill -u "$U" -f ergon-share-picker 2>/dev/null; sleep 1
+else
+  usr "XDPH_WINDOW_SHARING_LIST='$_wl' hyprland-share-picker" >/tmp/picker.out 2>&1 </dev/null &
+  sleep 5
+  if pgrep -u "$U" -x hyprland-share-picker >/dev/null; then ok "  the picker opens with ${_wl:+windows and }outputs"; shot share-picker
+  else bad "  the picker did not stay open: $(head -c 200 /tmp/picker.out)"; fi
+  pkill -u "$U" -x hyprland-share-picker 2>/dev/null
+fi
 # --- the logo on each surface (ERGON-161) ------------------------------------
 # The shapes are asserted by bin/test-logo.sh; this is what a person looks at.
 # Every shot is of a clean state: what is opened here is closed again.

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# ergon:summary=Screen-share source picker for xdg-desktop-portal-hyprland (fuzzel list under software rendering)
+# ergon:group=capture
+# ergon:args=[--allow-token]
+#
+# ERGON-159. hypr/xdph.conf names this as screencopy:custom_picker_binary, so
+# xdph runs it instead of hyprland-share-picker whenever a page or an app asks to
+# share the screen.
+#
+# hyprland-share-picker (xdph 1.5) is Hyprtoolkit, OpenGL ES over EGL only, and
+# aborts unless the driver has eglCreateSyncKHR, eglDupNativeFenceFDANDROID and
+# eglWaitSyncKHR. Mesa kms_swrast / llvmpipe (a VM without 3D, a machine whose GPU
+# driver is not working) has no native fence, so there the picker exits and no
+# source can be chosen. So:
+#
+#   ergon-gpu --software says yes  ->  a fuzzel list of outputs and windows
+#   otherwise                      ->  exec hyprland-share-picker, unchanged
+#
+# The protocol is xdph's (src/shared/ScreencopyShared.cpp, v1.5.0): the windows
+# arrive in XDPH_WINDOW_SHARING_LIST as handle[HC>]class[HT>]title[HE>]address[HA>]
+# repeated, and the answer is one stdout line "[SELECTION]<flags>/screen:<output>"
+# or "[SELECTION]<flags>/window:<handle>". Flag r = allow a restore token, which
+# xdph asks for with --allow-token. No selection line (or a non-zero exit) is a
+# cancel. Regions and workspaces are not offered here.
+set -uo pipefail
+# shellcheck source=../lib/i18n.sh
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/i18n.sh"
+
+if ! ergon-gpu --software >/dev/null 2>&1; then
+  exec hyprland-share-picker "$@"
+fi
+
+flags=""
+for a in "$@"; do [ "$a" = --allow-token ] && flags="r"; done
+
+labels=() sels=()
+screen=$(_t screen) window=$(_t window)
+
+while IFS=$'\t' read -r name w h; do
+  [ -n "$name" ] || continue
+  labels+=("$(printf '%s  %s  %sx%s' "$screen" "$name" "$w" "$h")")
+  sels+=("screen:$name")
+done < <(hyprctl monitors -j 2>/dev/null | jq -r '.[] | [.name, .width, .height] | @tsv' 2>/dev/null)
+
+rest=${XDPH_WINDOW_SHARING_LIST:-}
+while [ -n "$rest" ] && [[ $rest == *'[HA>]'* ]]; do
+  rec=${rest%%'[HA>]'*}; rest=${rest#*'[HA>]'}
+  handle=${rec%%'[HC>]'*};  rec=${rec#*'[HC>]'}
+  class=${rec%%'[HT>]'*};   rec=${rec#*'[HT>]'}
+  title=${rec%%'[HE>]'*}
+  [[ $handle =~ ^[0-9]+$ ]] || continue
+  labels+=("$(printf '%s  %s  %s' "$window" "$class" "$title" | tr '\n\r' '  ')")
+  sels+=("window:$handle")
+done
+
+[ "${#labels[@]}" -gt 0 ] || exit 1
+
+idx=$(printf '%s\n' "${labels[@]}" | fuzzel --dmenu --index --prompt "$(_t share)  ") || exit 1
+[[ $idx =~ ^[0-9]+$ ]] && [ -n "${sels[$idx]:-}" ] || exit 1
+printf '[SELECTION]%s/%s\n' "$flags" "${sels[$idx]}"
