@@ -14,7 +14,9 @@ ergon_input_nodes() {
   esac
   for d in "$(ergon_input_sys)"/class/input/input*; do
     [ -e "$d/name" ] || continue
-    udevadm info -q property -p "$d" 2>/dev/null | grep -qx "$prop=1" || continue
+    # grep -q would exit on the first match and SIGPIPE udevadm; under pipefail that
+    # reads as "no match" (ERGON-162). Read to the end instead.
+    udevadm info -q property -p "$d" 2>/dev/null | grep -x "$prop=1" >/dev/null || continue
     printf '%s|%s\n' "$d" "$(cat "$d/name")"
   done
 }

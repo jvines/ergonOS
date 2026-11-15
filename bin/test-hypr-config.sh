@@ -295,12 +295,16 @@ PYEOF
   # the tuigreet default), and the theme provisioning would write for cool in
   # the third. tuigreet 0.11.1
   # sometimes enters its alternate screen and never draws (4 of 12 runs,
-  # measured), so each run is tried until "Username" is on screen.
+  # measured, idle or loaded alike, and the same however long it is left): it
+  # draws on an event, and the first one can be lost. A keypress (arrow up,
+  # which changes nothing on screen) is an event, so one is sent a second in
+  # and another at two; with them 30 of 30 drew (ERGON-163). The retry stays
+  # for the rest, and a run is only judged on "Username" being on screen.
   echo "@@tuigreet"
   esc=$(printf "\033")
   tg() {  # tg <theme> -> the 38;5;N indexes drawn, space-separated, or DREWNOTHING
     for _ in 1 2 3 4 5 6 7 8; do
-      TERM=linux script -qfc "stty rows 30 cols 100; timeout 3 tuigreet --mock --time --asterisks --theme \"$1\" --cmd true" /tmp/tg.out >/dev/null 2>&1
+      (sleep 1; printf "\033[A"; sleep 1; printf "\033[A") | TERM=linux script -qfc "stty rows 30 cols 100; timeout 4 tuigreet --mock --time --asterisks --theme \"$1\" --cmd true" /tmp/tg.out >/dev/null 2>&1
       if grep -aq Username /tmp/tg.out; then
         echo " $(grep -aoE "${esc}\[38;5;[0-9]+[;m]" /tmp/tg.out | grep -oE "[0-9]+[;m]$" | tr -d ";m" | sort -un | tr "\n" " ")"
         return 0

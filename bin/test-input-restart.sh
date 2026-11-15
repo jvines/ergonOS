@@ -39,8 +39,10 @@ TG="$REPO/bin/ergon-toggle-input"
 "$TG" touchpad >/dev/null
 has "touchpad off: the libinput name, enabled=false" 'eval hl.device\(\{ name = "elan0001:00-04f3:3140-touchpad", enabled = false \}\)' "$(cat "$T/hypr.log")"
 chk "marker written" "$(ls "$T/run/ergon")" "input-touchpad.off"
-"$TG" touchpad >/dev/null
+sec=$("$TG" touchpad 2>&1); rc2=$?
 has "second press: enabled=true" 'enabled = true' "$(tail -1 "$T/hypr.log")"
+# ERGON-162: the one-in-thirty failure left nothing to read; say what the second call did
+[ "$fail" = 0 ] || echo "     second call rc=$rc2 said [$sec]; hyprctl calls: $(tr '\n' '|' < "$T/hypr.log")"
 chk "marker removed" "$(ls "$T/run/ergon")" ""
 "$TG" touchscreen off >/dev/null
 has "touchscreen found from the touch list" 'name = "wacom-touchscreen", enabled = false' "$(tail -1 "$T/hypr.log")"
